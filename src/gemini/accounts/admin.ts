@@ -4,7 +4,7 @@ import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
 import { mapWithConcurrency } from "../concurrency";
-import type { GeminiAccountAdminFilterInput } from "./admin-input";
+import { fetchGoogleCookieRotation } from "../cookies";
 import {
 	createInputFromAccount,
 	GeminiAccountAdminError,
@@ -13,47 +13,41 @@ import {
 	normalizeCreateAccounts,
 	normalizeListFilter,
 	normalizeModelRoutePriority,
+	type GeminiAccountAdminFilterInput,
 	updateFromBody,
 	WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
 } from "./admin-input";
 import type {
 	GeminiAccountAdminOverview,
-	GeminiAccountAdminStore,
 	GeminiAccountBulkCreateEntry,
-	GeminiAccountBulkCreateResult,
 	GeminiAccountMutationError,
 	GeminiAccountMutationResult,
 	GeminiModelRoutingOverview,
-} from "./admin-types";
-import { rotateGeminiAccountCookie } from "./cookie-rotator";
-import { capabilityFreshAfterMs } from "./freshness";
+} from "./types";
 import type {
 	GeminiAccountCookieRotator,
 	GeminiAccountRefreshReason,
-} from "./lease-types";
+} from "./lease";
 import {
 	identityHashFromCookie,
 	normalizeGeminiCookieHeader,
 	sha256Hex,
-} from "./normalize";
+} from "./domain";
 import { AccountPoolService } from "./pool";
+import { capabilityFreshAfterMs } from "./pool-snapshot";
 import { verifyGeminiAccount } from "./probe";
-import type { GeminiAccountVerifier } from "./probe-types";
-import type { GeminiRouteTuple } from "./route-types";
+import type { GeminiAccountVerifier } from "./probe";
+import type { GeminiRouteTuple } from "./routes";
 import { geminiRouteKey } from "./routes";
 import { d1BindingFromEnv } from "./runtime";
-import type { GeminiAccountRuntimeStore } from "./runtime-types";
-import type { D1DatabaseLike } from "./storage-types";
+import type { GeminiAccountStore } from "./types";
+import type { D1DatabaseLike } from "./types";
 import { D1GeminiAccountStore } from "./store-d1";
 
 export { GeminiAccountAdminError } from "./admin-input";
 
-type GeminiAccountStore = GeminiAccountAdminStore & GeminiAccountRuntimeStore;
-
 export type GeminiAccountAdminServiceOptions = {
-	store?: GeminiAccountStore;
-	adminStore?: GeminiAccountAdminStore;
-	runtimeStore?: GeminiAccountRuntimeStore;
+	store: GeminiAccountStore;
 	cfg: RuntimeConfig;
 	nowMs?: () => number;
 	rotateCookie?: GeminiAccountCookieRotator;
@@ -62,10 +56,7 @@ export type GeminiAccountAdminServiceOptions = {
 };
 
 type GeminiAccountAdminFactoryOptions = Partial<
-	Omit<
-		GeminiAccountAdminServiceOptions,
-		"store" | "adminStore" | "runtimeStore" | "cfg"
-	>
+	Omit<GeminiAccountAdminServiceOptions, "store" | "cfg">
 >;
 
 type MutationOutcome =
@@ -73,20 +64,14 @@ type MutationOutcome =
 	| { changed: false; error?: GeminiAccountMutationError };
 
 export class GeminiAccountAdminService {
-	private readonly adminStore: GeminiAccountAdminStore;
-	private readonly runtimeStore: GeminiAccountRuntimeStore;
+	private readonly store: GeminiAccountStore;
 	private readonly cfg: RuntimeConfig;
 	private readonly nowMs: () => number;
 	private readonly pool: AccountPoolService;
 	private readonly maxCreateAccounts: number | null;
 
 	constructor(options: GeminiAccountAdminServiceOptions) {
-		const adminStore = options.adminStore || options.store;
-		const runtimeStore = options.runtimeStore || options.store;
-		if (!adminStore || !runtimeStore)
-			throw new Error("Gemini account admin stores are required");
-		this.adminStore = adminStore;
-		this.runtimeStore = runtimeStore;
+		this.store = options.store;
 		this.cfg = options.cfg;
 		this.nowMs = options.nowMs || Date.now;
 		this.maxCreateAccounts =
@@ -95,12 +80,15 @@ export class GeminiAccountAdminService {
 					? null
 					: WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS
 				: options.maxCreateAccounts;
-		this.pool = new AccountPoolService(this.runtimeStore, {
+		this.pool = new AccountPoolService(this.store, {
 			nowMs: this.nowMs,
 			snapshotTtlMs: 1,
 			versionProbeTtlMs: 1,
 			selectableLimit: 200,
-			rotateCookie: options.rotateCookie || rotateGeminiAccountCookie,
+			rotateCookie:
+				options.rotateCookie ||
+				((input) =>
+					fetchGoogleCookieRotation(input.config, input.account.cookie_header)),
 			verifyAccount: options.verifyAccount || verifyGeminiAccount,
 		});
 	}
@@ -108,7 +96,7 @@ export class GeminiAccountAdminService {
 	overview(
 		filter: GeminiAccountAdminFilterInput,
 	): Promise<GeminiAccountAdminOverview> {
-		return this.adminStore.getAdminOverview(
+		return this.store.getAdminOverview(
 			normalizeListFilter(filter),
 			this.nowMs(),
 		);
@@ -124,17 +112,7 @@ export class GeminiAccountAdminService {
 	): Promise<GeminiModelRoutingOverview> {
 		const routes = normalizeModelRoutePriority(body, family);
 		await this.assertKnownModelRoutes(family, routes);
-		if (!this.runtimeStore.replaceModelRoutePriority)
-			throw new GeminiAccountAdminError(
-				503,
-				"model_routing_store_unavailable",
-				"model routing store is unavailable",
-			);
-		await this.runtimeStore.replaceModelRoutePriority(
-			family,
-			routes,
-			this.nowMs(),
-		);
+		await this.store.replaceModelRoutePriority(family, routes, this.nowMs());
 		this.pool.invalidateSnapshot();
 		return this.modelRoutingOverview();
 	}
@@ -142,13 +120,7 @@ export class GeminiAccountAdminService {
 	async clearModelRoutePriority(
 		family: GeminiPublicFamily,
 	): Promise<GeminiModelRoutingOverview> {
-		if (!this.runtimeStore.clearModelRoutePriority)
-			throw new GeminiAccountAdminError(
-				503,
-				"model_routing_store_unavailable",
-				"model routing store is unavailable",
-			);
-		await this.runtimeStore.clearModelRoutePriority(family, this.nowMs());
+		await this.store.clearModelRoutePriority(family, this.nowMs());
 		this.pool.invalidateSnapshot();
 		return this.modelRoutingOverview();
 	}
@@ -170,9 +142,7 @@ export class GeminiAccountAdminService {
 		}
 
 		const entries = Array.from(uniqueEntries.values());
-		const stored = this.adminStore.createAccountsBulk
-			? await this.adminStore.createAccountsBulk(entries)
-			: await createAccountsOneByOne(this.adminStore, entries);
+		const stored = await this.store.createAccountsBulk(entries);
 		const changed =
 			stored.createdAccountIds.size + stored.changedCredentialCount;
 		const result = mutationResult(accounts.length, changed, [], 0);
@@ -191,13 +161,13 @@ export class GeminiAccountAdminService {
 				"account_update_required",
 				"no account update fields provided",
 			);
-		const result = await this.adminStore.updateAccount(id, update);
+		const result = await this.store.updateAccount(id, update);
 		if (!result.item) return mutationResult(1, 0, [accountNotFoundError(id)]);
 		return mutationResult(1, result.changed ? 1 : 0);
 	}
 
 	async delete(id: string): Promise<GeminiAccountMutationResult> {
-		const changed = await this.adminStore.deleteAccount(id, this.nowMs());
+		const changed = await this.store.deleteAccount(id, this.nowMs());
 		return changed
 			? mutationResult(1, 1)
 			: mutationResult(1, 0, [accountNotFoundError(id)]);
@@ -209,29 +179,39 @@ export class GeminiAccountAdminService {
 		const { action, ids } = normalizeBulkAction(body);
 		const nowMs = this.nowMs();
 		const outcomes = await mapWithConcurrency(ids, 4, async (id) => {
-			if (action === "refresh") return this.refreshOne(id);
+			if (action === "refresh") return this.refreshOneAccount(id);
 			if (action === "delete") {
-				return (await this.adminStore.deleteAccount(id, nowMs))
-					? { changed: true }
-					: { changed: false, error: accountNotFoundError(id) };
+				return (await this.store.deleteAccount(id, nowMs))
+					? ({ changed: true } as const)
+					: ({ changed: false, error: accountNotFoundError(id) } as const);
 			}
-			const result = await this.adminStore.updateAccount(id, {
+			const result = await this.store.updateAccount(id, {
 				enabled: action === "enable",
 				nowMs,
 			});
 			if (!result.item)
-				return { changed: false, error: accountNotFoundError(id) };
-			return { changed: result.changed };
+				return {
+					changed: false as const,
+					error: accountNotFoundError(id),
+				} satisfies MutationOutcome;
+			return { changed: result.changed } as MutationOutcome;
 		});
 		return mutationResultFromOutcomes(outcomes);
 	}
 
 	async refresh(id: string): Promise<GeminiAccountMutationResult> {
-		return mutationResultFromOutcomes([await this.refreshOne(id)]);
+		return mutationResultFromOutcomes([await this.refreshOneAccount(id)]);
 	}
 
-	private async refreshOne(id: string): Promise<MutationOutcome> {
-		const account = await this.runtimeStore.getAccountForRefresh(id);
+	private capabilityFreshAfterMs(): number {
+		return capabilityFreshAfterMs(
+			this.cfg.gemini_account_capability_ttl_sec,
+			this.nowMs(),
+		);
+	}
+
+	private async refreshOneAccount(id: string): Promise<MutationOutcome> {
+		const account = await this.store.getAccountForRefresh(id);
 		if (!account) return { changed: false, error: accountNotFoundError(id) };
 		try {
 			const refresh = await this.pool.refreshAccountForAdmin(this.cfg, account);
@@ -263,30 +243,6 @@ export class GeminiAccountAdminService {
 		}
 	}
 
-	private capabilityFreshAfterMs(): number {
-		return capabilityFreshAfterMs(
-			this.cfg.gemini_account_capability_ttl_sec,
-			this.nowMs(),
-		);
-	}
-
-	private async assertKnownModelRoutes(
-		family: GeminiPublicFamily,
-		routes: readonly GeminiRouteTuple[],
-	): Promise<void> {
-		const overview = await this.modelRoutingOverview();
-		const known = overview.families.find((item) => item.family === family);
-		const knownKeys = new Set((known?.routes || []).map(geminiRouteKey));
-		for (const route of routes) {
-			if (knownKeys.has(geminiRouteKey(route))) continue;
-			throw new GeminiAccountAdminError(
-				400,
-				"unknown_model_route",
-				"model routing policy contains an undiscovered route",
-			);
-		}
-	}
-
 	private async scheduleImportedAccountProbes(
 		accountIds: readonly string[],
 	): Promise<void> {
@@ -294,7 +250,7 @@ export class GeminiAccountAdminService {
 		if (!uniqueIds.length) return;
 		const probes = mapWithConcurrency(uniqueIds, 4, async (id) => {
 			try {
-				const account = await this.runtimeStore.getAccountForRefresh(id);
+				const account = await this.store.getAccountForRefresh(id);
 				if (!account) return;
 				const result = await this.pool.refreshAccountForAdmin(
 					this.cfg,
@@ -326,32 +282,23 @@ export class GeminiAccountAdminService {
 			);
 		}
 	}
-}
 
-async function createAccountsOneByOne(
-	store: GeminiAccountAdminStore,
-	entries: GeminiAccountBulkCreateEntry[],
-): Promise<GeminiAccountBulkCreateResult> {
-	if (!store.importAccountByIdentity)
-		throw new Error(
-			"Gemini account import store requires identity import support",
-		);
-	const createdAccountIds = new Set<string>();
-	let changedCredentialCount = 0;
-	for (const entry of entries) {
-		const imported = await store.importAccountByIdentity(entry);
-		if (imported.outcome === "created") createdAccountIds.add(imported.item.id);
-		else if (imported.outcome === "credentials_changed")
-			changedCredentialCount += 1;
-		else if (imported.outcome !== "unchanged")
-			throw new Error(
-				"Gemini account import store returned an invalid outcome",
+	private async assertKnownModelRoutes(
+		family: GeminiPublicFamily,
+		routes: readonly GeminiRouteTuple[],
+	): Promise<void> {
+		const overview = await this.modelRoutingOverview();
+		const known = overview.families.find((item) => item.family === family);
+		const knownKeys = new Set((known?.routes || []).map(geminiRouteKey));
+		for (const route of routes) {
+			if (knownKeys.has(geminiRouteKey(route))) continue;
+			throw new GeminiAccountAdminError(
+				400,
+				"unknown_model_route",
+				"model routing policy contains an undiscovered route",
 			);
+		}
 	}
-	return {
-		createdAccountIds,
-		changedCredentialCount,
-	};
 }
 
 export function createGeminiAccountAdminServiceFromEnv(
@@ -377,9 +324,8 @@ function createGeminiAccountAdminServiceFromD1(
 	const store = new D1GeminiAccountStore(db);
 	return new GeminiAccountAdminService({
 		...options,
-		adminStore: store,
+		store,
 		cfg,
-		runtimeStore: store,
 	});
 }
 

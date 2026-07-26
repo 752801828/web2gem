@@ -1,6 +1,5 @@
 import {
 	captureConfigSnapshot,
-	CONFIG_ENV_KEYS,
 	configSnapshotMatches,
 	parseStaticRuntimeConfig,
 	type ConfigCacheSnapshot,
@@ -16,7 +15,7 @@ import type {
 export const VERSION = "2.0.0-worker";
 
 export type {
-	GeminiAccountRuntimeContext,
+	GeminiAccountLeaseContext,
 	GeminiAccountSessionContext,
 	RuntimeConfig,
 	RuntimeExecutionContext,
@@ -25,7 +24,6 @@ export type {
 	WorkerEnv,
 } from "./types";
 export { RuntimeConfigError } from "./parse";
-export { CONFIG_ENV_KEYS };
 
 export function createRuntimeConfig(
 	config: StaticRuntimeConfig,

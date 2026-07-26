@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/routes";
 import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
 import { assert } from "../../assertions.js";
 import {

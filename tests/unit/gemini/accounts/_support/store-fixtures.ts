@@ -1,17 +1,14 @@
 import { isDeepStrictEqual } from "node:util";
-import type {
-	GeminiAccountAdminStore,
-	GeminiAccountSummary,
-} from "../../../../../src/gemini/accounts/admin-types";
+import type { GeminiAccountSummary } from "../../../../../src/gemini/accounts/types";
 import type { GeminiAccountIssue } from "../../../../../src/gemini/accounts/domain";
-import type { GeminiAccountRuntimeStore } from "../../../../../src/gemini/accounts/runtime-types";
+import type { GeminiAccountStore } from "../../../../../src/gemini/accounts/types";
 import type {
 	D1DatabaseLike,
 	D1PreparedStatementLike,
 	D1Result,
 	GeminiAccountRow,
-} from "../../../../../src/gemini/accounts/storage-types";
-import type { GeminiAccountSummarySqlRow } from "../../../../../src/gemini/accounts/store-d1-admin";
+} from "../../../../../src/gemini/accounts/types";
+import type { GeminiAccountSummarySqlRow } from "../../../../../src/gemini/accounts/store-d1";
 
 type SqlExpectation = string | RegExp;
 type D1Operation = "first" | "all" | "run" | "batch";
@@ -275,9 +272,7 @@ const ACCOUNT_STORE_METHODS = [
 	"deleteAccountsBulk",
 ] as const;
 
-type CompleteAccountStore = Required<
-	GeminiAccountAdminStore & GeminiAccountRuntimeStore
->;
+type CompleteAccountStore = GeminiAccountStore;
 type StoreMethod = {
 	[K in keyof CompleteAccountStore]: CompleteAccountStore[K] extends (
 		...args: infer _Args
@@ -310,11 +305,10 @@ type AccountStoreCall = {
 	method: StoreMethod;
 	args: readonly unknown[];
 };
-type AccountStoreDouble = GeminiAccountAdminStore &
-	GeminiAccountRuntimeStore & {
-		calls: AccountStoreCall[];
-		assertDrained(): void;
-	};
+type AccountStoreDouble = GeminiAccountStore & {
+	calls: AccountStoreCall[];
+	assertDrained(): void;
+};
 
 export function createAccountStoreDouble(
 	expectations: AccountStoreExpectations = {},

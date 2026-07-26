@@ -2,7 +2,7 @@ import { describe, test } from "vitest";
 import {
 	identityHashFromCookie,
 	sha256Hex,
-} from "../../../../src/gemini/accounts/normalize";
+} from "../../../../src/gemini/accounts/domain";
 import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
 import { assert } from "../../assertions.js";
 import {

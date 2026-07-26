@@ -7,17 +7,42 @@ import {
 } from "../../models";
 import { errorLogSummary } from "../../shared/errors";
 import { log, nowSec } from "../../shared/logging";
+import { geminiOrigin } from "../cache";
 import { extractWrbInnerPayloads } from "../client/parse-envelope";
-import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { cancelResponseBody, httpFetch } from "../transport";
+import { GEMINI_WEB_USER_AGENT } from "../client/protocol";
+import { cancelResponseBody, httpFetch } from "../transport/http";
 import { getFreshPageTokensForConfig } from "../uploads/tokens";
 import type { GeminiAccountIssue } from "./domain";
 import { basicRouteForFamily, modelNumberForProviderModelId } from "./routes";
-import type {
-	GeminiAccountProbe,
-	GeminiAccountVerificationLevel,
-	GeminiAccountVerificationResult,
-} from "./probe-types";
+
+export type GeminiAccountVerificationLevel = "session" | "status";
+
+export type GeminiAccountProbe = {
+	statusCode: number;
+	issue: GeminiAccountIssue | null;
+	models: {
+		modelId: string;
+		displayName: string;
+		description: string;
+		available: boolean;
+		capacity: number;
+		capacityField: number;
+		modelNumber: number;
+		discoveryOrder: number;
+	}[];
+};
+
+export type GeminiAccountVerificationResult =
+	| { ok: true; probe?: GeminiAccountProbe }
+	| {
+			ok: false;
+			reason: "missing_page_at_token" | "status_probe_failed";
+	  };
+
+export type GeminiAccountVerifier = (input: {
+	config: RuntimeConfig;
+	level: GeminiAccountVerificationLevel;
+}) => Promise<GeminiAccountVerificationResult>;
 
 const GET_USER_STATUS_RPC_ID = "otAQ7b";
 const MAX_PROBE_RESPONSE_CHARS = 512 * 1024;
@@ -49,10 +74,7 @@ async function fetchGeminiAccountProbe(
 	cfg: RuntimeConfig,
 	at: string,
 ): Promise<GeminiAccountProbe> {
-	const origin = (cfg.gemini_origin || "https://gemini.google.com").replace(
-		/\/$/,
-		"",
-	);
+	const origin = geminiOrigin(cfg);
 	const params = new URLSearchParams({
 		rpcids: GET_USER_STATUS_RPC_ID,
 		hl: "en",

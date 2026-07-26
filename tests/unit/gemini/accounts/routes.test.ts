@@ -5,7 +5,7 @@ import {
 	MAX_GEMINI_MODEL_ROUTES,
 	validateGeminiModelRoutePolicy,
 } from "../../../../src/gemini/accounts/routes";
-import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/routes";
 import { assert } from "../../assertions.js";
 
 const BOUNDARY_ROUTES: GeminiRouteTuple[] = [

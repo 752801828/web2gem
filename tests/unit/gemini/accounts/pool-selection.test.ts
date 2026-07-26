@@ -1,13 +1,13 @@
 import { describe, test } from "vitest";
-import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/routes";
 import { basicRouteForFamily } from "../../../../src/gemini/accounts/routes";
-import type { GeminiAccountAcquireOptions } from "../../../../src/gemini/accounts/runtime-types";
+import type { GeminiAccountAcquireOptions } from "../../../../src/gemini/accounts/types";
 import { assert } from "../../assertions.js";
 import {
 	account,
 	capabilityRow,
 	createPool,
-	createRuntimeStore,
+	createAccountStore,
 	required,
 	runtimeCall,
 	runtimeConfig,
@@ -33,7 +33,7 @@ describe("gemini account runtime", () => {
 				description: "Pro route",
 			}),
 		];
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall(
@@ -87,7 +87,7 @@ describe("gemini account runtime", () => {
 		const capabilities = [
 			capabilityRow("known-no", "different-model", 1, 12, 1, 0, nowMs),
 		];
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall(
@@ -146,7 +146,7 @@ describe("gemini account runtime", () => {
 				nowMs - 5000,
 			),
 		];
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall("listAccountCapabilities", [["stale"]], capabilities),
@@ -191,7 +191,7 @@ describe("gemini account runtime", () => {
 				nowMs - 5000,
 			),
 		];
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall("listAccountCapabilities", [["stale"]], capabilities),
@@ -237,7 +237,7 @@ describe("gemini account runtime", () => {
 				nowMs,
 			),
 		];
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall("listAccountCapabilities", [["dynamic"]], capabilities),
@@ -289,7 +289,7 @@ describe("gemini account runtime", () => {
 				nowMs,
 			),
 		];
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall(
@@ -351,7 +351,7 @@ describe("gemini account runtime", () => {
 		const globalCapabilities = [
 			capabilityRow("not-selected", "future-model", 3, 13, 7, 0, nowMs),
 		];
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall("listAllAccountCapabilities", [12800], globalCapabilities),

@@ -2,7 +2,7 @@ export type WorkerEnv = Partial<Record<keyof WorkerBindings, unknown>>;
 
 export type RuntimeProfile = "worker" | "docker";
 
-export type GeminiAccountRuntimeContext = {
+export type GeminiAccountLeaseContext = {
 	accountId: string;
 	cookieHash: string;
 	observeSetCookie?: (values: readonly string[]) => void;
@@ -38,7 +38,7 @@ export type RuntimeExecutionContext = {
 export type GeminiAccountSessionContext = {
 	cookie: string;
 	sapisid: string;
-	gemini_account?: GeminiAccountRuntimeContext;
+	gemini_account?: GeminiAccountLeaseContext;
 };
 
 export type RuntimeConfig = StaticRuntimeConfig &

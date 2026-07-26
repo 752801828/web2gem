@@ -3,18 +3,18 @@ import {
 	identityHashFromCookie,
 	normalizeGeminiCookieHeader,
 	sha256Hex,
-} from "../../../../src/gemini/accounts/normalize";
+} from "../../../../src/gemini/accounts/domain";
 import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
-import type { GeminiAccountOutcome } from "../../../../src/gemini/accounts/runtime-types";
-import type { GeminiAccountProbe } from "../../../../src/gemini/accounts/probe-types";
-import type { GeminiAccountLease } from "../../../../src/gemini/accounts/lease-types";
+import type { GeminiAccountOutcome } from "../../../../src/gemini/accounts/types";
+import type { GeminiAccountProbe } from "../../../../src/gemini/accounts/probe";
+import type { GeminiAccountLease } from "../../../../src/gemini/accounts/lease";
 import { isRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { deferred } from "../../_support/deferred.js";
 import {
 	account,
 	accountContext,
-	createRuntimeStore,
+	createAccountStore,
 	rejectUnexpectedCookieRotation,
 	required,
 	runtimeCall,
@@ -117,7 +117,7 @@ describe("gemini account runtime", () => {
 	test("deduplicates refreshes and updates active and cached lease credentials", async () => {
 		const row = account("a");
 		const rotatedCookie = "__Secure-1PSID=p-a; __Secure-1PSIDTS=rotated";
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [120000, 100], [row]),
 			...lockedRuntimeCalls("a", 120000, "account-refresh", [
@@ -182,7 +182,7 @@ describe("gemini account runtime", () => {
 	test("keeps the lease unchanged when refreshed credentials duplicate another account", async () => {
 		const row = account("a");
 		const duplicateCookie = "__Secure-1PSID=p-a; __Secure-1PSIDTS=duplicate";
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [120000, 100], [row]),
 			...lockedRuntimeCalls("a", 120000, "account-refresh", [
@@ -227,7 +227,7 @@ describe("gemini account runtime", () => {
 			recoveryScope: "try_next_account",
 			nowMs: 120000,
 		};
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			...lockedRuntimeCalls("a", 120000, "account-refresh", [
 				runtimeCall("getAccountForRefresh", ["a"], row),
 				runtimeCall("writeAccountOutcome", ["a", outcome], undefined),
@@ -247,7 +247,7 @@ describe("gemini account runtime", () => {
 
 	test("rejects retry refresh when session verification cannot bootstrap", async () => {
 		const row = account("missing-at");
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [120000, 100], [row]),
 			...lockedRuntimeCalls("missing-at", 120000, "account-refresh", [
@@ -296,7 +296,7 @@ describe("gemini account runtime", () => {
 			recoveryScope: "none",
 			nowMs: 120000,
 		};
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			...lockedRuntimeCalls("restricted", 120000, "account-refresh", [
 				runtimeCall("getAccountForRefresh", ["restricted"], row),
 				runtimeCall(
@@ -347,7 +347,7 @@ describe("gemini account runtime", () => {
 		const row = account("fresh-session", {
 			last_refresh_success_at_ms: nowMs - 500,
 		});
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [nowMs, 100], [row]),
 		]);
@@ -375,7 +375,7 @@ describe("gemini account runtime", () => {
 			last_refresh_success_at_ms: nowMs - 5000,
 		});
 		const normalizedCookie = normalizeGeminiCookieHeader(row.cookie_header);
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [nowMs, 100], [row]),
 			...lockedRuntimeCalls("stale-session", nowMs, "account-refresh", [
@@ -423,7 +423,7 @@ describe("gemini account runtime", () => {
 		);
 		const updatedCookie =
 			"__Secure-1PSID=p-passive; __Secure-1PSIDTS=passive-update";
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [120000, 100], [row]),
 			...lockedRuntimeCalls("passive", 120000, "account-response-cookie", [
@@ -474,7 +474,7 @@ describe("gemini account runtime", () => {
 		row.cookie_hash = await sha256Hex(
 			normalizeGeminiCookieHeader(row.cookie_header),
 		);
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [120000, 100], [row]),
 			...lockedRuntimeCalls(
@@ -515,7 +515,7 @@ describe("gemini account runtime", () => {
 		);
 		const duplicateCookie =
 			"__Secure-1PSID=p-passive-duplicate; __Secure-1PSIDTS=duplicate";
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [120000, 100], [row]),
 			...lockedRuntimeCalls(
@@ -565,7 +565,7 @@ describe("gemini account runtime", () => {
 		row.cookie_hash = await sha256Hex(
 			normalizeGeminiCookieHeader(row.cookie_header),
 		);
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [120000, 100], [row]),
 			...lockedRuntimeCalls(
@@ -596,7 +596,7 @@ describe("gemini account runtime", () => {
 		row.cookie_hash = await sha256Hex(
 			normalizeGeminiCookieHeader(row.cookie_header),
 		);
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [120000, 100], [row]),
 			rejectedRuntimeLockCall(

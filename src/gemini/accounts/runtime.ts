@@ -1,91 +1,42 @@
-import type { RuntimeConfig, WorkerEnv } from "../../config";
-import type { GeminiModelCatalog, ResolvedModel } from "../../models";
-import { rotateGeminiAccountCookie } from "./cookie-rotator";
-import type { GeminiModelRoutingOverview } from "./admin-types";
-import type { GeminiAccountLease } from "./lease-types";
+import type { WorkerEnv } from "../../config";
+import { fetchGoogleCookieRotation } from "../cookies";
 import { AccountPoolService } from "./pool";
-import type { GeminiRouteTuple } from "./route-types";
 import { verifyGeminiAccount } from "./probe";
-import type {
-	GeminiAccountAcquireOptions,
-	GeminiAccountRuntimeOptions,
-} from "./runtime-types";
+import type { GeminiAccountPoolOptions } from "./pool";
+import type { D1DatabaseLike } from "./types";
 import { D1GeminiAccountStore } from "./store-d1";
-import type { D1DatabaseLike } from "./storage-types";
 
-const DEFAULT_RUNTIME_BY_DB = new WeakMap<
-	D1DatabaseLike,
-	GeminiAccountRuntime
->();
+const DEFAULT_POOL_BY_DB = new WeakMap<D1DatabaseLike, AccountPoolService>();
 
-export class GeminiAccountRuntime {
-	constructor(readonly pool: AccountPoolService) {}
-
-	acquireLease(
-		baseConfig: RuntimeConfig,
-		options: GeminiAccountAcquireOptions = {},
-	): Promise<GeminiAccountLease | null> {
-		return this.pool.acquireLease(baseConfig, options);
-	}
-
-	modelCatalog(capabilityFreshAfterMs: number): Promise<GeminiModelCatalog> {
-		return this.pool.modelCatalog(capabilityFreshAfterMs);
-	}
-
-	modelRoutingOverview(
-		capabilityFreshAfterMs: number,
-	): Promise<GeminiModelRoutingOverview> {
-		return this.pool.modelRoutingOverview(capabilityFreshAfterMs);
-	}
-
-	resolveModel(
-		modelName: unknown,
-		defaultName: unknown,
-		capabilityFreshAfterMs: number,
-	): Promise<ResolvedModel> {
-		return this.pool.resolveModel(
-			modelName,
-			defaultName,
-			capabilityFreshAfterMs,
-		);
-	}
-
-	routeCandidatesForModel(
-		model: Extract<ResolvedModel, { name: string }>,
-		capabilityFreshAfterMs: number,
-	): Promise<GeminiRouteTuple[]> {
-		return this.pool.routeCandidatesForModel(model, capabilityFreshAfterMs);
-	}
-}
-
-function createGeminiAccountRuntimeFromEnv(
+function createGeminiAccountPoolFromEnv(
 	env: WorkerEnv | null | undefined,
-	options: GeminiAccountRuntimeOptions = {},
-): GeminiAccountRuntime | null {
+	options: GeminiAccountPoolOptions = {},
+): AccountPoolService | null {
 	const db = d1BindingFromEnv(env);
 	if (!db) return null;
-	const rotateCookie = options.rotateCookie || rotateGeminiAccountCookie;
+	const rotateCookie =
+		options.rotateCookie ||
+		((input) =>
+			fetchGoogleCookieRotation(input.config, input.account.cookie_header));
 	const verifyAccount = options.verifyAccount || verifyGeminiAccount;
-	return new GeminiAccountRuntime(
-		new AccountPoolService(new D1GeminiAccountStore(db), {
-			...options,
-			rotateCookie,
-			verifyAccount,
-		}),
-	);
+	return new AccountPoolService(new D1GeminiAccountStore(db), {
+		...options,
+		rotateCookie,
+		verifyAccount,
+	});
 }
 
-export function getGeminiAccountRuntimeFromEnv(
+export function getGeminiAccountPoolFromEnv(
 	env: WorkerEnv | null | undefined,
-): GeminiAccountRuntime | null {
+): AccountPoolService | null {
 	const db = d1BindingFromEnv(env);
 	if (!db) return null;
-	const existing = DEFAULT_RUNTIME_BY_DB.get(db);
+	const existing = DEFAULT_POOL_BY_DB.get(db);
 	if (existing) return existing;
-	const runtime = createGeminiAccountRuntimeFromEnv(env);
-	if (!runtime) return null;
-	DEFAULT_RUNTIME_BY_DB.set(db, runtime);
-	return runtime;
+	const pool = createGeminiAccountPoolFromEnv(env);
+	if (!pool) return null;
+	DEFAULT_POOL_BY_DB.set(db, pool);
+	return pool;
 }
 
 export function d1BindingFromEnv(

@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { classifyGeminiAccountOutcome } from "../../../../src/gemini/accounts/classify";
+import { classifyGeminiAccountOutcome } from "../../../../src/gemini/accounts/domain";
 import { assert } from "../../assertions.js";
 
 describe("Gemini account outcome classification", () => {

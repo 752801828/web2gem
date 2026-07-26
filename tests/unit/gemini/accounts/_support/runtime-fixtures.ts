@@ -1,11 +1,11 @@
 import type {
-	GeminiAccountRuntimeContext,
+	GeminiAccountLeaseContext,
 	RuntimeConfig,
 } from "../../../../../src/config/types.js";
 import { AccountPoolService } from "../../../../../src/gemini/accounts/pool.js";
-import type { GeminiAccountCapabilityRow } from "../../../../../src/gemini/accounts/route-types.js";
-import type { GeminiAccountRuntimeStore } from "../../../../../src/gemini/accounts/runtime-types.js";
-import type { GeminiAccountRow } from "../../../../../src/gemini/accounts/storage-types.js";
+import type { GeminiAccountCapabilityRow } from "../../../../../src/gemini/accounts/routes.js";
+import type { GeminiAccountStore } from "../../../../../src/gemini/accounts/types.js";
+import type { GeminiAccountRow } from "../../../../../src/gemini/accounts/types.js";
 import type {
 	ResolvedModel,
 	ResolvedModelOk,
@@ -63,9 +63,9 @@ export function capabilityRow(
 	};
 }
 
-type RuntimeMethod = keyof GeminiAccountRuntimeStore;
+type RuntimeMethod = keyof GeminiAccountStore;
 type RuntimeFunction<M extends RuntimeMethod> = NonNullable<
-	GeminiAccountRuntimeStore[M]
+	GeminiAccountStore[M]
 >;
 type RuntimeArguments<M extends RuntimeMethod> = Parameters<RuntimeFunction<M>>;
 type RuntimeResult<M extends RuntimeMethod> = Awaited<
@@ -112,7 +112,7 @@ export function runtimeCall<M extends RuntimeMethod>(
 	return { method, args, result };
 }
 
-type RuntimeStoreFixture = GeminiAccountRuntimeStore & {
+export type AccountStoreFixture = GeminiAccountStore & {
 	readonly calls: readonly {
 		method: RuntimeMethod;
 		args: readonly unknown[];
@@ -121,9 +121,9 @@ type RuntimeStoreFixture = GeminiAccountRuntimeStore & {
 	assertExhausted(): void;
 };
 
-export function createRuntimeStore(
+export function createAccountStore(
 	script: readonly RuntimeCall[],
-): RuntimeStoreFixture {
+): AccountStoreFixture {
 	if (!Array.isArray(script))
 		throw new Error("Runtime store script must be an ordered array");
 	const remaining = script.map((step, index) => {
@@ -231,9 +231,11 @@ export function createRuntimeStore(
 					) => invoke("clearModelRoutePriority", args),
 				}
 			: {}),
-	} satisfies RuntimeStoreFixture;
+	};
 
-	return fixture;
+	// Runtime pool tests only script runtime-facing methods; cast to the full
+	// GeminiAccountStore surface so AccountPoolService constructors typecheck.
+	return fixture as unknown as AccountStoreFixture;
 }
 
 export function runtimeConfig(
@@ -271,7 +273,7 @@ export function required<T>(value: T | null | undefined, label: string): T {
 
 export function accountContext(
 	config: RuntimeConfig,
-): GeminiAccountRuntimeContext {
+): GeminiAccountLeaseContext {
 	return required(config.gemini_account, "Gemini account runtime context");
 }
 
@@ -293,7 +295,7 @@ type PoolOverrides = Partial<
 >;
 
 export function createPool(
-	store: GeminiAccountRuntimeStore,
+	store: GeminiAccountStore,
 	nowMs: number,
 	overrides: PoolOverrides = {},
 ): AccountPoolService {

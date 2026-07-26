@@ -1,40 +1,23 @@
-import type { GeminiPublicFamily } from "../../models";
 import { isRecord, type UnknownRecord } from "../../shared/types";
+import type { GeminiPublicFamily } from "../../models";
 import type {
 	GeminiAccountAdminFilter,
 	GeminiAccountBulkAction,
 	GeminiAccountCreateInput,
 	GeminiAccountUpdate,
-} from "./admin-types";
+} from "./types";
 import {
 	boundedGeminiAccountPageLimit,
 	type GeminiAccountState,
 	isGeminiAccountState,
 } from "./domain";
-import { cleanAccountString } from "./normalize";
-import type { GeminiRouteTuple } from "./route-types";
+import { cleanAccountString } from "./domain";
+import type { GeminiRouteTuple } from "./routes";
 import {
 	isGeminiPublicFamily,
 	MAX_GEMINI_MODEL_ROUTES,
 	validateGeminiModelRoutePolicy,
 } from "./routes";
-
-const SAFE_CREATE_KEYS = new Set([
-	"provider",
-	"__Secure-1PSID",
-	"__Secure-1PSIDTS",
-	"label",
-]);
-const UNSAFE_CREATE_KEYS = new Set([
-	"tokens",
-	"access_token",
-	"accessToken",
-	"cookie",
-	"cookies",
-]);
-const COOKIE_NAME_RE = /(?:^|[;\s])__Secure-1PSID(?:TS)?\s*=/i;
-const SAFE_UPDATE_KEYS = new Set(["label", "enabled"]);
-const LIST_QUERY_KEYS = new Set(["limit", "cursor", "q", "state"]);
 
 export class GeminiAccountAdminError extends Error {
 	constructor(
@@ -47,25 +30,28 @@ export class GeminiAccountAdminError extends Error {
 	}
 }
 
-export function accountIdFromPathSegment(segment: string): string {
-	let decoded: string;
-	try {
-		decoded = decodeURIComponent(segment);
-	} catch {
-		throw new GeminiAccountAdminError(
-			400,
-			"invalid_account_id",
-			"invalid account id",
-		);
-	}
-	const id = decoded.trim();
-	if (!id || id.includes("/") || id.length > 200)
-		throw new GeminiAccountAdminError(
-			400,
-			"invalid_account_id",
-			"invalid account id",
-		);
-	return id;
+export function dualCookieOnlyError(): GeminiAccountAdminError {
+	return new GeminiAccountAdminError(
+		400,
+		"gemini_import_dual_cookie_only",
+		"Gemini import accepts only __Secure-1PSID, __Secure-1PSIDTS, and label",
+	);
+}
+
+export function invalidModelFamilyError(): GeminiAccountAdminError {
+	return new GeminiAccountAdminError(
+		400,
+		"invalid_model_family",
+		"model family must be pro, flash, or flash_lite",
+	);
+}
+
+export function invalidModelRouteError(): GeminiAccountAdminError {
+	return new GeminiAccountAdminError(
+		400,
+		"invalid_model_route",
+		"each model route must be one valid exact route tuple",
+	);
 }
 
 export function modelFamilyFromPathSegment(
@@ -116,6 +102,45 @@ export function normalizeModelRoutePriority(
 	return policy.routes;
 }
 
+const SAFE_CREATE_KEYS = new Set([
+	"provider",
+	"__Secure-1PSID",
+	"__Secure-1PSIDTS",
+	"label",
+]);
+const UNSAFE_CREATE_KEYS = new Set([
+	"tokens",
+	"access_token",
+	"accessToken",
+	"cookie",
+	"cookies",
+]);
+const COOKIE_NAME_RE = /(?:^|[;\s])__Secure-1PSID(?:TS)?\s*=/i;
+const SAFE_UPDATE_KEYS = new Set(["label", "enabled"]);
+const LIST_QUERY_KEYS = new Set(["limit", "cursor", "q", "state"]);
+const ADMIN_BULK_ACTION_MAX_IDS = 100;
+
+export function accountIdFromPathSegment(segment: string): string {
+	let decoded: string;
+	try {
+		decoded = decodeURIComponent(segment);
+	} catch {
+		throw new GeminiAccountAdminError(
+			400,
+			"invalid_account_id",
+			"invalid account id",
+		);
+	}
+	const id = decoded.trim();
+	if (!id || id.includes("/") || id.length > 200)
+		throw new GeminiAccountAdminError(
+			400,
+			"invalid_account_id",
+			"invalid account id",
+		);
+	return id;
+}
+
 export type GeminiAccountAdminFilterInput = {
 	limit?: unknown;
 	cursor?: unknown;
@@ -150,8 +175,6 @@ export function listFilterFromSearchParams(
 		filter.state = normalizeState(requiredQueryValue(params, "state"));
 	return filter;
 }
-
-const ADMIN_BULK_ACTION_MAX_IDS = 100;
 
 export function normalizeBulkAction(body: UnknownRecord): {
 	action: GeminiAccountBulkAction;
@@ -365,14 +388,6 @@ function validateCreateAccount(item: UnknownRecord): void {
 	validateBareCookieValue(psidts);
 }
 
-function dualCookieOnlyError(): GeminiAccountAdminError {
-	return new GeminiAccountAdminError(
-		400,
-		"gemini_import_dual_cookie_only",
-		"Gemini import accepts only __Secure-1PSID, __Secure-1PSIDTS, and label",
-	);
-}
-
 function cleanRequiredString(value: unknown, name: string): string {
 	if (typeof value !== "string")
 		throw new GeminiAccountAdminError(
@@ -473,20 +488,4 @@ function parsePageLimit(value: string): number {
 			"limit must be an integer between 1 and 200",
 		);
 	return Number(value);
-}
-
-function invalidModelFamilyError(): GeminiAccountAdminError {
-	return new GeminiAccountAdminError(
-		400,
-		"invalid_model_family",
-		"model family must be pro, flash, or flash_lite",
-	);
-}
-
-function invalidModelRouteError(): GeminiAccountAdminError {
-	return new GeminiAccountAdminError(
-		400,
-		"invalid_model_route",
-		"each model route must be one valid exact route tuple",
-	);
 }

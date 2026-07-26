@@ -1,13 +1,10 @@
 import { isDurableGeminiAccountIssue } from "./domain";
-import type {
-	GeminiAccountModelCapability,
-	GeminiRouteTuple,
-} from "./route-types";
+import type { GeminiAccountModelCapability, GeminiRouteTuple } from "./routes";
 import { capabilityMatchesRoute } from "./routes";
 import type {
 	GeminiAccountAcquireOptions,
 	GeminiAccountSnapshotRow,
-} from "./runtime-types";
+} from "./types";
 
 export type PoolSelection = {
 	row: GeminiAccountSnapshotRow;

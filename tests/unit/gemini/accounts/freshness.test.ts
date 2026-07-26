@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { capabilityFreshAfterMs } from "../../../../src/gemini/accounts/freshness";
+import { capabilityFreshAfterMs } from "../../../../src/gemini/accounts/pool-snapshot";
 import { assert } from "../../assertions.js";
 
 describe("Gemini account capability freshness", () => {

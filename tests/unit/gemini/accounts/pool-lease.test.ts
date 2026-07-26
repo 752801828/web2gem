@@ -1,11 +1,11 @@
 import { describe, test } from "vitest";
-import type { GeminiAccountOutcome } from "../../../../src/gemini/accounts/runtime-types";
+import type { GeminiAccountOutcome } from "../../../../src/gemini/accounts/types";
 import { assert } from "../../assertions.js";
 import {
 	account,
 	accountContext,
 	createPool,
-	createRuntimeStore,
+	createAccountStore,
 	required,
 	runtimeCall,
 	runtimeConfig,
@@ -20,7 +20,7 @@ describe("gemini account runtime", () => {
 			}),
 			account("later"),
 		];
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [3000, 100], rows),
 		]);
@@ -41,7 +41,7 @@ describe("gemini account runtime", () => {
 	});
 	test("makes a released account selectable again through facade load balancing", async () => {
 		const rows = [account("a"), account("b")];
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [1000, 100], rows),
 		]);
@@ -70,7 +70,7 @@ describe("gemini account runtime", () => {
 	});
 	test("updates account health with one normalized issue model", async () => {
 		const row = account("a");
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [1000, 100], [row]),
 			runtimeCall(
@@ -146,7 +146,7 @@ describe("gemini account runtime", () => {
 			recoveryScope: "try_next_account",
 			nowMs: 1000,
 		};
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [1000, 100], [row]),
 			runtimeCall("writeAccountOutcome", ["cooling", outcome], undefined),
@@ -164,7 +164,7 @@ describe("gemini account runtime", () => {
 	});
 	test("excludes request-attempted accounts before load balancing", async () => {
 		const rows = [account("a"), account("b")];
-		const store = createRuntimeStore([
+		const store = createAccountStore([
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [1000, 100], rows),
 		]);

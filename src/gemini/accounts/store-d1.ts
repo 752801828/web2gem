@@ -1,62 +1,155 @@
-import { isRecord } from "../../shared/types";
+import {
+	boundedGeminiAccountPageLimit,
+	GEMINI_DURABLE_ACCOUNT_ISSUES,
+	type GeminiAccountIssue,
+	geminiAccountState,
+	resultChanged,
+	visibleGeminiAccountIssue,
+} from "./domain";
 import type {
+	D1DatabaseLike,
+	D1PreparedStatementLike,
 	GeminiAccountAdminFilter,
 	GeminiAccountAdminOverview,
 	GeminiAccountAdminStats,
-	GeminiAccountAdminStore,
 	GeminiAccountBulkCreateEntry,
 	GeminiAccountBulkCreateResult,
 	GeminiAccountCreateInput,
 	GeminiAccountIdentityImportResult,
+	GeminiAccountRow,
+	GeminiAccountStore,
 	GeminiAccountSummary,
 	GeminiAccountSummaryPage,
 	GeminiAccountUpdate,
 	GeminiAccountUpdateResult,
-} from "./admin-types";
+} from "./types";
 import {
-	boundedGeminiAccountPageLimit,
-	GEMINI_DURABLE_ACCOUNT_ISSUES,
-} from "./domain";
-import { changedRows } from "./normalize";
-import type { GeminiAccountRuntimeStore } from "./runtime-types";
-import type {
-	D1DatabaseLike,
-	D1PreparedStatementLike,
-	D1Result,
-	GeminiAccountRow,
-} from "./storage-types";
-import {
-	ADMIN_ACCOUNT_SELECT,
-	adminPageFromRows,
-	adminStatsFromRow,
-	adminWhere,
-	type GeminiAccountSummarySqlRow,
-	summaryFromSql,
-} from "./store-d1-admin";
-import {
-	ACCOUNT_UPSERT_IDENTITY_SQL,
-	accountRowValues,
 	buildAccountInsertRow,
-	resultChanged,
+	buildPoolVersionIncrementBeforeImportsSql,
+	importWasCreated,
+	MAX_D1_BOUND_PARAMETERS,
 	valueOrCurrent,
-} from "./store-d1-codec";
-import { D1GeminiAccountRuntimeStore } from "./store-d1-runtime";
+	writeAccountImports,
+} from "./store-d1-import";
+import { D1GeminiAccountStoreBase } from "./store-d1-runtime";
 
-export { isD1UniqueConstraintError } from "./store-d1-codec";
+export const ADMIN_ACCOUNT_SELECT = `
+  id, label, enabled, issue, cooldown_until_ms, last_issue_at_ms,
+  last_used_at_ms, last_refresh_at_ms, status_checked_at_ms,
+  last_refresh_success_at_ms, created_at_ms, updated_at_ms
+`;
 
-const MAX_D1_BOUND_PARAMETERS = 100;
-const MAX_TRANSACTIONAL_ACCOUNT_IMPORTS = 40;
-
-type AccountImportWriteFacts = {
-	mutatedCookieHashes: ReadonlySet<string>;
-	createdIdentityHashes: ReadonlySet<string>;
-	preexistingIds: ReadonlyMap<string, string>;
-	batched: boolean;
+export type GeminiAccountSummarySqlRow = {
+	id: string;
+	label: string | null;
+	enabled: number;
+	issue: GeminiAccountIssue | null;
+	cooldown_until_ms: number | null;
+	last_issue_at_ms: number | null;
+	last_used_at_ms: number | null;
+	last_refresh_at_ms: number | null;
+	status_checked_at_ms: number | null;
+	last_refresh_success_at_ms: number | null;
+	created_at_ms: number;
+	updated_at_ms: number;
 };
 
+export function adminWhere(
+	filter: Partial<GeminiAccountAdminFilter>,
+	nowMs: number,
+): { where: string[]; args: unknown[] } {
+	const args: unknown[] = [];
+	const where: string[] = [];
+	if (filter.cursor) {
+		where.push("id > ?");
+		args.push(filter.cursor);
+	}
+	if (filter.state === "disabled") {
+		where.push("enabled != 1");
+	} else if (filter.state === "cooling") {
+		where.push("enabled = 1 AND cooldown_until_ms > ?");
+		args.push(nowMs);
+	} else if (filter.state === "attention") {
+		where.push(
+			`enabled = 1 AND (cooldown_until_ms IS NULL OR cooldown_until_ms <= ?) AND issue IN (${GEMINI_DURABLE_ACCOUNT_ISSUES.map(() => "?").join(", ")})`,
+		);
+		args.push(nowMs, ...GEMINI_DURABLE_ACCOUNT_ISSUES);
+	} else if (filter.state === "available") {
+		where.push(
+			`enabled = 1 AND (cooldown_until_ms IS NULL OR cooldown_until_ms <= ?) AND (issue IS NULL OR issue NOT IN (${GEMINI_DURABLE_ACCOUNT_ISSUES.map(() => "?").join(", ")}))`,
+		);
+		args.push(nowMs, ...GEMINI_DURABLE_ACCOUNT_ISSUES);
+	}
+	if (filter.q) {
+		const like = `%${escapeSqlLike(filter.q)}%`;
+		where.push(
+			"(id LIKE ? ESCAPE '\\' OR label LIKE ? ESCAPE '\\' OR issue LIKE ? ESCAPE '\\')",
+		);
+		args.push(like, like, like);
+	}
+	return { where, args };
+}
+
+export function summaryFromSql(
+	row: GeminiAccountSummarySqlRow,
+	nowMs: number,
+): GeminiAccountSummary {
+	return {
+		id: row.id,
+		label: row.label,
+		enabled: row.enabled === 1,
+		state: geminiAccountState(row, nowMs),
+		issue: visibleGeminiAccountIssue(row, nowMs),
+		cooldown_until_ms: row.cooldown_until_ms,
+		last_issue_at_ms: row.last_issue_at_ms,
+		last_used_at_ms: row.last_used_at_ms,
+		last_refresh_at_ms: row.last_refresh_at_ms,
+		status_checked_at_ms: row.status_checked_at_ms,
+		last_refresh_success_at_ms: row.last_refresh_success_at_ms,
+		created_at_ms: row.created_at_ms,
+		updated_at_ms: row.updated_at_ms,
+	};
+}
+
+function numberOrZero(value: unknown): number {
+	const n = Number(value);
+	return Number.isFinite(n) ? n : 0;
+}
+
+export function adminPageFromRows(
+	rows: GeminiAccountSummarySqlRow[],
+	requestedLimit: number,
+	nowMs: number,
+): GeminiAccountSummaryPage {
+	const limit = boundedGeminiAccountPageLimit(requestedLimit);
+	const pageRows = rows.slice(0, limit);
+	return {
+		items: pageRows.map((row) => summaryFromSql(row, nowMs)),
+		nextCursor:
+			rows.length > limit ? pageRows[pageRows.length - 1]?.id || null : null,
+		limit,
+	};
+}
+
+export function adminStatsFromRow(
+	row: Partial<GeminiAccountAdminStats> | null | undefined,
+): GeminiAccountAdminStats {
+	return {
+		total: numberOrZero(row?.total),
+		available: numberOrZero(row?.available),
+		cooling: numberOrZero(row?.cooling),
+		attention: numberOrZero(row?.attention),
+		disabled: numberOrZero(row?.disabled),
+	};
+}
+
+function escapeSqlLike(value: string): string {
+	return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
 export class D1GeminiAccountStore
-	extends D1GeminiAccountRuntimeStore
-	implements GeminiAccountAdminStore, GeminiAccountRuntimeStore
+	extends D1GeminiAccountStoreBase
+	implements GeminiAccountStore
 {
 	constructor(db: D1DatabaseLike) {
 		super(db);
@@ -114,11 +207,11 @@ export class D1GeminiAccountStore
 		const column = kind === "cookie" ? "cookie_hash" : "identity_hash";
 		const row = await this.db
 			.prepare(`
-					SELECT ${ADMIN_ACCOUNT_SELECT}
-					FROM gemini_accounts
-					WHERE ${column} = ?
-					LIMIT 1
-				`)
+						SELECT ${ADMIN_ACCOUNT_SELECT}
+						FROM gemini_accounts
+						WHERE ${column} = ?
+						LIMIT 1
+					`)
 			.bind(hash)
 			.first<GeminiAccountSummarySqlRow>();
 		return row ? summaryFromSql(row, nowMs) : null;
@@ -160,158 +253,32 @@ export class D1GeminiAccountStore
 		};
 	}
 
-	private async writeAccountImports(
-		rows: readonly GeminiAccountRow[],
-	): Promise<AccountImportWriteFacts> {
-		const mutatedCookieHashes = new Set<string>();
-		const batch = this.db.batch?.bind(this.db);
-		const batched = batch !== undefined;
-		const createdIdentityHashes = new Set<string>();
-		const preexistingIds = new Map<string, string>();
-		for (
-			let offset = 0;
-			offset < rows.length;
-			offset += MAX_TRANSACTIONAL_ACCOUNT_IMPORTS
-		) {
-			const chunk = rows.slice(
-				offset,
-				offset + MAX_TRANSACTIONAL_ACCOUNT_IMPORTS,
-			);
-			const statements: D1PreparedStatementLike[] = [];
-			const nowMs = chunk[0]?.updated_at_ms ?? Date.now();
-			const fallbackPreexistingIds = batched
-				? null
-				: await this.findImportPreexistingIds(chunk);
-			if (batched) {
-				// The leading write owns the D1 batch transaction before it reads
-				// pre-upsert pairs, so concurrent imports cannot share a stale view.
-				statements.push(this.poolVersionIncrementBeforeImports(nowMs, chunk));
-			}
-			const resultIndexes: { row: GeminiAccountRow; statement: number }[] = [];
-			for (const row of chunk) {
-				const statement = statements.length;
-				statements.push(
-					this.db
-						.prepare(ACCOUNT_UPSERT_IDENTITY_SQL)
-						.bind(...accountRowValues(row)),
-				);
-				resultIndexes.push({ row, statement });
-			}
-			const results = batch
-				? await batch(statements)
-				: await this.runStatements(statements);
-			if (results.length !== statements.length)
-				throw new Error("D1 account import batch returned incomplete results");
-			const preexistingIdsForChunk = batched
-				? readImportPreexistingIds(results[0], chunk)
-				: fallbackPreexistingIds;
-			for (const [identityHash, id] of preexistingIdsForChunk || [])
-				if (id !== null) preexistingIds.set(identityHash, id);
-			let chunkChanged = false;
-			for (const indexes of resultIndexes) {
-				const result = results[indexes.statement];
-				if (!result) throw new Error("D1 account import result was missing");
-				if (importResultChanged(result) > 0) {
-					chunkChanged = true;
-					mutatedCookieHashes.add(indexes.row.cookie_hash);
-					if (
-						batched &&
-						preexistingIdsForChunk?.get(indexes.row.identity_hash) === null
-					)
-						createdIdentityHashes.add(indexes.row.identity_hash);
-				}
-			}
-			if (batched && chunkChanged && preexistingIdsForChunk?.size === 0)
-				throw new Error("D1 account import prestate did not report a mutation");
-			if (!batched && chunkChanged) await this.bumpPoolVersion(nowMs);
-		}
-		return {
-			mutatedCookieHashes,
-			createdIdentityHashes,
-			preexistingIds,
-			batched,
-		};
-	}
-
-	private async runStatements(
-		statements: readonly D1PreparedStatementLike[],
-	): Promise<D1Result[]> {
-		const results: D1Result[] = [];
-		for (const statement of statements) results.push(await statement.run());
-		return results;
-	}
-
-	private async findImportPreexistingIds(
-		rows: readonly GeminiAccountRow[],
-	): Promise<Map<string, string | null>> {
-		const identityHashes = [...new Set(rows.map((row) => row.identity_hash))];
-		const ids = new Map<string, string | null>(
-			identityHashes.map((identityHash) => [identityHash, null]),
+	private writeAccountImports(rows: readonly GeminiAccountRow[]) {
+		return writeAccountImports(
+			{
+				db: this.db,
+				bumpPoolVersion: (nowMs) => this.bumpPoolVersion(nowMs),
+				poolVersionIncrementBeforeImports: (nowMs, importRows) =>
+					this.poolVersionIncrementBeforeImports(nowMs, importRows),
+			},
+			rows,
 		);
-		for (
-			let offset = 0;
-			offset < identityHashes.length;
-			offset += MAX_D1_BOUND_PARAMETERS
-		) {
-			const chunk = identityHashes.slice(
-				offset,
-				offset + MAX_D1_BOUND_PARAMETERS,
-			);
-			const placeholders = chunk.map(() => "?").join(", ");
-			const result = await this.db
-				.prepare(`
-					SELECT identity_hash, id FROM gemini_accounts
-					WHERE identity_hash IN (${placeholders})
-				`)
-				.bind(...chunk)
-				.all<{ identity_hash: string; id: string }>();
-			for (const row of result.results || [])
-				ids.set(row.identity_hash, row.id);
-		}
-		return ids;
 	}
 
 	private poolVersionIncrementBeforeImports(
 		nowMs: number,
 		rows: readonly GeminiAccountRow[],
 	): D1PreparedStatementLike {
-		const uniquePairs = new Map<
-			string,
-			{ identityHash: string; cookieHash: string }
-		>();
-		for (const row of rows) {
-			uniquePairs.set(`${row.identity_hash}\0${row.cookie_hash}`, {
-				identityHash: row.identity_hash,
-				cookieHash: row.cookie_hash,
-			});
-		}
-		const pairs = [...uniquePairs.values()];
-		const requestedPairs = JSON.stringify(
-			pairs.map((pair) => [pair.identityHash, pair.cookieHash]),
-		);
-		return this.poolVersionIncrementStatement(
+		return buildPoolVersionIncrementBeforeImportsSql(
 			nowMs,
-			`WHERE EXISTS (
-				SELECT 1 FROM requested AS requested_pair
-				LEFT JOIN gemini_accounts AS account
-					ON account.identity_hash = requested_pair.identity_hash
-					AND account.cookie_hash = requested_pair.cookie_hash
-				WHERE account.id IS NULL
-			)`,
-			[],
-			{
-				prefix: `WITH requested(identity_hash, cookie_hash) AS (
-					SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]')
-					FROM json_each(?)
-				)`,
-				prefixValues: [requestedPairs],
-				returning: `RETURNING (
-					SELECT json_group_object(requested_pair.identity_hash, account.id)
-					FROM requested AS requested_pair
-					LEFT JOIN gemini_accounts AS account
-						ON account.identity_hash = requested_pair.identity_hash
-				) AS preexisting_ids`,
-			},
+			rows,
+			(versionNowMs, condition, conditionValues, options) =>
+				this.poolVersionIncrementStatement(
+					versionNowMs,
+					condition,
+					conditionValues,
+					options,
+				),
 		);
 	}
 
@@ -513,10 +480,10 @@ export class D1GeminiAccountStore
 			const placeholders = chunk.map(() => "?").join(", ");
 			const result = await this.db
 				.prepare(`
-						SELECT identity_hash, ${ADMIN_ACCOUNT_SELECT}
-						FROM gemini_accounts
-						WHERE identity_hash IN (${placeholders})
-					`)
+							SELECT identity_hash, ${ADMIN_ACCOUNT_SELECT}
+							FROM gemini_accounts
+							WHERE identity_hash IN (${placeholders})
+						`)
 				.bind(...chunk)
 				.all<GeminiAccountSummarySqlRow & { identity_hash: string }>();
 			for (const row of result.results || [])
@@ -540,10 +507,10 @@ export class D1GeminiAccountStore
 			const placeholders = chunk.map(() => "?").join(", ");
 			const result = await this.db
 				.prepare(`
-						SELECT identity_hash, id
-						FROM gemini_accounts
-						WHERE identity_hash IN (${placeholders})
-					`)
+							SELECT identity_hash, id
+							FROM gemini_accounts
+							WHERE identity_hash IN (${placeholders})
+						`)
 				.bind(...chunk)
 				.all<{ identity_hash: string; id: string }>();
 			for (const row of result.results || [])
@@ -551,52 +518,4 @@ export class D1GeminiAccountStore
 		}
 		return ids;
 	}
-}
-
-function importWasCreated(
-	facts: AccountImportWriteFacts,
-	row: GeminiAccountRow,
-	canonicalId: string,
-): boolean {
-	if (facts.createdIdentityHashes.has(row.identity_hash)) return true;
-	if (facts.batched) return false;
-	const preexistingId = facts.preexistingIds.get(row.identity_hash);
-	if (preexistingId === undefined) return canonicalId === row.id;
-	return canonicalId === row.id && canonicalId !== preexistingId;
-}
-
-function readImportPreexistingIds(
-	result: D1Result | undefined,
-	rows: readonly GeminiAccountRow[],
-): Map<string, string | null> {
-	if (!result) throw new Error("D1 account import version result was missing");
-	if (importResultChanged(result) === 0) return new Map();
-	const returned = result.results?.[0];
-	if (!isRecord(returned) || typeof returned.preexisting_ids !== "string")
-		throw new Error("D1 account import prestate result was missing");
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(returned.preexisting_ids);
-	} catch {
-		throw new Error("D1 account import prestate result was invalid");
-	}
-	if (!isRecord(parsed))
-		throw new Error("D1 account import prestate result was invalid");
-	const ids = new Map<string, string | null>();
-	for (const row of rows) {
-		if (!Object.hasOwn(parsed, row.identity_hash))
-			throw new Error("D1 account import prestate identity was missing");
-		const id = parsed[row.identity_hash];
-		if (id !== null && typeof id !== "string")
-			throw new Error("D1 account import prestate identity was invalid");
-		ids.set(row.identity_hash, id);
-	}
-	return ids;
-}
-
-function importResultChanged(result: D1Result): number {
-	const changed = changedRows(result.meta);
-	if (changed === null)
-		throw new Error("D1 account import result did not report changed rows");
-	return changed;
 }

@@ -1,6 +1,6 @@
 import { describe, test } from "vitest";
 import { verifyGeminiAccount } from "../../../../src/gemini/accounts/probe";
-import type { GeminiAccountProbe } from "../../../../src/gemini/accounts/probe-types";
+import type { GeminiAccountProbe } from "../../../../src/gemini/accounts/probe";
 import { withFetch } from "../../_support/globals.js";
 import { assert } from "../../assertions.js";
 import { baseGeminiClientConfig } from "../_support/client-fixtures.js";

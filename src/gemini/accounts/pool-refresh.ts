@@ -4,28 +4,22 @@ import {
 	mergeSetCookieHeaders,
 	parseCookieHeader,
 } from "../cookies";
-import { createAccountSessionConfig, type PoolLease } from "./lease";
-import type {
-	GeminiAccountCookieRotator,
-	GeminiAccountRefreshResult,
-} from "./lease";
 import {
 	identityHashFromCookie,
 	normalizeGeminiCookieHeader,
 	sha256Hex,
 } from "./domain";
-import {
-	type PoolAccountState,
-	applyRefreshToSnapshot,
-} from "./pool-snapshot";
+import type {
+	GeminiAccountCookieRotator,
+	GeminiAccountRefreshResult,
+} from "./lease";
+import { createAccountSessionConfig, type PoolLease } from "./lease";
+import { applyRefreshToSnapshot, type PoolAccountState } from "./pool-snapshot";
 import type {
 	GeminiAccountVerificationLevel,
 	GeminiAccountVerifier,
 } from "./probe";
-import type {
-	GeminiAccountStore,
-	GeminiAccountSnapshotRow,
-} from "./types";
+import type { GeminiAccountSnapshotRow, GeminiAccountStore } from "./types";
 
 export type PoolRefreshHost = {
 	store: GeminiAccountStore;

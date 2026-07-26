@@ -3,7 +3,7 @@ import { isRecord } from "../../../../src/shared/types";
 import {
 	identityHashFromCookie,
 	sha256Hex,
-} from "../../../../src/gemini/accounts/normalize";
+} from "../../../../src/gemini/accounts/domain";
 import { deferred, type Deferred } from "../../_support/deferred.js";
 import { baseConfig } from "../../_support/runtime-config.js";
 import { assert } from "../../assertions.js";
@@ -13,7 +13,6 @@ import {
 } from "./_support/admin-service-fixtures.js";
 import {
 	accountSqlRow,
-	accountSummary,
 	createAccountStoreDouble,
 } from "./_support/store-fixtures.js";
 
@@ -30,24 +29,19 @@ function unknownArray(value: unknown, name: string): readonly unknown[] {
 }
 
 describe("Gemini account admin service imports", () => {
-	test("preserves created, changed, and unchanged facts in fallback stores", async () => {
+	test("preserves created, changed, and unchanged facts from bulk import results", async () => {
 		const store = createAccountStoreDouble({
-			importAccountByIdentity: [
-				{ result: { item: accountSummary("created"), outcome: "created" } },
-				{
-					result: {
-						item: accountSummary("changed"),
-						outcome: "credentials_changed",
-					},
+			createAccountsBulk: {
+				result: {
+					createdAccountIds: new Set(["created"]),
+					changedCredentialCount: 1,
 				},
-				{ result: { item: accountSummary("unchanged"), outcome: "unchanged" } },
-			],
+			},
 			getAccountForRefresh: {
 				args: ["created"],
 				result: null,
 			},
 		});
-		delete store.createAccountsBulk;
 		const result = await createService(store).create({
 			provider: "gemini",
 			accounts: [

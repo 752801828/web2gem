@@ -4,14 +4,13 @@ import {
 	type GeminiAccountAdminServiceOptions,
 } from "../../../../../src/gemini/accounts/admin";
 import type {
-	GeminiAccountAdminStore,
 	GeminiAccountMutationError,
 	GeminiAccountMutationResult,
-} from "../../../../../src/gemini/accounts/admin-types";
-import type { GeminiAccountRuntimeStore } from "../../../../../src/gemini/accounts/runtime-types";
+} from "../../../../../src/gemini/accounts/types";
+import type { GeminiAccountStore } from "../../../../../src/gemini/accounts/types";
 import { baseConfig } from "../../../_support/runtime-config.js";
 
-type AccountStore = GeminiAccountAdminStore & GeminiAccountRuntimeStore;
+type AccountStore = GeminiAccountStore;
 
 type ServiceOverrides = Pick<
 	GeminiAccountAdminServiceOptions,
@@ -51,8 +50,7 @@ export function createService(
 	overrides: ServiceOverrides = {},
 ) {
 	return new GeminiAccountAdminService({
-		adminStore: store,
-		runtimeStore: store,
+		store,
 		cfg: serviceConfig(overrides.cfg),
 		nowMs: overrides.nowMs || (() => 1000),
 		rotateCookie:

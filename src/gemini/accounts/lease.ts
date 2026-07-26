@@ -1,15 +1,51 @@
 import type { RuntimeConfig } from "../../config";
 import { extractCookieValue } from "../cookies";
-import type {
-	GeminiAccountLease,
-	GeminiAccountRefreshResult,
-} from "./lease-types";
-import { normalizeGeminiCookieHeader } from "./normalize";
-import type {
-	GeminiAccountModelCapability,
-	GeminiRouteTuple,
-} from "./route-types";
-import type { GeminiAccountSnapshotRow } from "./runtime-types";
+import { normalizeGeminiCookieHeader } from "./domain";
+import type { GeminiAccountModelCapability, GeminiRouteTuple } from "./routes";
+import type { GeminiAccountSecretRow, GeminiAccountSnapshotRow } from "./types";
+
+export type GeminiAccountCookieRotator = (input: {
+	config: RuntimeConfig;
+	account: GeminiAccountSecretRow;
+}) => Promise<GeminiAccountRotateResponse>;
+
+export type GeminiAccountRotateResponse = {
+	status: number;
+	ok: boolean;
+	headers: Headers;
+};
+
+export type GeminiAccountLease = {
+	accountId: string;
+	selectedRoute: GeminiRouteTuple | null;
+	modelCapability: GeminiAccountModelCapability | null;
+	config: RuntimeConfig;
+	refreshForRetry(reason?: string): Promise<GeminiAccountRefreshResult>;
+	markSuccess(nowMs?: number): Promise<void>;
+	markFailure(error: unknown, nowMs?: number): Promise<void>;
+	flushObservedCookies(): Promise<void>;
+	maintainSessionIfStale(intervalMs: number): Promise<void>;
+	release(): void;
+};
+
+export type GeminiAccountRefreshReason =
+	| "missing_secure_1psid"
+	| "recent_rotation"
+	| "lock_conflict"
+	| "account_missing"
+	| "rotation_rejected"
+	| "rotation_failed"
+	| "rotation_no_update"
+	| "rotation_duplicate"
+	| "rotation_updated"
+	| "missing_page_at_token"
+	| "status_probe_failed"
+	| "status_restricted";
+
+export type GeminiAccountRefreshResult = {
+	changed: boolean;
+	reason: GeminiAccountRefreshReason;
+};
 
 const MAX_OBSERVED_SET_COOKIE_HEADERS = 64;
 const MAX_OBSERVED_SET_COOKIE_CHARS = 8192;
@@ -55,7 +91,7 @@ export class PoolLease implements GeminiAccountLease {
 		this.cookieHeader = row.cookie_header;
 		this.cookieHash = row.cookie_hash;
 		this.lastRefreshSuccessAtMs = Number(row.last_refresh_success_at_ms) || 0;
-		this.config = createAccountRuntimeConfig(baseConfig, row, (values) =>
+		this.config = createAccountSessionConfig(baseConfig, row, (values) =>
 			this.observeSetCookie(values),
 		);
 	}
@@ -89,7 +125,7 @@ export class PoolLease implements GeminiAccountLease {
 		this.lastRefreshSuccessAtMs = refreshedAtMs;
 		this.config =
 			config ||
-			createAccountRuntimeConfig(
+			createAccountSessionConfig(
 				this.config,
 				{
 					id: this.accountId,
@@ -134,7 +170,7 @@ export class PoolLease implements GeminiAccountLease {
 	}
 }
 
-export function createAccountRuntimeConfig(
+export function createAccountSessionConfig(
 	baseConfig: RuntimeConfig,
 	row: Pick<GeminiAccountSnapshotRow, "id" | "cookie_header" | "cookie_hash">,
 	observeSetCookie?: (values: readonly string[]) => void,
