@@ -8,13 +8,13 @@ import {
 	extractGeminiPushId,
 	type GeminiAppPageTokens,
 } from "../app-page";
-import { createOriginScopedStringCache } from "../cache";
-import { GEMINI_WEB_USER_AGENT } from "../constants";
+import { createOriginScopedStringCache, geminiOrigin } from "../cache";
+import { GEMINI_WEB_USER_AGENT } from "../client/protocol";
 import {
 	configWithFreshGeminiCookie,
 	observeGeminiAccountResponseCookies,
 } from "../cookies";
-import { httpFetch } from "../transport";
+import { httpFetch } from "../transport/http";
 import { contentPushUploadError } from "./errors";
 
 type PageTokens = GeminiAppPageTokens;
@@ -24,7 +24,6 @@ type ContentPushUploadTokens = {
 	pushId: string;
 };
 
-const GEMINI_UPLOAD_USER_AGENT = GEMINI_WEB_USER_AGENT;
 const GEMINI_PUSH_ID_CACHE_TTL_SEC = 12 * 60 * 60;
 let _pageTokens: PageTokenCache = { key: "", tokens: null, ts: 0 };
 let _pageTokensPending: PageTokenPending = { key: "", promise: null };
@@ -97,28 +96,22 @@ export async function getFreshPageTokensForConfig(
 	activeCfg: RuntimeConfig,
 ): Promise<PageTokens> {
 	const headers: Record<string, string> = {
-		"User-Agent": GEMINI_UPLOAD_USER_AGENT,
+		"User-Agent": GEMINI_WEB_USER_AGENT,
 		"Accept-Language": "en-US,en;q=0.9",
 	};
 	if (activeCfg.cookie) headers.Cookie = activeCfg.cookie;
-	const resp = await httpFetch(
-		`${activeCfg.gemini_origin || "https://gemini.google.com"}/app`,
-		{
-			headers,
-			timeoutMs: 30000,
-			socket: activeCfg.upstream_socket,
-			cfg: activeCfg,
-		},
-	);
+	const resp = await httpFetch(`${geminiOrigin(activeCfg)}/app`, {
+		headers,
+		timeoutMs: 30000,
+		socket: activeCfg.upstream_socket,
+		cfg: activeCfg,
+	});
 	observeGeminiAccountResponseCookies(activeCfg, resp);
 	return extractGeminiAppPageTokens(resp);
 }
 
 async function pageTokenCacheKey(cfg: RuntimeConfig): Promise<string> {
-	const origin = (cfg.gemini_origin || "https://gemini.google.com").replace(
-		/\/$/,
-		"",
-	);
+	const origin = geminiOrigin(cfg);
 	const account = cfg.gemini_account;
 	if (account) {
 		return `${origin}\x00account:${account.accountId || ""}\x00cookie:${account.cookieHash || ""}`;
@@ -184,19 +177,16 @@ async function fetchFreshGeminiPushId(cfg: RuntimeConfig): Promise<string> {
 	const activeCfg = await configWithFreshGeminiCookie(cfg);
 	try {
 		const headers: Record<string, string> = {
-			"User-Agent": GEMINI_UPLOAD_USER_AGENT,
+			"User-Agent": GEMINI_WEB_USER_AGENT,
 			"Accept-Language": "en-US,en;q=0.9",
 		};
 		if (activeCfg.cookie) headers.Cookie = activeCfg.cookie;
-		const resp = await httpFetch(
-			`${activeCfg.gemini_origin || "https://gemini.google.com"}/app`,
-			{
-				headers,
-				timeoutMs: 30000,
-				socket: activeCfg.upstream_socket,
-				cfg: activeCfg,
-			},
-		);
+		const resp = await httpFetch(`${geminiOrigin(activeCfg)}/app`, {
+			headers,
+			timeoutMs: 30000,
+			socket: activeCfg.upstream_socket,
+			cfg: activeCfg,
+		});
 		observeGeminiAccountResponseCookies(activeCfg, resp);
 		const pushId = validGeminiPushId(await extractGeminiPushId(resp));
 		if (!pushId) {

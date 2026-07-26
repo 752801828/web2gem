@@ -16,19 +16,19 @@ import { isAbortError } from "../shared/abort";
 import { uuid } from "../shared/crypto";
 import type { GeminiAuthenticatedSessionReason } from "../shared/errors";
 import { promptByteLengthGreaterThan } from "../shared/text-metrics";
-import { capabilityFreshAfterMs } from "./accounts/freshness";
-import type { GeminiAccountRuntime } from "./accounts/runtime";
+import type { AccountPoolService } from "./accounts/pool";
+import { capabilityFreshAfterMs } from "./accounts/pool-snapshot";
 import {
 	generate,
 	generateRich as generateGeminiRich,
 	generateStream,
 } from "./client";
 import { upstreamEmptyResponseError } from "./client/errors";
-import { buildGeminiModelHeaders } from "./client/model-headers";
+import { buildGeminiModelHeaders } from "./client/protocol";
 import { GeminiAccountAttemptOrchestrator } from "./completion-attempts";
 import { logGeminiRoute, routeForModelAndLease } from "./completion-routing";
 import { type GeminiUploadDelegates, UploadReplayState } from "./upload-replay";
-import { resolveAttachments, uploadTextFile } from "./uploads";
+import { resolveAttachments, uploadTextFile } from "./uploads/execute";
 
 type ResolvedModelOK = Extract<ResolvedModel, { name: string }>;
 type GeminiClientDelegates = {
@@ -38,7 +38,7 @@ type GeminiClientDelegates = {
 };
 
 export type GeminiCompletionProviderOptions = {
-	accountRuntime?: GeminiAccountRuntime | null;
+	accountPool?: AccountPoolService | null;
 	client?: Partial<GeminiClientDelegates>;
 	uploads?: Partial<GeminiUploadDelegates>;
 };
@@ -47,7 +47,7 @@ export function createGeminiCompletionProvider(
 	cfg: RuntimeConfig,
 	providerOptions: GeminiCompletionProviderOptions = {},
 ): CompletionProvider {
-	const runtime = providerOptions.accountRuntime || null;
+	const accountPool = providerOptions.accountPool || null;
 	const anonymousCfg: RuntimeConfig = { ...cfg, cookie: "", sapisid: "" };
 	const providerSessionId = uuid().toUpperCase();
 	const client: GeminiClientDelegates = {
@@ -61,7 +61,11 @@ export function createGeminiCompletionProvider(
 		uploadTextFile: providerOptions.uploads?.uploadTextFile || uploadTextFile,
 	};
 	const uploads = new UploadReplayState(uploadDelegates);
-	const attempts = new GeminiAccountAttemptOrchestrator(cfg, runtime, uploads);
+	const attempts = new GeminiAccountAttemptOrchestrator(
+		cfg,
+		accountPool,
+		uploads,
+	);
 
 	const withAnonymousFallback = async <T>(
 		anonymousCall: (activeCfg: RuntimeConfig) => Promise<T>,
@@ -91,14 +95,14 @@ export function createGeminiCompletionProvider(
 
 	return {
 		supportsAuthenticatedSession: !!(
-			runtime || cfg.supports_authenticated_session
+			accountPool || cfg.supports_authenticated_session
 		),
 		async resolveModel(name: unknown, defaultName: unknown) {
 			const staticResolved = resolveStaticModel(name, defaultName);
 			const resolved =
-				staticResolved.name !== undefined || !runtime
+				staticResolved.name !== undefined || !accountPool
 					? staticResolved
-					: await runtime.resolveModel(
+					: await accountPool.resolveModel(
 							name,
 							defaultName,
 							capabilityFreshAfterMs(

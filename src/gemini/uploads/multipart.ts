@@ -2,8 +2,8 @@ import type { RuntimeConfig } from "../../config";
 import { sanitizeUploadFilename } from "../../attachments/mime";
 import { TEXT_ENCODER } from "../../shared/encoding";
 import { bytesToHex } from "../../shared/crypto";
-import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { cancelResponseBody, httpFetch } from "../transport";
+import { GEMINI_WEB_USER_AGENT } from "../client/protocol";
+import { cancelResponseBody, httpFetch } from "../transport/http";
 import { contentPushUploadError, validateContentPushFileRef } from "./errors";
 import {
 	contentPushUploadTokens,
@@ -91,9 +91,7 @@ function shouldRefreshPushIdAfterStatus(status: unknown): boolean {
 	return code === 401 || code === 403 || code === 415;
 }
 
-export function buildMultipartFileBody(
-	input: UploadBytesInput,
-): MultipartFileBody {
+function buildMultipartFileBody(input: UploadBytesInput): MultipartFileBody {
 	const boundary = `----web2gem-${randomBoundarySuffix()}`;
 	const filename = escapeMultipartFilename(input.filename || "upload.bin");
 	const mime =

@@ -3,11 +3,10 @@ import { createAttachmentPlan } from "../../../src/attachments/plan";
 import { uploadedAttachmentResult as attachmentResult } from "../attachments/_support/result.js";
 import type { CompletionProvider } from "../../../src/completion/ports";
 import type { RuntimeConfig } from "../../../src/config";
-import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease-types";
+import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease";
 import { AccountPoolService } from "../../../src/gemini/accounts/pool";
 import { basicRouteForFamily } from "../../../src/gemini/accounts/routes";
-import { GeminiAccountRuntime } from "../../../src/gemini/accounts/runtime";
-import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/runtime-types";
+import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/types";
 import {
 	createGeminiCompletionProvider,
 	type GeminiCompletionProviderOptions,
@@ -23,10 +22,11 @@ import {
 	failFastClient,
 	failFastUploads,
 	proModel,
+	requestScopedError,
 	requireAccount,
 	requireItem,
 } from "./_support/completion-provider-fixtures.js";
-import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
+import { createAccountStore } from "./accounts/_support/runtime-fixtures.js";
 
 type LifecycleEvent = [string, ...unknown[]];
 type LeaseOverrides = {
@@ -34,10 +34,7 @@ type LeaseOverrides = {
 	markFailure?: (error: unknown) => unknown;
 	maintainSessionIfStale?: (intervalMs: number) => unknown;
 };
-type TestProvider = CompletionProvider &
-	Required<
-		Pick<CompletionProvider, "resolveModel" | "generateRich" | "dispose">
-	>;
+type TestProvider = CompletionProvider;
 
 function lifecycleLease(
 	config: RuntimeConfig,
@@ -88,7 +85,7 @@ type AcquireRecord = {
 	options: GeminiAccountAcquireOptions & { excludeAccountIds: string[] };
 };
 
-function singleLeaseRuntime(lease: GeminiAccountLease): GeminiAccountRuntime & {
+function singleLeaseRuntime(lease: GeminiAccountLease): AccountPoolService & {
 	records: {
 		route: [ResolvedModelOk, number][];
 		acquire: AcquireRecord[];
@@ -99,13 +96,11 @@ function singleLeaseRuntime(lease: GeminiAccountLease): GeminiAccountRuntime & {
 		acquire: AcquireRecord[];
 	} = { route: [], acquire: [] };
 	let acquired = false;
-	const runtime = new GeminiAccountRuntime(
-		new AccountPoolService(createRuntimeStore([]), {
-			async rotateCookie() {
-				throw new Error("unexpected cookie rotation");
-			},
-		}),
-	);
+	const runtime = new AccountPoolService(createAccountStore([]), {
+		async rotateCookie() {
+			throw new Error("unexpected cookie rotation");
+		},
+	});
 	runtime.routeCandidatesForModel = async (model, freshAfterMs) => {
 		records.route.push([model, freshAfterMs]);
 		if (!model.family) throw new Error("expected static model family");
@@ -133,20 +128,11 @@ function createTestProvider(
 	cfg: RuntimeConfig,
 	options: GeminiCompletionProviderOptions,
 ): TestProvider {
-	const provider = createGeminiCompletionProvider(cfg, {
+	return createGeminiCompletionProvider(cfg, {
 		...options,
 		client: failFastClient(options.client),
 		uploads: failFastUploads(options.uploads),
 	});
-	const { resolveModel, generateRich, dispose } = provider;
-	if (!resolveModel || !generateRich || !dispose) {
-		throw new Error("expected complete Gemini provider contract");
-	}
-	return Object.assign(provider, { resolveModel, generateRich, dispose });
-}
-
-function requestScopedError(message: string) {
-	return Object.assign(new Error(message), { code: "invalid_model" });
 }
 
 describe("Gemini account lease lifecycle", () => {
@@ -157,7 +143,7 @@ describe("Gemini account lease lifecycle", () => {
 		const runtime = singleLeaseRuntime(lifecycleLease(selectedCfg, events));
 		const seenConfigs: RuntimeConfig[] = [];
 		const provider = createTestProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			uploads: {
 				async resolveAttachments(activeCfg) {
 					seenConfigs.push(activeCfg);
@@ -216,7 +202,7 @@ describe("Gemini account lease lifecycle", () => {
 		const events: LifecycleEvent[] = [];
 		const uploadError = requestScopedError("model invalid upload");
 		const provider = createTestProvider(cfg, {
-			accountRuntime: singleLeaseRuntime(
+			accountPool: singleLeaseRuntime(
 				lifecycleLease(accountConfig("upload-failure", cfg), events),
 			),
 			uploads: {
@@ -243,7 +229,7 @@ describe("Gemini account lease lifecycle", () => {
 		const cfg = baseGeminiClientConfig();
 		const events: LifecycleEvent[] = [];
 		const provider = createTestProvider(cfg, {
-			accountRuntime: singleLeaseRuntime(
+			accountPool: singleLeaseRuntime(
 				lifecycleLease(accountConfig("stream-success", cfg), events),
 			),
 			client: {
@@ -279,7 +265,7 @@ describe("Gemini account lease lifecycle", () => {
 		const events: LifecycleEvent[] = [];
 		const streamError = new Error("account stream broke");
 		const provider = createTestProvider(cfg, {
-			accountRuntime: singleLeaseRuntime(
+			accountPool: singleLeaseRuntime(
 				lifecycleLease(accountConfig("stream-failure", cfg), events),
 			),
 			client: {
@@ -318,7 +304,7 @@ describe("Gemini account lease lifecycle", () => {
 			},
 		});
 		const provider = createTestProvider(cfg, {
-			accountRuntime: singleLeaseRuntime(lease),
+			accountPool: singleLeaseRuntime(lease),
 			client: {
 				async generate() {
 					return "stable result";
@@ -366,7 +352,7 @@ describe("Gemini account lease lifecycle", () => {
 			},
 		});
 		const provider = createTestProvider(cfg, {
-			accountRuntime: singleLeaseRuntime(lease),
+			accountPool: singleLeaseRuntime(lease),
 			client: {
 				async generate() {
 					return "stable result";
@@ -426,7 +412,7 @@ describe("Gemini account lease lifecycle", () => {
 			},
 		});
 		const provider = createTestProvider(cfg, {
-			accountRuntime: singleLeaseRuntime(lease),
+			accountPool: singleLeaseRuntime(lease),
 			client: {
 				async generate() {
 					return "scheduled";
@@ -484,7 +470,7 @@ describe("Gemini account lease lifecycle", () => {
 			},
 		);
 		const provider = createTestProvider(cfg, {
-			accountRuntime: singleLeaseRuntime(lease),
+			accountPool: singleLeaseRuntime(lease),
 			client: {
 				async generate() {
 					return "stable";
@@ -524,7 +510,7 @@ describe("Gemini account lease lifecycle", () => {
 		});
 		const events: LifecycleEvent[] = [];
 		const provider = createTestProvider(cfg, {
-			accountRuntime: singleLeaseRuntime(
+			accountPool: singleLeaseRuntime(
 				lifecycleLease(accountConfig("waituntil", cfg), events),
 			),
 			client: {
@@ -567,7 +553,7 @@ describe("Gemini account lease lifecycle", () => {
 			},
 		});
 		const provider = createTestProvider(cfg, {
-			accountRuntime: singleLeaseRuntime(lease),
+			accountPool: singleLeaseRuntime(lease),
 			client: {
 				async generate() {
 					throw originalError;
@@ -610,7 +596,7 @@ describe("Gemini account lease lifecycle", () => {
 		);
 		let uploadCalls = 0;
 		const provider = createTestProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			client: {},
 			uploads: {
 				async uploadTextFile(_activeCfg, _text, filename) {

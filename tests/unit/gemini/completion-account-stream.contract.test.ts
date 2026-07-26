@@ -1,18 +1,16 @@
 import { describe, test } from "vitest";
 import type { CompletionProvider } from "../../../src/completion/ports";
 import type { RuntimeConfig } from "../../../src/config";
-import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease-types";
-import { AccountPoolService } from "../../../src/gemini/accounts/pool";
-import type { GeminiRouteTuple } from "../../../src/gemini/accounts/route-types";
+import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease";
+import type { AccountPoolService } from "../../../src/gemini/accounts/pool";
+import type { GeminiRouteTuple } from "../../../src/gemini/accounts/routes";
 import { basicRouteForFamily } from "../../../src/gemini/accounts/routes";
-import type { GeminiAccountRuntime } from "../../../src/gemini/accounts/runtime";
-import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/runtime-types";
+import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/types";
 import type { generateStream as geminiGenerateStream } from "../../../src/gemini/client";
 import { createGeminiCompletionProvider } from "../../../src/gemini/completion-provider";
 import type { ResolvedModelOk } from "../../../src/models";
 import { assert } from "../assertions.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
-import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
 
 type GenerateStream = typeof geminiGenerateStream;
 
@@ -87,24 +85,26 @@ function streamLease(
 function streamRuntime(
 	leases: GeminiAccountLease[],
 	routeCandidates: GeminiRouteTuple[],
-): GeminiAccountRuntime & { acquire: string[][] } {
+): {
+	acquire: string[][];
+	resolveModel: AccountPoolService["resolveModel"];
+	modelCatalog: AccountPoolService["modelCatalog"];
+	modelRoutingOverview: AccountPoolService["modelRoutingOverview"];
+	routeCandidatesForModel: AccountPoolService["routeCandidatesForModel"];
+	acquireLease: AccountPoolService["acquireLease"];
+} {
 	const pending = [...leases];
 	const acquire: string[][] = [];
 	return {
-		pool: new AccountPoolService(createRuntimeStore([]), {
-			async rotateCookie() {
-				throw new Error("unexpected cookie rotation");
-			},
-		}),
 		acquire,
 		async resolveModel(): Promise<never> {
-			throw new Error("unexpected runtime.resolveModel call");
+			throw new Error("unexpected accountPool.resolveModel call");
 		},
 		async modelCatalog(): Promise<never> {
-			throw new Error("unexpected runtime.modelCatalog call");
+			throw new Error("unexpected accountPool.modelCatalog call");
 		},
 		async modelRoutingOverview(): Promise<never> {
-			throw new Error("unexpected runtime.modelRoutingOverview call");
+			throw new Error("unexpected accountPool.modelRoutingOverview call");
 		},
 		async routeCandidatesForModel() {
 			return routeCandidates;
@@ -122,11 +122,11 @@ function streamRuntime(
 }
 
 function createStreamProvider(
-	runtime: GeminiAccountRuntime,
+	runtime: ReturnType<typeof streamRuntime>,
 	generateStream: GenerateStream,
 ): CompletionProvider {
 	return createGeminiCompletionProvider(baseGeminiClientConfig(), {
-		accountRuntime: runtime,
+		accountPool: runtime as unknown as AccountPoolService,
 		client: {
 			async generate() {
 				throw new Error("unexpected client.generate call");

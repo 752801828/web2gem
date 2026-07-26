@@ -4,11 +4,10 @@ import type { AttachmentPlan } from "../../../src/attachments/types";
 import { uploadedAttachmentResult as attachmentResult } from "../attachments/_support/result.js";
 import type { CompletionProvider } from "../../../src/completion/ports";
 import type { RuntimeConfig } from "../../../src/config";
-import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease-types";
+import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease";
 import { AccountPoolService } from "../../../src/gemini/accounts/pool";
 import { basicRouteForFamily } from "../../../src/gemini/accounts/routes";
-import { GeminiAccountRuntime } from "../../../src/gemini/accounts/runtime";
-import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/runtime-types";
+import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/types";
 import {
 	createGeminiCompletionProvider,
 	type GeminiCompletionProviderOptions,
@@ -22,18 +21,18 @@ import {
 	errorRecord,
 	failFastClient,
 	failFastUploads,
+	rateLimitError,
 	requireAccount,
 	requireItem,
 } from "./_support/completion-provider-fixtures.js";
-import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
+import { createAccountStore } from "./accounts/_support/runtime-fixtures.js";
 
 type LifecycleEvent = [string, ...unknown[]];
 type UploadCall =
 	| [kind: "attachments", accountId: string, plan: AttachmentPlan]
 	| [kind: "text", accountId: string, text: string, filename: string];
 type GenerateCall = [accountId: string, refs: unknown[]];
-type TestProvider = CompletionProvider &
-	Required<Pick<CompletionProvider, "resolveModel">>;
+type TestProvider = CompletionProvider;
 
 function replayLease(
 	accountId: string,
@@ -75,7 +74,7 @@ type AcquisitionRecord = {
 	routeRequirement: GeminiAccountAcquireOptions["routeRequirement"];
 };
 
-function scriptedRuntime(leases: GeminiAccountLease[]): GeminiAccountRuntime & {
+function scriptedRuntime(leases: GeminiAccountLease[]): AccountPoolService & {
 	records: {
 		route: [ResolvedModelOk, number][];
 		acquire: AcquisitionRecord[];
@@ -86,13 +85,11 @@ function scriptedRuntime(leases: GeminiAccountLease[]): GeminiAccountRuntime & {
 		route: [ResolvedModelOk, number][];
 		acquire: AcquisitionRecord[];
 	} = { route: [], acquire: [] };
-	const runtime = new GeminiAccountRuntime(
-		new AccountPoolService(createRuntimeStore([]), {
-			async rotateCookie() {
-				throw new Error("unexpected cookie rotation");
-			},
-		}),
-	);
+	const runtime = new AccountPoolService(createAccountStore([]), {
+		async rotateCookie() {
+			throw new Error("unexpected cookie rotation");
+		},
+	});
 	runtime.routeCandidatesForModel = async (
 		model: ResolvedModelOk,
 		freshAfterMs: number,
@@ -121,18 +118,11 @@ function createTestProvider(
 	cfg: RuntimeConfig,
 	options: GeminiCompletionProviderOptions,
 ): TestProvider {
-	const provider = createGeminiCompletionProvider(cfg, {
+	return createGeminiCompletionProvider(cfg, {
 		...options,
 		client: failFastClient(options.client),
 		uploads: failFastUploads(options.uploads),
 	});
-	const { resolveModel } = provider;
-	if (!resolveModel) throw new Error("expected model resolver");
-	return Object.assign(provider, { resolveModel });
-}
-
-function rateLimitError(accountId: string) {
-	return Object.assign(new Error(`rate limited ${accountId}`), { status: 429 });
 }
 
 describe("Gemini upload replay failover", () => {
@@ -146,7 +136,7 @@ describe("Gemini upload replay failover", () => {
 		const uploadCalls: UploadCall[] = [];
 		const generateCalls: GenerateCall[] = [];
 		const provider = createTestProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			uploads: {
 				async resolveAttachments(activeCfg, activePlan) {
 					const accountId = requireAccount(activeCfg).accountId;
@@ -231,7 +221,7 @@ describe("Gemini upload replay failover", () => {
 		const uploadCalls: [string, AttachmentPlan][] = [];
 		const generateCalls: GenerateCall[] = [];
 		const provider = createTestProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			uploads: {
 				async resolveAttachments(activeCfg, activePlan) {
 					const accountId = requireAccount(activeCfg).accountId;
@@ -303,7 +293,7 @@ describe("Gemini upload replay failover", () => {
 		const runtime = scriptedRuntime([replayLease("opaque", events)]);
 		const upstreamError = rateLimitError("opaque");
 		const provider = createTestProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			client: {
 				async generate() {
 					throw upstreamError;
@@ -343,7 +333,7 @@ describe("Gemini upload replay failover", () => {
 		const generateAccounts: string[] = [];
 		let attachmentCalls = 0;
 		const provider = createTestProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			uploads: {
 				async resolveAttachments(activeCfg) {
 					attachmentCalls += 1;

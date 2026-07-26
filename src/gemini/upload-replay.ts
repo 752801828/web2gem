@@ -6,7 +6,7 @@ import type {
 import type { CompletionTextInput } from "../completion/ports";
 import type { RuntimeConfig } from "../config";
 import type { ErrorWithMetadata } from "../shared/types";
-import type { resolveAttachments, uploadTextFile } from "./uploads";
+import type { resolveAttachments, uploadTextFile } from "./uploads/execute";
 
 export type GeminiUploadDelegates = {
 	resolveAttachments: typeof resolveAttachments;

@@ -6,12 +6,11 @@ import type {
 } from "../../../src/attachments/types";
 import type { CompletionProvider } from "../../../src/completion/ports";
 import type { RuntimeConfig } from "../../../src/config";
-import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease-types";
+import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease";
 import { AccountPoolService } from "../../../src/gemini/accounts/pool";
-import type { GeminiRouteTuple } from "../../../src/gemini/accounts/route-types";
+import type { GeminiRouteTuple } from "../../../src/gemini/accounts/routes";
 import { basicRouteForFamily } from "../../../src/gemini/accounts/routes";
-import { GeminiAccountRuntime } from "../../../src/gemini/accounts/runtime";
-import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/runtime-types";
+import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/types";
 import {
 	createGeminiCompletionProvider,
 	type GeminiCompletionProviderOptions,
@@ -29,13 +28,10 @@ import {
 	requireAccount,
 	requireItem,
 } from "./_support/completion-provider-fixtures.js";
-import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
+import { createAccountStore } from "./accounts/_support/runtime-fixtures.js";
 
 type LifecycleEvent = [string, ...unknown[]];
-type TestProvider = CompletionProvider &
-	Required<
-		Pick<CompletionProvider, "resolveModel" | "generateRich" | "dispose">
-	>;
+type TestProvider = CompletionProvider;
 
 function attachmentResult(
 	fileRefs: AttachmentFileRef[] | null,
@@ -106,12 +102,12 @@ function successfulLease(
 	};
 }
 
-type ResolveModelDelegate = GeminiAccountRuntime["resolveModel"];
+type ResolveModelDelegate = AccountPoolService["resolveModel"];
 type AcquireRecord = {
 	base: RuntimeConfig;
 	options: GeminiAccountAcquireOptions & { excludeAccountIds: string[] };
 };
-type StrictRuntime = GeminiAccountRuntime & {
+type StrictRuntime = AccountPoolService & {
 	records: {
 		resolve: [unknown, unknown, number][];
 		route: [ResolvedModelOk, number][];
@@ -134,21 +130,19 @@ function strictRuntime({
 		acquire: [],
 	};
 	let nextLease = 0;
-	const runtime = new GeminiAccountRuntime(
-		new AccountPoolService(createRuntimeStore([]), {
-			async rotateCookie() {
-				throw unexpected("cookie rotation");
-			},
-		}),
-	);
+	const runtime = new AccountPoolService(createAccountStore([]), {
+		async rotateCookie() {
+			throw unexpected("cookie rotation");
+		},
+	});
 	runtime.resolveModel = async (...args) => {
 		records.resolve.push(args);
-		if (!resolveModel) throw unexpected("runtime.resolveModel");
+		if (!resolveModel) throw unexpected("accountPool.resolveModel");
 		return resolveModel(...args);
 	};
 	runtime.routeCandidatesForModel = async (...args) => {
 		records.route.push(args);
-		if (!routes) throw unexpected("runtime.routeCandidatesForModel");
+		if (!routes) throw unexpected("accountPool.routeCandidatesForModel");
 		return routes;
 	};
 	runtime.acquireLease = async (
@@ -162,7 +156,8 @@ function strictRuntime({
 				excludeAccountIds: [...(options.excludeAccountIds || [])],
 			},
 		});
-		if (nextLease >= leases.length) throw unexpected("runtime.acquireLease");
+		if (nextLease >= leases.length)
+			throw unexpected("accountPool.acquireLease");
 		return leases[nextLease++] ?? null;
 	};
 	return Object.assign(runtime, { records });
@@ -230,12 +225,7 @@ function completeProvider(
 	cfg: RuntimeConfig,
 	options: GeminiCompletionProviderOptions,
 ): TestProvider {
-	const provider = createGeminiCompletionProvider(cfg, options);
-	const { resolveModel, generateRich, dispose } = provider;
-	if (!resolveModel || !generateRich || !dispose) {
-		throw new Error("expected complete Gemini provider contract");
-	}
-	return Object.assign(provider, { resolveModel, generateRich, dispose });
+	return createGeminiCompletionProvider(cfg, options);
 }
 
 describe("Gemini completion provider delegation", () => {
@@ -254,7 +244,7 @@ describe("Gemini completion provider delegation", () => {
 		});
 		const calls: unknown[][] = [];
 		const provider = completeProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			client: failFastClient({
 				async generate(...args) {
 					calls.push(args);
@@ -298,7 +288,7 @@ describe("Gemini completion provider delegation", () => {
 		const route = routeFor("pro");
 		const calls: unknown[][] = [];
 		const provider = completeProvider(cfg, {
-			accountRuntime: strictRuntime({
+			accountPool: strictRuntime({
 				leases: [successfulLease(selectedCfg, route)],
 				routes: [route],
 			}),
@@ -333,7 +323,7 @@ describe("Gemini completion provider delegation", () => {
 		const route = routeFor("pro");
 		const calls: unknown[][] = [];
 		const provider = completeProvider(cfg, {
-			accountRuntime: strictRuntime({
+			accountPool: strictRuntime({
 				leases: [successfulLease(selectedCfg, route)],
 				routes: [route],
 			}),
@@ -360,7 +350,7 @@ describe("Gemini completion provider delegation", () => {
 		const route = routeFor("pro", { capacity: 3, capacityField: 13 });
 		const calls: unknown[][] = [];
 		const provider = completeProvider(cfg, {
-			accountRuntime: strictRuntime({
+			accountPool: strictRuntime({
 				leases: [successfulLease(selectedCfg, route)],
 				routes: [route],
 			}),
@@ -411,7 +401,7 @@ describe("Gemini completion provider delegation", () => {
 		const calls: unknown[][] = [];
 		const result = attachmentResult(null);
 		const provider = completeProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			client: failFastClient(),
 			uploads: failFastUploads({
 				async resolveAttachments(...args) {
@@ -444,7 +434,7 @@ describe("Gemini completion provider delegation", () => {
 			{ ref: "selected-ref", name: "selected.txt" },
 		]);
 		const provider = completeProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			client: failFastClient(),
 			uploads: failFastUploads({
 				async resolveAttachments(...args) {
@@ -485,7 +475,7 @@ describe("Gemini completion provider delegation", () => {
 		});
 		const calls: unknown[][] = [];
 		const provider = completeProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			client: failFastClient(),
 			uploads: failFastUploads({
 				async uploadTextFile(...args) {
@@ -581,7 +571,7 @@ describe("Gemini completion provider delegation", () => {
 		});
 		const calls: unknown[][] = [];
 		const provider = completeProvider(cfg, {
-			accountRuntime: runtime,
+			accountPool: runtime,
 			client: failFastClient({
 				async generate(...args) {
 					calls.push(args);
@@ -652,7 +642,7 @@ describe("Gemini completion provider delegation", () => {
 		const model = proModel(true);
 		const route = routeFor("pro");
 		const provider = completeProvider(cfg, {
-			accountRuntime: strictRuntime({
+			accountPool: strictRuntime({
 				leases: [successfulLease(selectedCfg, route)],
 				routes: [route],
 			}),
@@ -691,7 +681,7 @@ describe("Gemini completion provider delegation", () => {
 		);
 		const sessionIds: string[] = [];
 		const provider = completeProvider(cfg, {
-			accountRuntime: strictRuntime({ leases, routes: [route] }),
+			accountPool: strictRuntime({ leases, routes: [route] }),
 			client: failFastClient({
 				async generate(...args) {
 					sessionIds.push(modelHeaderDetails(args[5], route, false));

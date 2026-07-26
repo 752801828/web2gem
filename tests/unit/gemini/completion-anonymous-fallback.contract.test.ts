@@ -1,10 +1,9 @@
 import { describe, test } from "vitest";
 import type { RuntimeConfig } from "../../../src/config";
-import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease-types";
-import { AccountPoolService } from "../../../src/gemini/accounts/pool";
+import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease";
+import type { AccountPoolService } from "../../../src/gemini/accounts/pool";
 import { basicRouteForFamily } from "../../../src/gemini/accounts/routes";
-import type { GeminiAccountRuntime } from "../../../src/gemini/accounts/runtime";
-import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/runtime-types";
+import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/types";
 import {
 	createGeminiCompletionProvider,
 	type GeminiCompletionProviderOptions,
@@ -20,10 +19,10 @@ import {
 	failFastUploads,
 	flashModel,
 	proModel,
+	requestScopedError,
 	requireAccount,
 	requireItem,
 } from "./_support/completion-provider-fixtures.js";
-import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
 
 type LifecycleEvent = [string, ...unknown[]];
 
@@ -61,7 +60,7 @@ function leaseFor(
 	};
 }
 
-type ScriptedRuntime = GeminiAccountRuntime & {
+type ScriptedRuntime = {
 	records: {
 		acquire: Array<{
 			base: RuntimeConfig;
@@ -70,6 +69,11 @@ type ScriptedRuntime = GeminiAccountRuntime & {
 		}>;
 		route: unknown[][];
 	};
+	resolveModel: AccountPoolService["resolveModel"];
+	modelCatalog: AccountPoolService["modelCatalog"];
+	modelRoutingOverview: AccountPoolService["modelRoutingOverview"];
+	routeCandidatesForModel: AccountPoolService["routeCandidatesForModel"];
+	acquireLease: AccountPoolService["acquireLease"];
 };
 
 function scriptedRuntime(
@@ -78,20 +82,15 @@ function scriptedRuntime(
 	const pending = [...script];
 	const records: ScriptedRuntime["records"] = { acquire: [], route: [] };
 	return {
-		pool: new AccountPoolService(createRuntimeStore([]), {
-			async rotateCookie() {
-				throw new Error("unexpected cookie rotation");
-			},
-		}),
 		records,
 		async resolveModel(): Promise<never> {
-			throw new Error("unexpected runtime.resolveModel call");
+			throw new Error("unexpected accountPool.resolveModel call");
 		},
 		async modelCatalog(): Promise<never> {
-			throw new Error("unexpected runtime.modelCatalog call");
+			throw new Error("unexpected accountPool.modelCatalog call");
 		},
 		async modelRoutingOverview(): Promise<never> {
-			throw new Error("unexpected runtime.modelRoutingOverview call");
+			throw new Error("unexpected accountPool.modelRoutingOverview call");
 		},
 		async routeCandidatesForModel(
 			model: ResolvedModelOk,
@@ -112,7 +111,7 @@ function scriptedRuntime(
 			});
 			if (!pending.length)
 				throw new Error(
-					"unexpected runtime.acquireLease call after script exhausted",
+					"unexpected accountPool.acquireLease call after script exhausted",
 				);
 			return pending.shift() ?? null;
 		},
@@ -130,10 +129,6 @@ function createTestProvider(
 	});
 }
 
-function requestScopedError(message = "model invalid for this request") {
-	return Object.assign(new Error(message), { code: "invalid_model" });
-}
-
 describe("Gemini anonymous fallback", () => {
 	test("keeps a prompt at the account threshold anonymous", async () => {
 		const runtime = scriptedRuntime([]);
@@ -141,7 +136,7 @@ describe("Gemini anonymous fallback", () => {
 		const provider = createTestProvider(
 			baseGeminiClientConfig({ current_input_file_min_bytes: 4 }),
 			{
-				accountRuntime: runtime,
+				accountPool: runtime as unknown as AccountPoolService,
 				client: {
 					async generate(activeCfg) {
 						configs.push(activeCfg);
@@ -168,7 +163,7 @@ describe("Gemini anonymous fallback", () => {
 		const provider = createTestProvider(
 			baseGeminiClientConfig({ current_input_file_min_bytes: 4 }),
 			{
-				accountRuntime: runtime,
+				accountPool: runtime as unknown as AccountPoolService,
 				client: {
 					async generate(activeCfg) {
 						assert.equal(requireAccount(activeCfg).accountId, "threshold");
@@ -196,7 +191,7 @@ describe("Gemini anonymous fallback", () => {
 		const runtime = scriptedRuntime([leaseFor("fallback")]);
 		const seenAccounts: Array<string | null> = [];
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: runtime,
+			accountPool: runtime as unknown as AccountPoolService,
 			client: {
 				async generate(activeCfg) {
 					const accountId = activeCfg.gemini_account?.accountId || null;
@@ -222,7 +217,7 @@ describe("Gemini anonymous fallback", () => {
 		const runtime = scriptedRuntime([leaseFor("empty-text")]);
 		const seenAccounts: Array<string | null> = [];
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: runtime,
+			accountPool: runtime as unknown as AccountPoolService,
 			client: {
 				async generate(activeCfg) {
 					const accountId = activeCfg.gemini_account?.accountId || null;
@@ -247,7 +242,9 @@ describe("Gemini anonymous fallback", () => {
 		const accountError = requestScopedError("model invalid on account");
 		const events: LifecycleEvent[] = [];
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: scriptedRuntime([leaseFor("fallback-fail", events)]),
+			accountPool: scriptedRuntime([
+				leaseFor("fallback-fail", events),
+			]) as unknown as AccountPoolService,
 			client: {
 				async generate(activeCfg) {
 					if (!activeCfg.gemini_account) throw anonymousError;
@@ -271,7 +268,7 @@ describe("Gemini anonymous fallback", () => {
 		const anonymousError = new Error("anonymous unavailable");
 		const runtime = scriptedRuntime([null]);
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: runtime,
+			accountPool: runtime as unknown as AccountPoolService,
 			client: {
 				async generate() {
 					throw anonymousError;
@@ -293,7 +290,7 @@ describe("Gemini anonymous fallback", () => {
 		const abort = Object.assign(new Error("cancelled"), { name: "AbortError" });
 		const runtime = scriptedRuntime([]);
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: runtime,
+			accountPool: runtime as unknown as AccountPoolService,
 			client: {
 				async generate() {
 					throw abort;
@@ -314,7 +311,7 @@ describe("Gemini anonymous fallback", () => {
 	test("falls back only when an anonymous stream fails before output", async () => {
 		const runtime = scriptedRuntime([leaseFor("stream-fallback")]);
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: runtime,
+			accountPool: runtime as unknown as AccountPoolService,
 			client: {
 				async *generateStream(activeCfg) {
 					if (!activeCfg.gemini_account)
@@ -338,7 +335,7 @@ describe("Gemini anonymous fallback", () => {
 		const runtime = scriptedRuntime([leaseFor("stream-empty")]);
 		const seenAccounts: Array<string | null> = [];
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: runtime,
+			accountPool: runtime as unknown as AccountPoolService,
 			client: {
 				async *generateStream(activeCfg) {
 					const accountId = activeCfg.gemini_account?.accountId || null;
@@ -366,7 +363,7 @@ describe("Gemini anonymous fallback", () => {
 		const anonymousError = new Error("anonymous stream unavailable");
 		const runtime = scriptedRuntime([null]);
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: runtime,
+			accountPool: runtime as unknown as AccountPoolService,
 			client: {
 				async *generateStream() {
 					yield* [];
@@ -391,7 +388,9 @@ describe("Gemini anonymous fallback", () => {
 		const accountError = requestScopedError("model invalid in account stream");
 		const events: LifecycleEvent[] = [];
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: scriptedRuntime([leaseFor("stream-fail", events)]),
+			accountPool: scriptedRuntime([
+				leaseFor("stream-fail", events),
+			]) as unknown as AccountPoolService,
 			client: {
 				async *generateStream(activeCfg) {
 					yield* [];
@@ -419,7 +418,7 @@ describe("Gemini anonymous fallback", () => {
 		const runtime = scriptedRuntime([]);
 		const streamError = new Error("stream interrupted");
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: runtime,
+			accountPool: runtime as unknown as AccountPoolService,
 			client: {
 				async *generateStream() {
 					yield "partial";
@@ -447,7 +446,7 @@ describe("Gemini anonymous fallback", () => {
 		});
 		const runtime = scriptedRuntime([]);
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: runtime,
+			accountPool: runtime as unknown as AccountPoolService,
 			client: {
 				async *generateStream() {
 					yield* [];
@@ -471,8 +470,6 @@ describe("Gemini anonymous fallback", () => {
 	test("returns typed no-pool errors for each authenticated-session reason", async () => {
 		const cfg = baseGeminiClientConfig({ current_input_file_min_bytes: 4 });
 		const provider = createTestProvider(cfg);
-		if (!provider.generateRich)
-			throw new Error("expected rich generation support");
 		const generateRich = provider.generateRich;
 		const cases = [
 			{
@@ -524,7 +521,7 @@ describe("Gemini anonymous fallback", () => {
 	test("returns a sanitized no-account error before client delegation", async () => {
 		const runtime = scriptedRuntime([null]);
 		const provider = createTestProvider(baseGeminiClientConfig(), {
-			accountRuntime: runtime,
+			accountPool: runtime as unknown as AccountPoolService,
 		});
 		const error = errorRecord(
 			await captureError(() =>
