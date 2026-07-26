@@ -1,10 +1,8 @@
 import { describe, test } from "vitest";
 import {
 	buildStructuredOutputRequirement,
-	extractFirstJsonDocument,
 	finalizeStructuredOutputText,
 	getStructuredResponseFormat,
-	validateStructuredOutputValue,
 } from "../../../src/completion/structured-output";
 import { assert } from "../assertions.js";
 
@@ -60,18 +58,35 @@ describe("structured output", () => {
 		);
 	});
 
-	test("extracts JSON documents from noisy model text", async () => {
-		assert.equal(
-			extractFirstJsonDocument('prefix [1,{"a":"}"}] suffix'),
-			'[1,{"a":"}"}]',
+	test("finalizes JSON documents extracted from noisy model text", async () => {
+		// Public finalizer covers embedded / nested / fenced JSON candidates.
+		assert.deepEqual(
+			finalizeStructuredOutputText('prefix [1,{"a":"}"}] suffix', {
+				type: "json_object",
+			}),
+			{
+				text: '[1,{"a":"}"}]',
+				error: "structured output must be a JSON object",
+			},
+		);
+		assert.deepEqual(
+			finalizeStructuredOutputText('prefix [{"ok":true} } suffix', {
+				type: "json_object",
+			}),
+			{
+				text: '{"ok":true}',
+			},
 		);
 		assert.equal(
-			extractFirstJsonDocument('prefix [{"ok":true} } suffix'),
-			'{"ok":true}',
+			finalizeStructuredOutputText('prefix {"a":] suffix', {
+				type: "json_object",
+			}).error,
+			"structured output was not valid JSON",
 		);
-		assert.equal(extractFirstJsonDocument('prefix {"a":] suffix'), "");
-		assert.equal(extractFirstJsonDocument("{{{{"), "");
-		// Public finalizer covers fenced / embedded JSON candidates.
+		assert.equal(
+			finalizeStructuredOutputText("{{{{", { type: "json_object" }).error,
+			"structured output was not valid JSON",
+		);
 		assert.deepEqual(
 			finalizeStructuredOutputText('prefix {"ok":true} suffix', {
 				type: "json_object",
@@ -125,24 +140,21 @@ describe("structured output", () => {
 	});
 
 	test("validates json_object and delegates representative JSON schemas", async () => {
-		assert.equal(validateStructuredOutputValue({}, null), "");
+		assert.deepEqual(finalizeStructuredOutputText("{}", null), { text: "{}" });
 		assert.equal(
-			validateStructuredOutputValue("nope", { type: "json_object" }),
+			finalizeStructuredOutputText('"nope"', { type: "json_object" }).error,
 			"structured output must be a JSON object",
 		);
-		assert.equal(
-			validateStructuredOutputValue(
-				{ ok: true },
-				{
-					type: "json_schema",
-					schema: {
-						type: "object",
-						required: ["ok"],
-						properties: { ok: { type: "boolean" } },
-					},
+		assert.deepEqual(
+			finalizeStructuredOutputText('{"ok":true}', {
+				type: "json_schema",
+				schema: {
+					type: "object",
+					required: ["ok"],
+					properties: { ok: { type: "boolean" } },
 				},
-			),
-			"",
+			}),
+			{ text: '{"ok":true}' },
 		);
 	});
 });

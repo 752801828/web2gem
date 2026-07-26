@@ -22,3 +22,11 @@ export function firstRecord(...values: unknown[]): UnknownRecord | null {
 	}
 	return null;
 }
+
+/** First value that is neither `null` nor `undefined`. */
+export function firstNonNil(...values: unknown[]): unknown {
+	for (const value of values) {
+		if (value !== undefined && value !== null) return value;
+	}
+	return undefined;
+}

@@ -48,6 +48,39 @@ type PrepareError = { error: GenerationErrorShape };
 
 export type PreparedOk<P> = Exclude<P, PrepareError>;
 
+/** Shared prepare log field bag used by OpenAI/Google generation handlers. */
+export function preparedLogFields(
+	prepared: {
+		rm: { name: string };
+		prompt: string;
+		promptTokens: number;
+		fileRefs: { length: number } | null | undefined;
+		contextFiles?: { fileRefs: { length: number } } | null;
+	},
+	extras: Record<string, unknown> = {},
+): Record<string, unknown> {
+	const contextFiles =
+		"contextFiles" in extras ? extras.contextFiles : prepared.contextFiles;
+	const contextFileRefs =
+		contextFiles &&
+		typeof contextFiles === "object" &&
+		contextFiles !== null &&
+		"fileRefs" in contextFiles &&
+		Array.isArray((contextFiles as { fileRefs: unknown }).fileRefs)
+			? (contextFiles as { fileRefs: { length: number } }).fileRefs
+			: null;
+	const { contextFiles: _ignored, ...restExtras } = extras;
+	return {
+		model: prepared.rm.name,
+		promptChars: prepared.prompt.length,
+		promptTokens: prepared.promptTokens,
+		fileRefs: prepared.fileRefs ? prepared.fileRefs.length : 0,
+		contextFiles: !!contextFileRefs || !!contextFiles,
+		contextRefs: contextFileRefs ? contextFileRefs.length : 0,
+		...restExtras,
+	};
+}
+
 function isPrepareError(prepared: object): prepared is PrepareError {
 	return "error" in prepared && prepared.error !== undefined;
 }
@@ -70,7 +103,7 @@ export async function runPreparedCompletion<P extends object>(args: {
 	const prepareStart = stageLog.now();
 	const prepared = await args.prepare();
 	if (isPrepareError(prepared)) {
-		await args.provider.dispose?.();
+		await args.provider.dispose();
 		stageLog.log(`${args.stage}_prepare`, prepareStart, {
 			status: prepared.error.status,
 			code: prepared.error.code,
@@ -143,21 +176,10 @@ export async function generateRichLogged(args: {
 	{ rich: CompletionRichOutput; response?: undefined } | { response: Response }
 > {
 	const { stageLog, input } = args;
-	const generateRich = args.provider.generateRich;
-	if (!generateRich) {
-		return {
-			response: args.protocol.errorResponse({
-				message:
-					"configured completion provider does not support image generation",
-				status: 502,
-				code: "image_generation_provider_unsupported",
-			}),
-		};
-	}
 	const generationStart = stageLog.now();
 	let rich: CompletionRichOutput;
 	try {
-		rich = await generateRich(input, args.richOptions);
+		rich = await args.provider.generateRich(input, args.richOptions);
 	} catch (e) {
 		stageLog.log(`${args.stage}_generate`, generationStart, {
 			status: "error",

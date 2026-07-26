@@ -1,10 +1,10 @@
 import { closeSocketQuietly } from "./timeout";
 import type { SocketLike, SocketPool } from "./socket-types";
 
-export const SOCKET_KEEP_ALIVE_IDLE_MS = 30000;
-export const SOCKET_KEEP_ALIVE_MAX_IDLE_PER_ORIGIN = 2;
+const SOCKET_KEEP_ALIVE_IDLE_MS = 30000;
+const SOCKET_KEEP_ALIVE_MAX_IDLE_PER_ORIGIN = 2;
 
-export function createSocketPool(): SocketPool {
+function createSocketPool(): SocketPool {
 	return { idle: new Map() };
 }
 

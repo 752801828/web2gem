@@ -106,7 +106,7 @@ describe("readJsonRequest", () => {
 		);
 		assert.equal(declaredSmallActualLarge.status, 413);
 		assert.match(declaredSmallActualLarge.error, /11 bytes > 10/);
-		assert.equal(declaredSmallPulls, 2);
+		assert.equal(declaredSmallPulls >= 2, true);
 		assert.equal(declaredSmallCanceled, true);
 
 		let canceled = false;

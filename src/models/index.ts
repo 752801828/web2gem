@@ -46,7 +46,6 @@ export type GeminiModelCatalog = {
 	entries: readonly GeminiModelCatalogEntry[];
 };
 
-export const DEFAULT_MODEL = "gemini-3.5-flash";
 export const GEMINI_PUBLIC_FAMILIES = ["pro", "flash", "flash_lite"] as const;
 const MAX_GEMINI_PROVIDER_MODEL_ID_CHARS = 256;
 export const MAX_GEMINI_MODEL_DISPLAY_NAME_CODE_POINTS = 256;

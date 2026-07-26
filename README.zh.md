@@ -472,7 +472,7 @@ pnpm smoke
 
 | Bundle                | 来源                | 用途                              |
 | --------------------- | ------------------- | --------------------------------- |
-| `dist/worker.js`      | `src/worker-entry.ts` | Wrangler 与 Docker 共用的 Worker 产物。 |
+| `dist/worker.js`      | `src/index.ts` | Wrangler 与 Docker 共用的 Worker 产物。 |
 | `dist/harness.js` | `src/harness-exports.ts` | smoke/bench harness bundle（用 `--harness-bundle` 构建）。 |
 
 ## 测试

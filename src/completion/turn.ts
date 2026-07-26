@@ -1,13 +1,10 @@
-import { parseToolCalls } from "../toolcall/dsml";
-import type { GoogleFunctionCall } from "../toolcall/google";
-import { parseGoogleFunctionCalls } from "../toolcall/google";
-import type { OpenAIToolCall } from "../toolcall/openai-format";
-import { validateGoogleToolPolicyCalls } from "../toolcall/policy-google";
-import type {
-	ToolChoicePolicy,
-	ToolPolicyViolation,
-} from "../toolcall/policy-openai";
-import { validateRequiredToolCalls } from "../toolcall/policy-openai";
+import { parseToolCalls } from "../toolcall/parse";
+import type { GoogleFunctionCall } from "../toolcall/parse";
+import { parseGoogleFunctionCalls } from "../toolcall/parse";
+import type { OpenAIToolCall } from "../toolcall/parse";
+import { validateGoogleToolPolicyCalls } from "../toolcall/policy";
+import type { ToolChoicePolicy, ToolPolicyViolation } from "../toolcall/policy";
+import { validateRequiredToolCalls } from "../toolcall/policy";
 import { finalizeStructuredOutputText } from "./structured-output";
 import type { ToolBundle } from "../toolcall/tool-bundle";
 

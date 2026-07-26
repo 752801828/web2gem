@@ -193,14 +193,14 @@ export function trimContinuationOverlap(
 	return incoming;
 }
 
-function asText(value: unknown): string {
+export function asText(value: unknown): string {
 	if (typeof value === "string") return value;
 	if (Array.isArray(value)) return asText(value[0]);
 	if (value == null) return "";
 	return String(value);
 }
 
-function firstNonASCIIIndex(source: string): number {
+export function firstNonASCIIIndex(source: string): number {
 	for (let i = 0; i < source.length; i++) {
 		if (source.charCodeAt(i) > 0x7f) return i;
 	}

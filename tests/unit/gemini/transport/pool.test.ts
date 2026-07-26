@@ -1,21 +1,25 @@
 import { afterEach, describe, test, vi } from "vitest";
 import {
 	closeIdleSocketPool,
-	createSocketPool,
 	putIdleSocket,
-	SOCKET_KEEP_ALIVE_IDLE_MS,
-	SOCKET_KEEP_ALIVE_MAX_IDLE_PER_ORIGIN,
 	socketPoolKey,
 	takeIdleSocket,
 } from "../../../../src/gemini/transport/pool";
 import { socketHttp } from "../../../../src/gemini/transport/socket";
-import type { SocketLike } from "../../../../src/gemini/transport/socket-types";
+import type {
+	SocketLike,
+	SocketPool,
+} from "../../../../src/gemini/transport/socket-types";
 import { assert } from "../../assertions.js";
 import {
 	fakePersistentSocketConnect,
 	joinedWriteText,
 	type SocketTestState,
 } from "./_support/socket.js";
+
+function createTestSocketPool(): SocketPool {
+	return { idle: new Map() };
+}
 
 describe.sequential("socket pools", () => {
 	afterEach(() => {
@@ -31,7 +35,7 @@ describe.sequential("socket pools", () => {
 			],
 			state,
 		);
-		const pool = createSocketPool();
+		const pool = createTestSocketPool();
 		try {
 			const first = await socketHttp(connect, "https://example.test/one", {
 				keepAlive: true,
@@ -68,7 +72,7 @@ describe.sequential("socket pools", () => {
 			],
 			state,
 		);
-		const pool = createSocketPool();
+		const pool = createTestSocketPool();
 		try {
 			const first = await socketHttp(
 				connect,
@@ -107,7 +111,7 @@ describe.sequential("socket pools", () => {
 			sockets.push(socket);
 			return socket;
 		};
-		const pool = createSocketPool();
+		const pool = createTestSocketPool();
 		vi.spyOn(Date, "now").mockImplementation(() => now);
 		try {
 			const key = socketPoolKey(
@@ -124,13 +128,12 @@ describe.sequential("socket pools", () => {
 			putIdleSocket(pool, key, second);
 			putIdleSocket(pool, key, third);
 			assert.equal(first.closed, 1);
-			assert.equal(
-				pool.idle.get(key)?.length,
-				SOCKET_KEEP_ALIVE_MAX_IDLE_PER_ORIGIN,
-			);
+			// Default max idle per origin is 2.
+			assert.equal(pool.idle.get(key)?.length, 2);
 
 			assert.equal(takeIdleSocket(pool, key), third);
-			now += SOCKET_KEEP_ALIVE_IDLE_MS + 1;
+			// Default idle TTL is 30s.
+			now += 30_000 + 1;
 			assert.equal(takeIdleSocket(pool, key), null);
 			assert.equal(second.closed, 1);
 			assert.equal(pool.idle.has(key), false);

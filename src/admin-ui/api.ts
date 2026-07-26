@@ -37,15 +37,15 @@ export type AdminApiSession = {
 	signal: AbortSignal;
 };
 
-export type ListOptions = {
+type ListOptions = {
 	cursor?: string;
 	q?: string;
 	state?: GeminiAccountState | "";
 };
 
-export type CreateInput = { label?: string; psid: string; psidts: string };
-export type CreateBatchInput = { accounts: CreateInput[] };
-export type UpdateInput = { id: string; label: string | null };
+type CreateInput = { label?: string; psid: string; psidts: string };
+type CreateBatchInput = { accounts: CreateInput[] };
+type UpdateInput = { id: string; label: string | null };
 
 function accountResourcePath(id: string): string {
 	return `${API_PATH}/${encodeURIComponent(id)}`;

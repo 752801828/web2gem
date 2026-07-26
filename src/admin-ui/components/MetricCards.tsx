@@ -1,6 +1,6 @@
 import type { JSX } from "preact";
 import { tr } from "../i18n";
-import { metricSummary } from "../selectors";
+import { metricSummary } from "../state";
 
 export function MetricCards(): JSX.Element {
 	const stats = metricSummary.value;

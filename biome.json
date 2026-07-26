@@ -55,7 +55,6 @@
 		{
 			"includes": [
 				"src/index.ts",
-				"src/worker-entry.ts",
 				"src/harness-exports.ts",
 				"vitest.config.mjs"
 			],

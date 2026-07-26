@@ -1,17 +1,8 @@
 import { describe, test } from "vitest";
 import { createByteQueue } from "../../../../src/gemini/transport/byte-queue";
-import { parseHttpChunkSizeLine } from "../../../../src/gemini/transport/http-parse";
 import { assert } from "../../assertions.js";
 
 describe("HTTP response parsing", () => {
-	test("parses standalone HTTP chunk-size lines", () => {
-		const encoder = new TextEncoder();
-		assert.equal(parseHttpChunkSizeLine(encoder.encode(" a;ext=1 ")), 10);
-		assert.equal(parseHttpChunkSizeLine(encoder.encode("0;done")), 0);
-		assert.equal(parseHttpChunkSizeLine(encoder.encode("a ;ext=1")), -1);
-		assert.equal(parseHttpChunkSizeLine(encoder.encode("Z")), -1);
-	});
-
 	test("parses streamed HTTP chunk-size lines incrementally", () => {
 		const encoder = new TextEncoder();
 		const decoder = new TextDecoder();

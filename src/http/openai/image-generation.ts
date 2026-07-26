@@ -6,7 +6,7 @@ import type {
 import { prepareOpenAIImageGenerationCompletion } from "../../completion/image-generation";
 import type { RuntimeConfig } from "../../config";
 import type { ResolvedModelOk } from "../../models";
-import type { InternalMessage } from "../../promptcompat/message-model";
+import type { InternalMessage } from "../../promptcompat/message-types";
 import { generateRichLogged, runPreparedCompletion } from "../generation";
 import { OPENAI_GENERATION_PROTOCOL, openAIErrorResponse } from "./errors";
 
@@ -55,13 +55,6 @@ export async function runImageGenerationCompletion(args: {
 			400,
 			"unsupported_image_generation_stream",
 		);
-	if (!provider.generateRich) {
-		return openAIErrorResponse(
-			"configured completion provider does not support image generation",
-			502,
-			"image_generation_provider_unsupported",
-		);
-	}
 	return runPreparedCompletion({
 		cfg,
 		provider,

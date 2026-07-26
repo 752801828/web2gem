@@ -1,10 +1,11 @@
 import type { JSX } from "preact";
 import { loadAccounts, runAction } from "../actions";
-import { AccountCards, AccountRows } from "../components";
+import { AccountCards } from "../components/AccountCards";
+import { AccountRows } from "../components/AccountRows";
 import { tr } from "../i18n";
 import { Icon } from "../icons";
 import { identifier, identifierKey } from "../logic";
-import { hasFilters } from "../selectors";
+import { hasFilters } from "../state";
 import {
 	accounts,
 	loading,

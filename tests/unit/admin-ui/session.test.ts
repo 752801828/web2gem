@@ -1,7 +1,7 @@
 import { afterEach, describe, test, vi } from "vitest";
 import { AdminApiError } from "../../../src/admin-ui/api";
 import { language, tr } from "../../../src/admin-ui/i18n";
-import { AdminLocalError } from "../../../src/admin-ui/local-errors";
+import { AdminLocalError } from "../../../src/admin-ui/session";
 import {
 	clearAdminKey,
 	confirmDeletion,

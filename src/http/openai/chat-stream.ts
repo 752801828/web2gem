@@ -1,15 +1,10 @@
-import type {
-	CompletionProvider,
-	CompletionStreamIssue,
-} from "../../completion";
+import type { CompletionProvider } from "../../completion/ports";
 import {
-	classifyCompletionStreamOutcome,
-	createCompletionStreamLifecycle,
-	EMPTY_UPSTREAM_MSG,
-	recordCompletionStreamEvent,
+	consumeCompletionStreamEvents,
+	type CompletionStreamIssue,
 	streamPlainCompletionEvents,
 	streamToolSieveCompletionEvents,
-} from "../../completion";
+} from "../../completion/stream-events";
 import type { FileRef } from "../../completion/types";
 import type { RuntimeConfig } from "../../config";
 import type { ResolvedModelOk } from "../../models";
@@ -20,8 +15,8 @@ import {
 	createTokenCounter,
 	tokenCountFromCounts,
 } from "../../promptcompat/token-accounting";
-import { formatOpenAIStreamToolCalls } from "../../toolcall/openai-format";
-import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
+import { formatOpenAIStreamToolCalls } from "../../toolcall/parse";
+import type { ToolChoicePolicy } from "../../toolcall/policy";
 import type { ToolBundle } from "../../toolcall/tool-bundle";
 import type { SSEWrite } from "../core/sse";
 import {
@@ -29,6 +24,10 @@ import {
 	writeStreamWarningEvent,
 } from "../core/stream-errors";
 import { createDeltaCoalescer } from "../stream/coalescer";
+import {
+	EMPTY_UPSTREAM_STREAM_ERROR,
+	handleCompletionStreamOutcome,
+} from "../stream/outcome";
 import {
 	openAIChatChunk,
 	writeOpenAIChatStreamError,
@@ -39,7 +38,6 @@ type OpenAIChatChunkWriter = (
 	delta: Record<string, unknown>,
 	finish: string | null,
 ) => void | Promise<void>;
-type OpenAIChatDeltaCoalescer = ReturnType<typeof createDeltaCoalescer>;
 type OpenAIChatPlainStreamParams = {
 	provider: CompletionProvider;
 	id: string;
@@ -55,6 +53,8 @@ type OpenAIChatToolSieveStreamParams = OpenAIChatPlainStreamParams & {
 	tools: ToolBundle | null;
 	toolPolicy: ToolChoicePolicy | null | undefined;
 };
+
+const CHAT_STREAM_LABEL = "openai chat stream";
 
 export async function streamOpenAIChatPlain(
 	write: SSEWrite,
@@ -72,7 +72,6 @@ export async function streamOpenAIChatPlain(
 		promptTokens,
 		signal,
 	} = params;
-	const lifecycle = createCompletionStreamLifecycle();
 	const writeChunk = (delta: Record<string, unknown>, finish: string | null) =>
 		write(
 			`data: ${JSON.stringify(openAIChatChunk(id, model, delta, finish))}\n\n`,
@@ -85,38 +84,32 @@ export async function streamOpenAIChatPlain(
 	);
 	await writeChunk({ role: "assistant" }, null);
 
-	for await (const event of streamPlainCompletionEvents(
-		provider,
-		{ prompt, rm, fileRefs },
-		{ signal },
-	)) {
-		recordCompletionStreamEvent(lifecycle, event);
-		if (event.type === "text_delta") {
-			await deltaCoalescer.append("content", event.text);
-		}
-	}
-	await flushOpenAIChatDeltas(deltaCoalescer);
-	const outcome = classifyCompletionStreamOutcome(lifecycle);
+	const { lifecycle, outcome } = await consumeCompletionStreamEvents(
+		streamPlainCompletionEvents(provider, { prompt, rm, fileRefs }, { signal }),
+		(text) => deltaCoalescer.append("content", text),
+	);
+	await deltaCoalescer.flush();
+	const terminal = await handleCompletionStreamOutcome({
+		cfg,
+		label: CHAT_STREAM_LABEL,
+		model: rm.name,
+		outcome,
+		handlers: {
+			onFailedBeforeOutput: (issue) =>
+				writeOpenAIChatStreamError(write, id, model, issue.error),
+			onEmpty: () =>
+				writeOpenAIChatStreamError(
+					write,
+					id,
+					model,
+					EMPTY_UPSTREAM_STREAM_ERROR,
+				),
+			onInterruptedAfterOutput: (issue) =>
+				writeOpenAIChatInterrupted(write, issue),
+		},
+	});
+	if (terminal) return;
 
-	if (outcome.type === "failed_before_output" || outcome.type === "empty") {
-		const issue =
-			outcome.type === "failed_before_output" ? outcome.issue : null;
-		const error = issue?.error || {
-			message: EMPTY_UPSTREAM_MSG,
-			code: "upstream_empty",
-		};
-		log(
-			cfg,
-			issue
-				? `openai chat stream failed before output model=${rm.name} code=${upstreamErrorCode(error) || "upstream_error"} error=${errorLogSummary(error)}`
-				: `openai chat stream produced no content model=${rm.name}`,
-		);
-		await writeOpenAIChatStreamError(write, id, model, error);
-		return;
-	}
-	if (outcome.type === "interrupted_after_output") {
-		await writeOpenAIChatInterrupted(write, cfg, rm, outcome.issue);
-	}
 	await finishOpenAIChatStream(
 		write,
 		writeChunk,
@@ -130,7 +123,7 @@ export async function streamOpenAIChatPlain(
 
 export async function streamOpenAIChatWithToolSieve(
 	write: SSEWrite,
-	_cfg: RuntimeConfig,
+	cfg: RuntimeConfig,
 	params: OpenAIChatToolSieveStreamParams,
 ) {
 	const {
@@ -157,61 +150,58 @@ export async function streamOpenAIChatWithToolSieve(
 		undefined,
 		{ emitFirstImmediately: true },
 	);
-	const toolLifecycle = createCompletionStreamLifecycle();
 	await writeChunk({ role: "assistant" }, null);
 
-	for await (const event of streamToolSieveCompletionEvents(
-		provider,
-		{ prompt, rm, fileRefs, toolPolicy },
-		{ signal },
-	)) {
-		recordCompletionStreamEvent(toolLifecycle, event);
-		if (event.type === "text_delta") {
-			await deltaCoalescer.append("content", event.text);
-		}
-	}
-	await flushOpenAIChatDeltas(deltaCoalescer);
-	const outcome = classifyCompletionStreamOutcome(toolLifecycle);
+	const { lifecycle, outcome } = await consumeCompletionStreamEvents(
+		streamToolSieveCompletionEvents(
+			provider,
+			{ prompt, rm, fileRefs, toolPolicy },
+			{ signal },
+		),
+		(text) => deltaCoalescer.append("content", text),
+	);
+	await deltaCoalescer.flush();
+	const terminal = await handleCompletionStreamOutcome({
+		cfg,
+		label: CHAT_STREAM_LABEL,
+		model: rm.name,
+		outcome,
+		// Tool-call interruption uses a specialized log line below.
+		logInterrupted: false,
+		handlers: {
+			onFailedBeforeOutput: (issue) =>
+				writeOpenAIChatStreamError(write, id, model, issue.error),
+			onEmpty: () =>
+				writeOpenAIChatStreamError(
+					write,
+					id,
+					model,
+					EMPTY_UPSTREAM_STREAM_ERROR,
+				),
+			onPolicyViolation: (violation) =>
+				writeOpenAIChatStreamError(write, id, model, violation),
+			onInterruptedAfterOutput: async (issue) => {
+				if (lifecycle.toolCalls?.length) {
+					log(
+						cfg,
+						`${CHAT_STREAM_LABEL} interrupted after tool calls model=${rm.name} code=${upstreamErrorCode(issue.error) || "stream_interrupted"} error=${errorLogSummary(issue.error)}`,
+					);
+					await writeStreamWarningEvent(write, issue.error);
+					return;
+				}
+				log(
+					cfg,
+					`${CHAT_STREAM_LABEL} interrupted after partial output model=${rm.name} code=${upstreamErrorCode(issue.error) || "stream_interrupted"} error=${errorLogSummary(issue.error)}`,
+				);
+				await writeOpenAIChatInterrupted(write, issue);
+			},
+		},
+	});
+	if (terminal) return;
 
-	if (outcome.type === "failed_before_output") {
-		const error = outcome.issue.error;
-		log(
-			_cfg,
-			`openai chat stream failed before output model=${rm.name} code=${upstreamErrorCode(error) || "upstream_error"} error=${errorLogSummary(error)}`,
-		);
-		await writeOpenAIChatStreamError(write, id, model, error);
-		return;
-	}
-	if (outcome.type === "policy_violation") {
-		log(
-			_cfg,
-			`openai chat stream tool policy violation model=${rm.name} code=${outcome.violation.code}`,
-		);
-		await writeOpenAIChatStreamError(write, id, model, outcome.violation);
-		return;
-	}
-	if (outcome.type === "empty") {
-		log(_cfg, `openai chat stream produced no content model=${rm.name}`);
-		await writeOpenAIChatStreamError(write, id, model, {
-			message: EMPTY_UPSTREAM_MSG,
-			code: "upstream_empty",
-		});
-		return;
-	}
-	if (outcome.type === "interrupted_after_output") {
-		if (toolLifecycle.toolCalls?.length) {
-			log(
-				_cfg,
-				`openai chat stream interrupted after tool calls model=${rm.name} code=${upstreamErrorCode(outcome.issue.error) || "stream_interrupted"} error=${errorLogSummary(outcome.issue.error)}`,
-			);
-			await writeStreamWarningEvent(write, outcome.issue.error);
-		} else {
-			await writeOpenAIChatInterrupted(write, _cfg, rm, outcome.issue);
-		}
-	}
-	if (toolLifecycle.toolCalls?.length) {
+	if (lifecycle.toolCalls?.length) {
 		const toolCallDeltas = formatOpenAIStreamToolCalls(
-			toolLifecycle.toolCalls,
+			lifecycle.toolCalls,
 			new Map(),
 			tools,
 		);
@@ -226,15 +216,9 @@ export async function streamOpenAIChatWithToolSieve(
 			id,
 			model,
 			promptTokens,
-			combinedTokenCount(toolLifecycle.completionCounts, extraTokenCounter),
+			combinedTokenCount(lifecycle.completionCounts, extraTokenCounter),
 		);
 	await write("data: [DONE]\n\n");
-}
-
-async function flushOpenAIChatDeltas(
-	coalescer: OpenAIChatDeltaCoalescer,
-): Promise<void> {
-	await coalescer.flush();
 }
 
 async function finishOpenAIChatStream(
@@ -260,14 +244,8 @@ async function finishOpenAIChatStream(
 
 async function writeOpenAIChatInterrupted(
 	write: SSEWrite,
-	cfg: RuntimeConfig,
-	rm: ResolvedModelOk,
 	issue: CompletionStreamIssue,
 ): Promise<void> {
 	const warning = `\n\n${streamInterruptedWarningText(issue.error)}`;
-	log(
-		cfg,
-		`openai chat stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(issue.error) || "stream_interrupted"} error=${errorLogSummary(issue.error)}`,
-	);
 	await writeStreamWarningEvent(write, issue.error, warning.trim());
 }

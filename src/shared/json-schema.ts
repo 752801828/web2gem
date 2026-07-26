@@ -249,7 +249,7 @@ function inferJsonType(value: unknown): string {
 	return typeof value;
 }
 
-export function jsonValuesEqual(a: unknown, b: unknown): boolean {
+function jsonValuesEqual(a: unknown, b: unknown): boolean {
 	if (a === b) return true;
 	if (a === null || b === null) return a === b;
 	if (Array.isArray(a) || Array.isArray(b)) {

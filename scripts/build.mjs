@@ -1,5 +1,5 @@
-import esbuild from "esbuild";
 import { mkdir, rm } from "node:fs/promises";
+import esbuild from "esbuild";
 import { buildAdminUi } from "./build-admin-ui.mjs";
 
 const { html: adminUiHtml } = await buildAdminUi();
@@ -33,7 +33,7 @@ const common = {
 
 await esbuild.build({
 	...common,
-	entryPoints: ["src/worker-entry.ts"],
+	entryPoints: ["src/index.ts"],
 	outfile: `${outDir}/worker.js`,
 });
 

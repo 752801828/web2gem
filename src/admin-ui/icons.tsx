@@ -1,6 +1,6 @@
 import type { JSX } from "preact";
 
-export type IconName =
+type IconName =
 	| "alert"
 	| "check"
 	| "chevron"

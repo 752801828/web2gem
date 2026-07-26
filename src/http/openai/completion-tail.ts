@@ -1,4 +1,4 @@
-import type { CompletionProvider } from "../../completion";
+import type { CompletionProvider } from "../../completion/ports";
 import {
 	finalizeOpenAICompletionResult,
 	type OpenAICompletionTurn,
@@ -6,17 +6,13 @@ import {
 } from "../../completion/turn";
 import type { RuntimeConfig } from "../../config";
 import type { CompletionTextInput } from "../../completion/ports";
-import {
-	generateTextLogged,
-	type GenerationProtocol,
-	type StageLog,
-} from "../generation";
+import { generateTextLogged, type StageLog } from "../generation";
 import { openAIErrorResponse, OPENAI_GENERATION_PROTOCOL } from "./errors";
 import { log } from "../../shared/logging";
 
 type OpenAICompletionSuccess = Extract<OpenAICompletionTurn, { text: string }>;
 
-export type OpenAICompletionTailResult =
+type OpenAICompletionTailResult =
 	| { turn: OpenAICompletionSuccess; response?: undefined }
 	| { response: Response; turn?: undefined };
 
@@ -25,7 +21,6 @@ export async function generateOpenAICompletionTail(args: {
 	provider: CompletionProvider;
 	stage: string;
 	logLabel: string;
-	protocol?: GenerationProtocol;
 	stageLog: StageLog;
 	input: CompletionTextInput & { rm: { name: string } };
 	options: OpenAICompletionTurnOptions;
@@ -36,7 +31,7 @@ export async function generateOpenAICompletionTail(args: {
 		provider: args.provider,
 		stage: args.stage,
 		logLabel: args.logLabel,
-		protocol: args.protocol || OPENAI_GENERATION_PROTOCOL,
+		protocol: OPENAI_GENERATION_PROTOCOL,
 		stageLog: args.stageLog,
 		input: args.input,
 		okLogFields: args.okLogFields,

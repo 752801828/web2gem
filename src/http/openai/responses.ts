@@ -1,10 +1,10 @@
-import type { CompletionProvider } from "../../completion";
+import type { CompletionProvider } from "../../completion/ports";
 import {
 	OPENAI_COMPLETION_DIALECT,
 	prepareCompletion,
 } from "../../completion/prepare";
 import type { RuntimeConfig } from "../../config";
-import type { InternalMessage } from "../../promptcompat/message-model";
+import type { InternalMessage } from "../../promptcompat/message-types";
 import { parseResponsesInput } from "../../promptcompat/responses-input";
 import { randHex } from "../../shared/crypto";
 import {
@@ -18,6 +18,7 @@ import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
 import {
 	type PreparedOk,
+	preparedLogFields,
 	runPreparedCompletion,
 	type StageLog,
 } from "../generation";
@@ -81,20 +82,14 @@ export async function handleResponses(
 				OPENAI_COMPLETION_DIALECT,
 				{ emptyPromptMessage: "empty input" },
 			),
-		prepareLogFields: (prepared) => ({
-			model: prepared.rm.name,
-			promptChars: prepared.prompt.length,
-			promptTokens: prepared.promptTokens,
-			fileRefs: prepared.fileRefs ? prepared.fileRefs.length : 0,
-			contextFiles: !!prepared.contextFiles,
-			contextRefs: prepared.contextFiles
-				? prepared.contextFiles.fileRefs.length
-				: 0,
-			rawTools: prepared.bundle.openAIFunctionTools.length,
-			filteredTools: prepared.tools
-				? prepared.tools.openAIFunctionTools.length
-				: 0,
-		}),
+		prepareLogFields: (prepared) =>
+			preparedLogFields(prepared, {
+				contextFiles: prepared.contextFiles,
+				rawTools: prepared.bundle.openAIFunctionTools.length,
+				filteredTools: prepared.tools
+					? prepared.tools.openAIFunctionTools.length
+					: 0,
+			}),
 		run: (prepared, stageLog) =>
 			runResponsesGeneration(req, cfg, provider, prepared, stageLog),
 	});

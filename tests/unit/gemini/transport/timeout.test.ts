@@ -2,7 +2,6 @@ import { afterEach, describe, test, vi } from "vitest";
 import {
 	closeSocketQuietly,
 	createSocketTimeoutScope,
-	socketTimeoutError,
 } from "../../../../src/gemini/transport/timeout";
 import { assert } from "../../assertions.js";
 
@@ -14,10 +13,6 @@ describe.sequential("socket timeout helpers", () => {
 
 	test("creates timeout metadata and closes expired sockets", async () => {
 		vi.useFakeTimers();
-		const timeoutErr = socketTimeoutError("headers", 3);
-		assert.equal(timeoutErr.code, "socket_timeout");
-		assert.match(timeoutErr.message, /headers timed out after 3ms/);
-
 		let closeCount = 0;
 		const socket = {
 			close() {
@@ -26,7 +21,21 @@ describe.sequential("socket timeout helpers", () => {
 		};
 		const scope = createSocketTimeoutScope(1, socket);
 		const pending = scope.wait(new Promise(() => {}), "idle");
-		const rejection = assert.rejects(() => pending, /idle timed out/);
+		const rejection = pending.then(
+			() => {
+				throw new Error("expected socket timeout rejection");
+			},
+			(error: unknown) => {
+				if (!(error instanceof Error)) {
+					throw new Error(`expected Error, got ${String(error)}`);
+				}
+				assert.equal(
+					(error as Error & { code?: string }).code,
+					"socket_timeout",
+				);
+				assert.match(error.message, /idle timed out after 1ms/);
+			},
+		);
 		await vi.advanceTimersByTimeAsync(1);
 		await rejection;
 		assert.equal(closeCount, 1);

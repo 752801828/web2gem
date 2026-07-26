@@ -1,4 +1,5 @@
 import type { RuntimeConfig } from "../config";
+import { positiveIntOption } from "./accounts/pool-snapshot";
 import { errorLogSummary } from "../shared/errors";
 import { log } from "../shared/logging";
 
@@ -15,7 +16,7 @@ type OriginScopedStringCachePayload = Record<string, unknown> & {
 	created_at_ms?: unknown;
 };
 
-function geminiOrigin(cfg: RuntimeConfig): string {
+export function geminiOrigin(cfg: RuntimeConfig): string {
 	return (cfg.gemini_origin || "https://gemini.google.com").replace(/\/$/, "");
 }
 
@@ -44,7 +45,7 @@ export function createOriginScopedStringCache(
 ) {
 	const refreshes = new Map<string, Promise<string>>();
 	const l1 = new Map<string, { value: string; expiresAt: number }>();
-	const l1MaxEntries = positiveInt(options.l1MaxEntries, 32);
+	const l1MaxEntries = positiveIntOption(options.l1MaxEntries, 32);
 
 	const cacheKey = (scope: string): Request =>
 		new Request(`${options.cachePrefix}${encodeURIComponent(scope)}`);
@@ -205,12 +206,6 @@ export function createOriginScopedStringCache(
 function validString(value: unknown): string {
 	const text = typeof value === "string" ? value.trim() : "";
 	return text ? text : "";
-}
-
-function positiveInt(value: number | undefined, fallback: number): number {
-	return Number.isInteger(value) && Number(value) > 0
-		? Number(value)
-		: fallback;
 }
 
 function logCacheError(

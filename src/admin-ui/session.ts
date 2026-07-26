@@ -1,6 +1,5 @@
 import { AdminApiError, type AdminApiSession } from "./api";
 import { tr } from "./i18n";
-import { AdminLocalError, adminLocalErrorMessage } from "./local-errors";
 import {
 	accountStats,
 	accounts,
@@ -29,6 +28,33 @@ import {
 	toastItems,
 } from "./state";
 
+type AdminLocalErrorDetails =
+	| {
+			key: "Cookie value required" | "Cookie value only";
+			params: { name: string };
+	  }
+	| {
+			key: "Batch row credentials required";
+			params?: undefined;
+	  };
+
+export class AdminLocalError extends Error {
+	constructor(readonly details: AdminLocalErrorDetails) {
+		super(details.key);
+		this.name = "AdminLocalError";
+	}
+}
+
+export function adminLocalErrorMessage(error: AdminLocalError): string {
+	const details = error.details;
+	if (
+		details.key === "Cookie value required" ||
+		details.key === "Cookie value only"
+	)
+		return tr(details.key, details.params);
+	return tr("Batch row credentials required");
+}
+
 let toastId = 0;
 let confirmationResolver: ((confirmed: boolean) => void) | null = null;
 let adminSessionGeneration = 0;
@@ -39,9 +65,7 @@ export type AdminSession = AdminApiSession & {
 	generation: number;
 };
 
-export type AdminSessionOperationResult<T> =
-	| { ok: true; value: T }
-	| { ok: false };
+type AdminSessionOperationResult<T> = { ok: true; value: T } | { ok: false };
 
 type AdminSessionOperationOptions = {
 	fallbackMessage: string;

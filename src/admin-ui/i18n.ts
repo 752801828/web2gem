@@ -152,7 +152,7 @@ const zh = {
 	"loaded account(s)": "当前加载的账号",
 } as const;
 
-export type TranslationKey = keyof typeof zh;
+type TranslationKey = keyof typeof zh;
 
 type TranslationTemplateParameters = {
 	"Loaded account count": { count: number };
@@ -246,13 +246,13 @@ const templateZh: Record<keyof typeof templateEn, string> = {
 	"Cookie value only": "{name} 只能填写值本身",
 };
 
-export type TranslationTemplateKey = keyof typeof templateEn;
-export type TranslationParameters<K extends TranslationTemplateKey> =
+type TranslationTemplateKey = keyof typeof templateEn;
+type TranslationParameters<K extends TranslationTemplateKey> =
 	TranslationTemplateParameters[K];
 
 export const language = signal<Language>("en");
 
-export function detectLanguage(value?: string | null): Language {
+function detectLanguage(value?: string | null): Language {
 	return value?.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
 }
 
@@ -325,7 +325,7 @@ export function deletionTargetLabel(
 	if (language.value !== "zh-CN") return singularized;
 	if (/^loaded account/.test(raw)) return "当前加载的账号";
 	if (/^selected account/.test(raw)) return "所选账号";
-	const accountLabel = /^account [“\"](.+)[”\"]$/.exec(raw);
+	const accountLabel = /^account [“"](.+)[”"]$/.exec(raw);
 	return accountLabel?.[1] ? `账号“${accountLabel[1]}”` : singularized;
 }
 

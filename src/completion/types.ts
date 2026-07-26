@@ -3,7 +3,7 @@ import type {
 	AttachmentUploadResult,
 } from "../attachments/types";
 import type { TokenCharCounts } from "../promptcompat/token-accounting";
-import type { ErrorWithMetadata, UnknownRecord } from "../shared/types";
+import type { ErrorWithMetadata } from "../shared/types";
 
 export type FileRef = AttachmentFileRef;
 
@@ -44,8 +44,6 @@ export type PreparedGeminiContext = {
 export type GeminiContextPrepareResult =
 	| PreparedGeminiContext
 	| ContextFileFailure;
-
-export type LooseRequest = UnknownRecord;
 
 export function hasCompletionError<T>(
 	value: T | ContextFileFailure,

@@ -1,8 +1,39 @@
 import type { RuntimeConfig } from "../config";
+
+export const GEMINI_WEB_USER_AGENT =
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 import { errorLogSummary } from "../shared/errors";
 import { log } from "../shared/logging";
-import { GEMINI_WEB_USER_AGENT } from "./constants";
-import { cancelResponseBody, httpFetch } from "./transport";
+import { cancelResponseBody, httpFetch } from "./transport/http";
+
+const ROTATE_COOKIES_URL = "https://accounts.google.com/RotateCookies";
+const ROTATE_COOKIES_BODY = '[000,"-0000000000000000000"]';
+
+/** Shared Google RotateCookies request used by session and account-pool paths. */
+export function fetchGoogleCookieRotation(
+	cfg: RuntimeConfig,
+	cookieHeader: string,
+) {
+	return httpFetch(ROTATE_COOKIES_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Origin: "https://accounts.google.com",
+			Referer: "https://accounts.google.com/",
+			"User-Agent": GEMINI_WEB_USER_AGENT,
+			"Accept-Language": "en-US,en;q=0.9",
+			Cookie: cookieHeader,
+		},
+		body: ROTATE_COOKIES_BODY,
+		timeoutMs: Math.min(
+			Math.max(Number(cfg.request_timeout_sec) || 30, 1) * 1000,
+			30000,
+		),
+		socket: cfg.upstream_socket,
+		socketFallback: "never",
+		cfg,
+	});
+}
 
 export type ActiveCookieState = {
 	cookie: string;
@@ -68,10 +99,6 @@ export function extractCookieValue(
 	return parseCookieHeader(cookieHeader).get(name) || "";
 }
 
-export function setCookieHeaders(headers: Headers): string[] {
-	return headers.getSetCookie();
-}
-
 export function mergeSetCookieHeaders(
 	cookieHeader: unknown,
 	setCookieValues: readonly string[],
@@ -97,7 +124,7 @@ export function observeGeminiAccountResponseCookies(
 ): void {
 	const observer = cfg.gemini_account?.observeSetCookie;
 	if (!response.ok || !observer) return;
-	const values = setCookieHeaders(response.headers);
+	const values = response.headers.getSetCookie();
 	if (!values.length) return;
 	try {
 		observer(values);
@@ -197,25 +224,7 @@ async function rotateGeminiCookieOnce(
 	state: ActiveCookieState,
 ): Promise<ActiveCookieState | null> {
 	try {
-		const resp = await httpFetch("https://accounts.google.com/RotateCookies", {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Origin: "https://accounts.google.com",
-				Referer: "https://accounts.google.com/",
-				"User-Agent": GEMINI_WEB_USER_AGENT,
-				"Accept-Language": "en-US,en;q=0.9",
-				Cookie: state.cookie,
-			},
-			body: '[000,"-0000000000000000000"]',
-			timeoutMs: Math.min(
-				Math.max(Number(cfg.request_timeout_sec) || 30, 1) * 1000,
-				30000,
-			),
-			socket: cfg.upstream_socket,
-			socketFallback: "never",
-			cfg,
-		});
+		const resp = await fetchGoogleCookieRotation(cfg, state.cookie);
 		if (resp.status === 401 || resp.status === 403) {
 			await cancelResponseBody(resp);
 			setRotationReason("rotation_rejected", resp.status);
@@ -229,7 +238,7 @@ async function rotateGeminiCookieOnce(
 			return state;
 		}
 
-		const setCookies = setCookieHeaders(resp.headers);
+		const setCookies = resp.headers.getSetCookie();
 		await cancelResponseBody(resp);
 		const mergedCookie = mergeSetCookieHeaders(state.cookie, setCookies);
 		const next = stateFromCookie(

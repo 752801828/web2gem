@@ -1,10 +1,10 @@
-import type { CompletionProvider } from "../../completion";
+import type { CompletionProvider } from "../../completion/ports";
 import {
 	OPENAI_COMPLETION_DIALECT,
 	prepareCompletion,
 } from "../../completion/prepare";
 import type { RuntimeConfig } from "../../config";
-import { parseOpenAIMessages } from "../../promptcompat/message-model";
+import { parseOpenAIMessages } from "../../promptcompat/message-parse";
 import { randHex } from "../../shared/crypto";
 import { nowSec } from "../../shared/logging";
 import { tokenEst } from "../../promptcompat/token-accounting";
@@ -13,6 +13,7 @@ import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
 import {
 	type PreparedOk,
+	preparedLogFields,
 	runPreparedCompletion,
 	type StageLog,
 } from "../generation";
@@ -62,16 +63,10 @@ export async function handleChat(
 				req.model,
 				OPENAI_COMPLETION_DIALECT,
 			),
-		prepareLogFields: (prepared) => ({
-			model: prepared.rm.name,
-			promptChars: prepared.prompt.length,
-			promptTokens: prepared.promptTokens,
-			fileRefs: prepared.fileRefs ? prepared.fileRefs.length : 0,
-			contextFiles: !!prepared.contextFiles,
-			contextRefs: prepared.contextFiles
-				? prepared.contextFiles.fileRefs.length
-				: 0,
-		}),
+		prepareLogFields: (prepared) =>
+			preparedLogFields(prepared, {
+				contextFiles: prepared.contextFiles,
+			}),
 		run: (prepared, stageLog) =>
 			runChatGeneration(req, cfg, provider, prepared, stageLog),
 	});
@@ -206,14 +201,7 @@ async function runChatGeneration(
 		created: nowSec(),
 		model: rm.name,
 		choices: [{ index: 0, message: msg, finish_reason: finish }],
-		usage: (() => {
-			const completionTokens = tokenEst(text);
-			return {
-				prompt_tokens: promptTokens,
-				completion_tokens: completionTokens,
-				total_tokens: promptTokens + completionTokens,
-			};
-		})(),
+		usage: openAIChatUsageFromCompletionTokens(promptTokens, tokenEst(text)),
 	};
 	return jsonResponse(payload);
 }

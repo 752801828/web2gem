@@ -9,7 +9,7 @@ import {
 	streamGoogleTools,
 } from "../../../../src/http/google/stream";
 import { isRecord } from "../../../../src/shared/types";
-import { parseGoogleToolChoicePolicy } from "../../../../src/toolcall/policy-google";
+import { parseGoogleToolChoicePolicy } from "../../../../src/toolcall/policy";
 import { createToolBundle } from "../../../../src/toolcall/tool-bundle";
 import { chunks } from "../../_support/async-stream.js";
 import { withConsoleLog } from "../../_support/globals.js";
@@ -324,6 +324,47 @@ describe("Google streaming", () => {
 		assert.equal(
 			logs.some((line) => line.includes("tools=1")),
 			true,
+		);
+	});
+	test("streams Google tool policy violation for text-only mode=ANY", async () => {
+		const resp = await handleGoogle(
+			{
+				contents: [{ role: "user", parts: [{ text: "read file" }] }],
+				tools: [
+					{
+						functionDeclarations: [
+							{ name: "Read", parameters: { type: "object" } },
+						],
+					},
+				],
+				toolConfig: { functionCallingConfig: { mode: "ANY" } },
+			},
+			googleConfig(),
+			// Text only — sieve yields no ParsedToolCall; policy must fire on
+			// raw calls (before Google wire format) with Google-dialect copy.
+			streamProvider(["sorry, I cannot call tools right now"]),
+			googleRoute("/v1beta/models/gemini-3.5-flash:streamGenerateContent"),
+		);
+		assert.equal(resp.status, 200);
+		const events = collectSSEData([await resp.text()]);
+		const errorEvent = events.find(
+			(event) => pathValue(event, "error") !== undefined,
+		);
+		assert.equal(
+			pathValue(errorEvent, "error", "code"),
+			"tool_choice_violation",
+		);
+		assert.equal(
+			pathValue(errorEvent, "error", "message"),
+			"functionCallingConfig.mode=ANY requires at least one valid function call.",
+		);
+		assert.equal(pathValue(errorEvent, "modelVersion"), "gemini-3.5-flash");
+		// Policy failure must not emit a final STOP/done usage frame.
+		assert.equal(
+			events.some(
+				(event) => pathValue(event, "candidates", 0, "finishReason") === "STOP",
+			),
+			false,
 		);
 	});
 	test("streams Google warning and final done after partial output", async () => {

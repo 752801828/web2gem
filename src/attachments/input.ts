@@ -1,15 +1,19 @@
-import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
 import { TEXT_ENCODER } from "../shared/encoding";
 import { firstNonEmptyString } from "../shared/strings";
+import {
+	firstNonNil,
+	firstRecord,
+	isRecord,
+	type UnknownRecord,
+} from "../shared/types";
 import { bytesToBase64 } from "./base64";
-import { cleanUploadMime, mimeFromFilename } from "./mime";
 import { uploadFilenameFromObject } from "./metadata";
+import { cleanUploadMime, mimeFromFilename } from "./mime";
 import { recognizedFileRefID } from "./refs";
 
 export { uploadFilenameFromObject } from "./metadata";
 
 export type ParsedUploadUrl = { b64: string; mime: string };
-export type ParsedImageUrl = ParsedUploadUrl;
 export type UploadFileInput = {
 	b64?: unknown;
 	mime?: unknown;
@@ -18,7 +22,7 @@ export type UploadFileInput = {
 	invalidReason?: string;
 };
 
-export function parseUploadUrl(url: unknown): ParsedUploadUrl | null {
+function parseUploadUrl(url: unknown): ParsedUploadUrl | null {
 	if (!url || typeof url !== "string") return null;
 	const trimmed = url.trim();
 	if (!isDataUrl(trimmed)) return null;
@@ -42,7 +46,7 @@ export function parseUploadUrl(url: unknown): ParsedUploadUrl | null {
 export function parseImageUrl(
 	url: unknown,
 	explicitMime?: unknown,
-): ParsedImageUrl | null {
+): ParsedUploadUrl | null {
 	const parsed = parseUploadUrl(url);
 	if (!parsed) return null;
 	return {
@@ -200,13 +204,6 @@ function uploadInputFromParsed(
 	};
 	if (filename) out.filename = filename;
 	return out;
-}
-
-function firstNonNil(...values: unknown[]): unknown {
-	for (const value of values) {
-		if (value !== undefined && value !== null) return value;
-	}
-	return undefined;
 }
 
 function isExplicitUploadFileInput(file: UnknownRecord): boolean {

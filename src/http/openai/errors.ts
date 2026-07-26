@@ -40,7 +40,7 @@ export function openAIErrorResponse(
 	return jsonResponse({ error }, status);
 }
 
-export function openAIUpstreamErrorResponse(e: unknown): Response {
+function openAIUpstreamErrorResponse(e: unknown): Response {
 	return openAIErrorResponse(
 		`upstream error: ${upstreamErrorMessage(e)}`,
 		upstreamErrorStatus(e) || 502,

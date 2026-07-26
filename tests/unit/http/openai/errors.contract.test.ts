@@ -4,7 +4,7 @@ import {
 	isInvalidGeminiCookieError,
 	unverifiedGeminiCookieError,
 } from "../../../../src/gemini/client/errors";
-import { openAIUpstreamErrorResponse } from "../../../../src/http/openai/errors";
+import { OPENAI_GENERATION_PROTOCOL } from "../../../../src/http/openai/errors";
 import { assert } from "../../assertions.js";
 import { record, required } from "./_support/fixtures.js";
 
@@ -22,7 +22,7 @@ describe("OpenAI error mapping", () => {
 		assert.equal(invalidGeminiCookieError({ cookie: "" }, 403), null);
 		assert.equal(invalidGeminiCookieError({ cookie: "SID=bad" }, 429), null);
 
-		const openAIResp = openAIUpstreamErrorResponse(err);
+		const openAIResp = OPENAI_GENERATION_PROTOCOL.upstreamErrorResponse(err);
 		assert.equal(openAIResp.status, 401);
 		const openAIBody = record(await openAIResp.json(), "OpenAI");
 		const openAIError = record(openAIBody.error, "OpenAI error");
@@ -37,7 +37,8 @@ describe("OpenAI error mapping", () => {
 		const unverifiedErr = unverifiedGeminiCookieError();
 		assert.equal(unverifiedErr.code, "invalid_gemini_cookie");
 		assert.equal(unverifiedErr.status, 401);
-		const unverifiedResp = openAIUpstreamErrorResponse(unverifiedErr);
+		const unverifiedResp =
+			OPENAI_GENERATION_PROTOCOL.upstreamErrorResponse(unverifiedErr);
 		assert.equal(unverifiedResp.status, 401);
 		const unverifiedBody = record(
 			await unverifiedResp.json(),

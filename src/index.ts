@@ -1,5 +1,9 @@
 import { handleApplicationRequest } from "./app";
+import { assertRuntimeConfig } from "./config";
 
 export default {
 	fetch: handleApplicationRequest,
-} satisfies ExportedHandler<WorkerBindings>;
+	assertRuntimeConfig,
+} satisfies ExportedHandler<WorkerBindings> & {
+	assertRuntimeConfig: typeof assertRuntimeConfig;
+};

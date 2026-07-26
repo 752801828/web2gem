@@ -1,8 +1,5 @@
 import { describe, test } from "vitest";
-import {
-	jsonValuesEqual,
-	validateJsonSchemaSubset,
-} from "../../../src/shared/json-schema";
+import { validateJsonSchemaSubset } from "../../../src/shared/json-schema";
 import { assert } from "../assertions.js";
 
 describe("JSON Schema subset", () => {
@@ -212,21 +209,5 @@ describe("JSON Schema subset", () => {
 			),
 			"$ must contain unique items",
 		);
-	});
-
-	test("compares nested JSON values independent of object key order", async () => {
-		assert.equal(
-			jsonValuesEqual(
-				{ a: [1, { b: true }], c: null },
-				{ c: null, a: [1, { b: true }] },
-			),
-			true,
-		);
-		assert.equal(
-			jsonValuesEqual({ a: [1, { b: true }] }, { a: [1, { b: false }] }),
-			false,
-		);
-		assert.equal(jsonValuesEqual({ a: 1 }, { a: 1, b: 2 }), false);
-		assert.equal(jsonValuesEqual([1, 2], [2, 1]), false);
 	});
 });

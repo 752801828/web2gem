@@ -1008,25 +1008,26 @@ function concatBytes(a, b) {
 }
 
 function runUniqueItemsValidation() {
-	const error = mod.validateStructuredOutputValue(
-		uniqueItemsValue,
+	const result = mod.finalizeStructuredOutputText(
+		JSON.stringify(uniqueItemsValue),
 		uniqueItemsRequirement,
 	);
 	return {
 		__benchDetails: {
 			items: uniqueItemsValue.length,
-			ok: error ? 0 : 1,
+			ok: result.error ? 0 : 1,
 		},
 	};
 }
 
 function runStructuredPatternValidation() {
 	let error = "";
+	const payload = JSON.stringify(structuredPatternValue);
 	for (let i = 0; i < 100; i++) {
-		error = mod.validateStructuredOutputValue(
-			structuredPatternValue,
+		error = mod.finalizeStructuredOutputText(
+			payload,
 			structuredPatternRequirement,
-		);
+		).error;
 	}
 	return {
 		__benchDetails: {
@@ -1060,17 +1061,52 @@ function runBase64Decode() {
 	};
 }
 
-function runMultipartBodyLarge() {
-	const multipart = mod.buildMultipartFileBody({
-		bytes: multipartBytes,
-		mime: "application/octet-stream",
-		filename: "large.bin",
-	});
-	return {
-		__benchDetails: {
-			bytes: multipart.contentLength,
-		},
+async function runMultipartBodyLarge() {
+	const cfg = {
+		...CFG,
+		cookie: "__Secure-1PSID=bench",
+		upstream_socket: false,
 	};
+	const originalFetch = globalThis.fetch;
+	let contentLength = 0;
+	globalThis.fetch = async (url, init = {}) => {
+		const href = String(url);
+		if (href.includes("/app")) {
+			return new Response('{"qKIAYe":"push-bench"}', { status: 200 });
+		}
+		if (href.includes("content-push.googleapis.com")) {
+			const body = init.body;
+			contentLength = 0;
+			if (body && typeof body.getReader === "function") {
+				const reader = body.getReader();
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					contentLength += value?.byteLength || 0;
+				}
+			} else if (body) {
+				const bytes = new Uint8Array(await new Response(body).arrayBuffer());
+				contentLength = bytes.byteLength;
+			}
+			return new Response("/uploaded/bench-ref", { status: 200 });
+		}
+		throw new Error(`unexpected fetch ${href}`);
+	};
+	try {
+		mod.resetGeminiUploadCachesForTest();
+		await mod.uploadMultipartFile(cfg, {
+			bytes: multipartBytes,
+			mime: "application/octet-stream",
+			filename: "large.bin",
+		});
+		return {
+			__benchDetails: {
+				bytes: contentLength,
+			},
+		};
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
 }
 
 async function runAppPageTokensLarge() {
@@ -1094,13 +1130,18 @@ async function runAppPageTokensLarge() {
 async function runAppBuildLabelLarge() {
 	const stats = installFetchResponse(appBuildLabelHtml);
 	try {
-		const label = await mod.getFreshGeminiBuildLabel(CFG);
+		const refreshed = await mod.refreshGeminiBuildLabelForRetry(
+			CFG,
+			CFG,
+			false,
+			"bench",
+		);
 		return {
 			__benchDetails: {
 				htmlBytes: stats.bytes,
 				pulls: stats.pulls,
 				canceled: stats.canceled,
-				ok: label === "bench-bl" ? 1 : 0,
+				ok: refreshed?.gemini_bl === "bench-bl" ? 1 : 0,
 			},
 		};
 	} finally {
@@ -1174,11 +1215,13 @@ function installFetchChunks(chunks) {
 }
 
 function runStructuredJsonUnclosed() {
-	const candidate = mod.extractFirstJsonDocument(structuredJsonNoise);
+	const result = mod.finalizeStructuredOutputText(structuredJsonNoise, {
+		type: "json_object",
+	});
 	return {
 		__benchDetails: {
 			bytes: structuredJsonNoise.length,
-			found: candidate ? 1 : 0,
+			found: result.error ? 0 : 1,
 		},
 	};
 }

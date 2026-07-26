@@ -23,28 +23,12 @@ import type {
 import type { ErrorWithMetadata } from "../../shared/types";
 
 export type {
-	ByteChunk,
-	ByteQueue,
 	SocketConnect,
 	SocketHttpOptions,
 	SocketHttpResponse,
-	SocketPool,
 } from "./socket-types";
-export { _joinByteChunks, bytesFromBody, createByteQueue } from "./byte-queue";
-export { MAX_SOCKET_HEADER_BYTES, parseHttpChunkSizeLine } from "./http-parse";
-export {
-	closeIdleSocketPool,
-	createSocketPool,
-	getDefaultSocketPool,
-	putIdleSocket,
-	SOCKET_KEEP_ALIVE_IDLE_MS,
-	SOCKET_KEEP_ALIVE_MAX_IDLE_PER_ORIGIN,
-	socketPoolKey,
-	takeIdleSocket,
-} from "./pool";
-export { closeSocketQuietly, socketTimeoutError } from "./timeout";
 
-let _connect: SocketConnect | null | undefined = undefined;
+let _connect: SocketConnect | null | undefined;
 
 export function _setConnectForTest(
 	connect: SocketConnect | null | undefined,

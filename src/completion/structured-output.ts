@@ -139,7 +139,7 @@ export function finalizeStructuredOutputText(
 	}
 }
 
-export function validateStructuredOutputValue(
+function validateStructuredOutputValue(
 	value: unknown,
 	requirement: unknown,
 ): string {
@@ -175,7 +175,7 @@ function parseStructuredJsonCandidate(
 	return parsed.ok ? (parsed.value as JsonValue) : STRUCTURED_JSON_NOT_FOUND;
 }
 
-export function extractFirstJsonDocument(text: unknown): string {
+function extractFirstJsonDocument(text: unknown): string {
 	const source = String(text || "");
 	const stack: Array<{ close: string; start: number }> = [];
 	let start = -1;

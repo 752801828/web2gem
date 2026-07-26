@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { MetricCards } from "../components";
+import { MetricCards } from "../components/MetricCards";
 import { Icon } from "../icons";
 import { tr } from "../i18n";
 import { importExpanded } from "../state";

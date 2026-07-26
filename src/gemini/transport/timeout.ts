@@ -2,7 +2,7 @@ import { throwIfAborted } from "../../shared/abort";
 import type { ErrorWithMetadata } from "../../shared/types";
 import type { SocketTimeoutScope } from "./socket-types";
 
-export function socketTimeoutError(
+function socketTimeoutError(
 	stage: unknown,
 	timeoutMs: unknown,
 ): ErrorWithMetadata {

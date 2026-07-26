@@ -476,7 +476,7 @@ The build script emits the production bundle plus an optional harness bundle:
 
 | Bundle            | Source                   | Purpose                                                     |
 | ----------------- | ------------------------ | ----------------------------------------------------------- |
-| `dist/worker.js`  | `src/worker-entry.ts`    | Canonical Worker artifact for Wrangler and Docker.           |
+| `dist/worker.js`  | `src/index.ts`    | Canonical Worker artifact for Wrangler and Docker.           |
 | `dist/harness.js` | `src/harness-exports.ts` | Smoke/bench harness bundle (built with `--harness-bundle`). |
 
 ## Testing

@@ -114,51 +114,6 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(generated, false);
 	});
-	test("returns image provider unsupported errors across OpenAI endpoints", async () => {
-		const unsupportedChat = await handleChat(
-			{
-				model: "gemini-3.5-flash",
-				messages: [{ role: "user", content: "draw" }],
-				tools: [{ type: "image_generation" }],
-			},
-			baseConfig({ cookie: "SID=ok" }),
-			strictProvider(),
-		);
-		assert.equal(unsupportedChat.status, 502);
-		assert.equal(
-			responseError(await unsupportedChat.json()).code,
-			"image_generation_provider_unsupported",
-		);
-
-		const unsupportedResponses = await handleResponses(
-			{
-				model: "gemini-3.5-flash",
-				input: "draw",
-				tools: [{ type: "image_generation" }],
-			},
-			baseConfig({ cookie: "SID=ok" }),
-			strictProvider(),
-		);
-		assert.equal(unsupportedResponses.status, 502);
-		assert.equal(
-			responseError(await unsupportedResponses.json()).code,
-			"image_generation_provider_unsupported",
-		);
-
-		const unsupportedImages = await handleImageGenerations(
-			{
-				prompt: "draw",
-			},
-			baseConfig({ cookie: "SID=ok" }),
-			strictProvider(),
-		);
-		assert.equal(unsupportedImages.status, 502);
-		assert.equal(
-			responseError(await unsupportedImages.json()).code,
-			"image_generation_provider_unsupported",
-		);
-	});
-
 	test("maps image-generation upstream errors through Responses", async () => {
 		const upstreamErr: ErrorWithMetadata = new Error(
 			"upstream refused image generation",

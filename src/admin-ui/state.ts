@@ -1,4 +1,4 @@
-import { signal } from "@preact/signals";
+import { computed, signal } from "@preact/signals";
 import type {
 	AccountStats,
 	GeminiAccount,
@@ -18,13 +18,13 @@ export const accountStates = [
 	"disabled",
 ] as const satisfies readonly GeminiAccountState[];
 
-export type ToastItem = { id: number; message: string; kind?: "error" };
-export type ConfirmationDraft = {
+type ToastItem = { id: number; message: string; kind?: "error" };
+type ConfirmationDraft = {
 	action: "delete";
 	count: number;
 	targetLabel: string;
 };
-export type EditDraft = { key: string; label: string };
+type EditDraft = { key: string; label: string };
 
 export function emptyModelRoutingDrafts(): Record<
 	ModelFamily,
@@ -37,7 +37,7 @@ export function emptyModelRoutingDrafts(): Record<
 	};
 }
 
-export type ProtectedAdminState = {
+type ProtectedAdminState = {
 	connectionVerified: boolean;
 	accounts: GeminiAccount[];
 	selected: Set<string>;
@@ -140,3 +140,26 @@ export function releaseAccountOperation(keys: readonly string[]): void {
 	for (const key of keys) next.delete(key);
 	operationBusyKeys.value = next;
 }
+
+export const metricSummary = computed(() => {
+	const stats = accountStats.value;
+	const rows = accounts.value;
+	return {
+		total: stats?.total ?? rows.length,
+		available:
+			stats?.available ??
+			rows.filter((item) => item.state === "available").length,
+		cooling:
+			stats?.cooling ?? rows.filter((item) => item.state === "cooling").length,
+		attention:
+			stats?.attention ??
+			rows.filter((item) => item.state === "attention").length,
+		disabled:
+			stats?.disabled ??
+			rows.filter((item) => item.state === "disabled").length,
+	};
+});
+
+export const hasFilters = computed(() =>
+	Boolean(query.value.trim() || stateFilter.value),
+);

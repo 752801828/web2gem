@@ -1,19 +1,12 @@
 import { isAbortError } from "../shared/abort";
-import type {
-	TokenCharCounts,
-	TokenCounter,
-} from "../promptcompat/token-accounting";
+import type { TokenCharCounts } from "../promptcompat/token-accounting";
 import {
 	createTokenCounter,
 	emptyTokenCounts,
 } from "../promptcompat/token-accounting";
-import type { ParsedToolCall } from "../toolcall/dsml";
-import type {
-	ToolChoicePolicy,
-	ToolPolicyViolation,
-} from "../toolcall/policy-openai";
-import { validateRequiredToolCalls } from "../toolcall/policy-openai";
-import type { ToolSieveState } from "../toolcall/sieve";
+import type { ParsedToolCall } from "../toolcall/parse";
+import type { ToolChoicePolicy, ToolPolicyViolation } from "../toolcall/policy";
+import { validateRequiredToolCalls } from "../toolcall/policy";
 import {
 	createToolSieveState,
 	flushToolSieve,
@@ -24,8 +17,6 @@ import type {
 	CompletionProviderOptions,
 	CompletionTextInput,
 } from "./ports";
-
-export type GeminiCompletionInput = CompletionTextInput;
 
 function completionTextDeltas(
 	provider: CompletionProvider,
@@ -54,7 +45,7 @@ export type CompletionStreamIssue = {
 	message?: string;
 };
 
-export type CompletionStreamOutcomeFacts = {
+type CompletionStreamOutcomeFacts = {
 	emittedText: boolean;
 	issue: CompletionStreamIssue | null;
 	toolCalls: readonly unknown[] | null;
@@ -79,7 +70,7 @@ export type CompletionStreamLifecycle = {
 	completionCounts: TokenCharCounts & { hasText: boolean };
 };
 
-export function createCompletionStreamLifecycle(): CompletionStreamLifecycle {
+function createCompletionStreamLifecycle(): CompletionStreamLifecycle {
 	return {
 		emittedText: false,
 		issue: null,
@@ -89,7 +80,7 @@ export function createCompletionStreamLifecycle(): CompletionStreamLifecycle {
 	};
 }
 
-export function classifyCompletionStreamOutcome(
+function classifyCompletionStreamOutcome(
 	facts: CompletionStreamOutcomeFacts,
 ): CompletionStreamOutcome {
 	const hasVisibleOutput =
@@ -105,7 +96,7 @@ export function classifyCompletionStreamOutcome(
 	return { type: "ok" };
 }
 
-export function recordCompletionStreamEvent(
+function recordCompletionStreamEvent(
 	lifecycle: CompletionStreamLifecycle,
 	event: CompletionStreamEvent,
 ): void {
@@ -129,9 +120,33 @@ export function recordCompletionStreamEvent(
 	}
 }
 
+/**
+ * Shared stream consume shell: record lifecycle events, optional text-delta
+ * framing callback, then classify the terminal outcome once.
+ */
+export async function consumeCompletionStreamEvents(
+	events: AsyncIterable<CompletionStreamEvent>,
+	onTextDelta?: (text: string) => void | Promise<void>,
+): Promise<{
+	lifecycle: CompletionStreamLifecycle;
+	outcome: CompletionStreamOutcome;
+}> {
+	const lifecycle = createCompletionStreamLifecycle();
+	for await (const event of events) {
+		recordCompletionStreamEvent(lifecycle, event);
+		if (event.type === "text_delta" && onTextDelta) {
+			await onTextDelta(event.text);
+		}
+	}
+	return {
+		lifecycle,
+		outcome: classifyCompletionStreamOutcome(lifecycle),
+	};
+}
+
 export async function* streamPlainCompletionEvents(
 	provider: CompletionProvider,
-	input: GeminiCompletionInput,
+	input: CompletionTextInput,
 	options: CompletionProviderOptions = {},
 ): AsyncIterable<CompletionStreamEvent> {
 	let emittedText = false;
@@ -162,85 +177,65 @@ export async function* streamPlainCompletionEvents(
 	};
 }
 
-export type SieveLoopContext = {
-	state: ToolSieveState;
-	counter: TokenCounter;
-	emittedText: boolean;
-	streamErr: unknown;
-};
-
-export function createSieveLoopContext(): SieveLoopContext {
-	return {
-		state: createToolSieveState(),
-		counter: createTokenCounter(),
-		emittedText: false,
-		streamErr: null,
-	};
-}
-
 /**
- * Shared sieve delta loop for both dialects: pipes provider deltas through the
- * tool sieve and yields released text as text_delta events only. Held tail
- * text, error state, and token counts are exposed on the caller's ctx; the
- * caller owns the per-dialect flush tail.
+ * Sieved stream for both dialects: pipes provider deltas through the tool
+ * sieve, flushes the held tail, then yields tool / policy / done events.
  */
-export async function* streamSievedTextDeltas(
+export async function* streamToolSieveCompletionEvents(
 	provider: CompletionProvider,
-	input: GeminiCompletionInput,
-	options: CompletionProviderOptions,
-	ctx: SieveLoopContext,
+	input: CompletionTextInput & {
+		toolPolicy?: ToolChoicePolicy | null | undefined;
+		validateToolCalls?: (
+			policy: ToolChoicePolicy | null | undefined,
+			toolCalls: ParsedToolCall[] | null | undefined,
+		) => ToolPolicyViolation | null;
+	},
+	options: CompletionProviderOptions = {},
 ): AsyncIterable<CompletionStreamEvent> {
+	const state = createToolSieveState();
+	const counter = createTokenCounter();
+	let emittedText = false;
+	let streamErr: unknown = null;
+
 	try {
 		for await (const deltaText of completionTextDeltas(
 			provider,
 			input,
 			options,
 		)) {
-			for (const text of processToolSieveChunk(ctx.state, deltaText)) {
+			for (const text of processToolSieveChunk(state, deltaText)) {
 				if (!text) continue;
-				ctx.emittedText = true;
-				ctx.counter.append(text);
+				emittedText = true;
+				counter.append(text);
 				yield { type: "text_delta", text };
 			}
 		}
 	} catch (e) {
 		if (isAbortError(e)) throw e;
-		ctx.streamErr = e;
+		streamErr = e;
 	}
-}
 
-export async function* streamToolSieveCompletionEvents(
-	provider: CompletionProvider,
-	input: GeminiCompletionInput & {
-		toolPolicy?: ToolChoicePolicy | null | undefined;
-	},
-	options: CompletionProviderOptions = {},
-): AsyncIterable<CompletionStreamEvent> {
-	const ctx = createSieveLoopContext();
-	yield* streamSievedTextDeltas(provider, input, options, ctx);
-
-	const flushed = flushToolSieve(ctx.state);
+	const flushed = flushToolSieve(state);
 	if (flushed.text) {
-		ctx.emittedText = true;
-		ctx.counter.append(flushed.text);
+		emittedText = true;
+		counter.append(flushed.text);
 		yield { type: "text_delta", text: flushed.text };
 	}
 	const toolCalls = flushed.toolCalls;
-	const violation = ctx.streamErr
+	const validateToolCalls =
+		input.validateToolCalls || validateRequiredToolCalls;
+	const violation = streamErr
 		? null
-		: validateRequiredToolCalls(input.toolPolicy, toolCalls);
+		: validateToolCalls(input.toolPolicy, toolCalls);
 
-	if (ctx.streamErr)
-		yield streamErrorEvent(
-			ctx.streamErr,
-			ctx.emittedText || !!toolCalls?.length,
-		);
+	if (streamErr)
+		yield streamErrorEvent(streamErr, emittedText || !!toolCalls?.length);
 	if (violation) yield { type: "tool_policy_violation", violation };
 	if (toolCalls?.length) yield { type: "tool_calls", toolCalls };
 	yield {
 		type: "done",
-		emittedText: ctx.emittedText,
-		completionCounts: ctx.counter.counts(),
+		emittedText,
+		completionCounts: counter.counts(),
 	};
 }
 

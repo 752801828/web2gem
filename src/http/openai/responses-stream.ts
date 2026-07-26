@@ -1,26 +1,21 @@
-import type { CompletionProvider } from "../../completion";
+import type { CompletionProvider } from "../../completion/ports";
 import {
-	classifyCompletionStreamOutcome,
-	createCompletionStreamLifecycle,
-	EMPTY_UPSTREAM_MSG,
-	recordCompletionStreamEvent,
+	consumeCompletionStreamEvents,
 	streamPlainCompletionEvents,
 	streamToolSieveCompletionEvents,
-} from "../../completion";
+} from "../../completion/stream-events";
 import type { FileRef } from "../../completion/types";
 import type { RuntimeConfig } from "../../config";
 import type { ResolvedModelOk } from "../../models";
 import { randHex } from "../../shared/crypto";
 import {
-	errorLogSummary,
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorReason,
 } from "../../shared/errors";
-import { log } from "../../shared/logging";
 import { tokenCountFromCounts } from "../../promptcompat/token-accounting";
-import { formatOpenAIToolCalls } from "../../toolcall/openai-format";
-import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
+import { formatOpenAIToolCalls } from "../../toolcall/parse";
+import type { ToolChoicePolicy } from "../../toolcall/policy";
 import type { ToolBundle } from "../../toolcall/tool-bundle";
 import type { SSEWrite } from "../core/sse";
 import {
@@ -28,6 +23,10 @@ import {
 	streamWarningObject,
 } from "../core/stream-errors";
 import { createDeltaCoalescer } from "../stream/coalescer";
+import {
+	EMPTY_UPSTREAM_STREAM_ERROR,
+	handleCompletionStreamOutcome,
+} from "../stream/outcome";
 
 type ResponseOutputItem = Record<string, unknown> & {
 	id?: string;
@@ -199,69 +198,50 @@ export async function streamResponsesWithToolSieve(
 			output: [],
 		},
 	});
-	const lifecycle = createCompletionStreamLifecycle();
-	if (tools) {
-		for await (const event of streamToolSieveCompletionEvents(
-			provider,
-			{ prompt, rm, fileRefs, toolPolicy },
-			{ signal },
-		)) {
-			recordCompletionStreamEvent(lifecycle, event);
-			if (event.type === "text_delta") {
-				await emitText(event.text);
-			}
-		}
-	} else {
-		for await (const event of streamPlainCompletionEvents(
-			provider,
-			{ prompt, rm, fileRefs },
-			{ signal },
-		)) {
-			recordCompletionStreamEvent(lifecycle, event);
-			if (event.type === "text_delta") {
-				await emitText(event.text);
-			}
-		}
-	}
+	const events = tools
+		? streamToolSieveCompletionEvents(
+				provider,
+				{ prompt, rm, fileRefs, toolPolicy },
+				{ signal },
+			)
+		: streamPlainCompletionEvents(
+				provider,
+				{ prompt, rm, fileRefs },
+				{ signal },
+			);
+	const { lifecycle, outcome } = await consumeCompletionStreamEvents(
+		events,
+		(text) => emitText(text),
+	);
 	await textDeltaCoalescer.flush();
-	const outcome = classifyCompletionStreamOutcome(lifecycle);
-	if (outcome.type === "failed_before_output") {
-		const error = outcome.issue.error;
-		log(
-			cfg,
-			`openai responses stream failed before output model=${rm.name} code=${upstreamErrorCode(error) || "upstream_error"} error=${errorLogSummary(error)}`,
-		);
-		await fail(
-			`upstream error: ${upstreamErrorMessage(error)}`,
-			upstreamErrorCode(error) || "upstream_error",
-			upstreamErrorReason(error),
-		);
-		return;
-	}
-	if (outcome.type === "policy_violation") {
-		log(
-			cfg,
-			`openai responses stream tool policy violation model=${rm.name} code=${outcome.violation.code}`,
-		);
-		await fail(outcome.violation.message, outcome.violation.code);
-		return;
-	}
-	if (outcome.type === "empty") {
-		log(cfg, `openai responses stream produced no content model=${rm.name}`);
-		await fail(EMPTY_UPSTREAM_MSG, "upstream_empty");
-		return;
-	}
-	if (outcome.type === "interrupted_after_output") {
-		const error = outcome.issue.error;
-		const warning = `\n\n${streamInterruptedWarningText(error)}`;
-		log(
-			cfg,
-			`openai responses stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(error) || "stream_interrupted"} error=${errorLogSummary(error)}`,
-		);
-		await writeResponsesEvent(write, "response.warning", {
-			warning: streamWarningObject(error, warning.trim()),
-		});
-	}
+	const terminal = await handleCompletionStreamOutcome({
+		cfg,
+		label: "openai responses stream",
+		model: rm.name,
+		outcome,
+		handlers: {
+			onFailedBeforeOutput: (issue) =>
+				fail(
+					`upstream error: ${upstreamErrorMessage(issue.error)}`,
+					upstreamErrorCode(issue.error) || "upstream_error",
+					upstreamErrorReason(issue.error),
+				),
+			onEmpty: () =>
+				fail(
+					EMPTY_UPSTREAM_STREAM_ERROR.message,
+					EMPTY_UPSTREAM_STREAM_ERROR.code,
+				),
+			onPolicyViolation: (violation) => fail(violation.message, violation.code),
+			onInterruptedAfterOutput: async (issue) => {
+				const warning = `\n\n${streamInterruptedWarningText(issue.error)}`;
+				await writeResponsesEvent(write, "response.warning", {
+					warning: streamWarningObject(issue.error, warning.trim()),
+				});
+			},
+		},
+	});
+	if (terminal) return;
+
 	await finishMessage();
 
 	if (lifecycle.toolCalls?.length) {

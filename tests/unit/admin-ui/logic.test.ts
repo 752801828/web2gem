@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { AdminLocalError } from "../../../src/admin-ui/local-errors";
+import { AdminLocalError } from "../../../src/admin-ui/session";
 import {
 	accountBusyLabel,
 	accountDisplayName,

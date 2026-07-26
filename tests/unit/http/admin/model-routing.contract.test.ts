@@ -5,7 +5,7 @@ import {
 	type RuntimeConfig,
 	type WorkerEnv,
 } from "../../../../src/config";
-import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/routes";
 import { handleGeminiModelRoutingAdminRequest } from "../../../../src/http/admin/gemini-model-routing";
 import type { GeminiPublicFamily } from "../../../../src/models";
 import { isRecord, type UnknownRecord } from "../../../../src/shared/types";

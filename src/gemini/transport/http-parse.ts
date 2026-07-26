@@ -2,7 +2,7 @@ import { TEXT_DECODER } from "../../shared/encoding";
 import { _joinByteChunks } from "./byte-queue";
 import type { ByteChunk, SocketTimeoutScope } from "./socket-types";
 
-export const MAX_SOCKET_HEADER_BYTES = 64 * 1024;
+const MAX_SOCKET_HEADER_BYTES = 64 * 1024;
 
 export type ParsedSocketHeaderBlock = {
 	httpVersion: string;
@@ -71,26 +71,6 @@ export async function readSocketHeaderBlock({
 	};
 }
 
-export function parseHttpChunkSizeLine(line: ByteChunk): number {
-	let start = 0;
-	let end = line.length;
-	while (start < end && isHttpWhitespace(line[start])) start += 1;
-	while (end > start && isHttpWhitespace(line[end - 1])) end -= 1;
-
-	let size = 0;
-	let digits = 0;
-	for (let i = start; i < end; i++) {
-		const b = line[i];
-		if (b === 59) break;
-		const nibble = hexNibble(b);
-		if (nibble < 0) return -1;
-		digits += 1;
-		size = size * 16 + nibble;
-		if (!Number.isSafeInteger(size)) return -1;
-	}
-	return digits > 0 ? size : -1;
-}
-
 export function parseSocketHeaderBlock(
 	headerBytes: ByteChunk,
 ): ParsedSocketHeaderBlock {
@@ -137,14 +117,6 @@ export function parseSocketHeaderBlock(
 
 function isHttpWhitespace(value: number | undefined): boolean {
 	return value === 32 || value === 9;
-}
-
-function hexNibble(value: number | undefined): number {
-	if (value === undefined) return -1;
-	if (value >= 48 && value <= 57) return value - 48;
-	if (value >= 65 && value <= 70) return value - 55;
-	if (value >= 97 && value <= 102) return value - 87;
-	return -1;
 }
 
 function trimHttpHeaderStart(

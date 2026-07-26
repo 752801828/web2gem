@@ -24,12 +24,17 @@ export function strictProvider(
 ): CompletionProvider {
 	const provider: CompletionProvider = {
 		supportsAuthenticatedSession: true,
+		async resolveModel(name, defaultName) {
+			return resolveModel(name, defaultName);
+		},
 		generateText: unexpected("generateText"),
+		generateRich: unexpected("generateRich"),
 		streamText: unexpected("streamText"),
 		async resolveAttachments(plan) {
 			return emptyOrExistingAttachmentResult(plan);
 		},
 		uploadTextFile: unexpected("uploadTextFile"),
+		dispose() {},
 	};
 	return { ...provider, ...overrides };
 }

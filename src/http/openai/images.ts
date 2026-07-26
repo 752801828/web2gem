@@ -239,14 +239,6 @@ async function handlePreparedForcedImageEndpoint(
 	responseFormat: OpenAIImagesResponseFormat,
 	stagePrefix: string,
 ): Promise<Response> {
-	if (!provider.generateRich) {
-		return openAIErrorResponse(
-			"configured completion provider does not support image generation",
-			502,
-			"image_generation_provider_unsupported",
-		);
-	}
-
 	return runPreparedCompletion({
 		cfg,
 		provider,

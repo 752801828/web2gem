@@ -2,7 +2,6 @@ import { describe, test } from "vitest";
 import {
 	normalizeUploadFileInput,
 	parseImageUrl,
-	parseUploadUrl,
 	uploadFilenameFromObject,
 	uploadMimeFromObject,
 } from "../../../src/attachments/input";
@@ -10,23 +9,23 @@ import { assert } from "../assertions.js";
 
 describe("attachment input", () => {
 	test("parses base64 and percent-encoded data URLs only", () => {
-		assert.deepEqual(parseUploadUrl("data:text/plain;base64,QQ=="), {
+		assert.deepEqual(parseImageUrl("data:text/plain;base64,QQ=="), {
 			b64: "QQ==",
 			mime: "text/plain",
 		});
-		assert.deepEqual(parseUploadUrl("data:text/plain,hello%20world"), {
+		assert.deepEqual(parseImageUrl("data:text/plain,hello%20world"), {
 			b64: "aGVsbG8gd29ybGQ=",
 			mime: "text/plain",
 		});
-		assert.equal(parseUploadUrl("data:text/plain,%E0%A4%A"), null);
-		assert.equal(parseUploadUrl("https://files.example/a.txt"), null);
-		assert.equal(parseUploadUrl("data:text/plain"), null);
+		assert.equal(parseImageUrl("data:text/plain,%E0%A4%A"), null);
+		assert.equal(parseImageUrl("https://files.example/a.txt"), null);
+		assert.equal(parseImageUrl("data:text/plain"), null);
 		// Non-data schemes remain rejected; data: scheme recognition is internal.
-		assert.deepEqual(parseUploadUrl("  DATA:text/plain,ok"), {
+		assert.deepEqual(parseImageUrl("  DATA:text/plain,ok"), {
 			b64: "b2s=",
 			mime: "text/plain",
 		});
-		assert.equal(parseUploadUrl("https://files.example/a.txt"), null);
+		assert.equal(parseImageUrl("https://files.example/a.txt"), null);
 	});
 
 	test("normalizes image data URLs with explicit MIME precedence", () => {

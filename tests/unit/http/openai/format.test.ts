@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import {
+	OPENAI_GENERATION_PROTOCOL,
 	openAIErrorResponse,
-	openAIUpstreamErrorResponse,
 } from "../../../../src/http/openai/errors";
 import {
 	buildResponsesOutput,
@@ -92,7 +92,8 @@ describe("OpenAI response format", () => {
 		assert.equal(defaultErrBody.code, null);
 
 		const upstream = streamError("gateway down", "upstream_down");
-		const upstreamResp = openAIUpstreamErrorResponse(upstream);
+		const upstreamResp =
+			OPENAI_GENERATION_PROTOCOL.upstreamErrorResponse(upstream);
 		assert.equal(upstreamResp.status, 502);
 		const upstreamBody = record(await upstreamResp.json(), "upstream error");
 		const upstreamError = record(upstreamBody.error, "upstream error body");

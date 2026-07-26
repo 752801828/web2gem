@@ -1,6 +1,6 @@
 import { signal } from "@preact/signals";
 
-export type ThemePreference = "light" | "dark" | "system";
+type ThemePreference = "light" | "dark" | "system";
 type ResolvedTheme = Exclude<ThemePreference, "system">;
 
 const THEME_STORAGE_KEY = "web2gem_admin_theme";
@@ -8,7 +8,7 @@ const darkQuery = "(prefers-color-scheme: dark)";
 
 export const themePreference = signal<ThemePreference>("system");
 
-export function resolveTheme(
+function resolveTheme(
 	preference: ThemePreference,
 	prefersDark: boolean,
 ): ResolvedTheme {

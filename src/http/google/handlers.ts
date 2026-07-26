@@ -1,6 +1,6 @@
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
-import type { CompletionProvider } from "../../completion";
+import type { CompletionProvider } from "../../completion/ports";
 import type { RuntimeConfig } from "../../config";
 import {
 	GOOGLE_COMPLETION_DIALECT,
@@ -15,6 +15,7 @@ import type { UnknownRecord } from "../../shared/types";
 import {
 	generateTextLogged,
 	type PreparedOk,
+	preparedLogFields,
 	runPreparedCompletion,
 	type StageLog,
 } from "../generation";
@@ -49,18 +50,12 @@ export async function handleGoogleGenerate(
 				modelName,
 				GOOGLE_COMPLETION_DIALECT,
 			),
-		prepareLogFields: (prepared) => ({
-			model: prepared.rm.name,
-			stream,
-			tools: !!prepared.tools && prepared.promptToolChoice !== "none",
-			promptChars: prepared.prompt.length,
-			promptTokens: prepared.promptTokens,
-			fileRefs: prepared.fileRefs ? prepared.fileRefs.length : 0,
-			contextFiles: !!prepared.contextFiles,
-			contextRefs: prepared.contextFiles
-				? prepared.contextFiles.fileRefs.length
-				: 0,
-		}),
+		prepareLogFields: (prepared) =>
+			preparedLogFields(prepared, {
+				stream,
+				tools: !!prepared.tools && prepared.promptToolChoice !== "none",
+				contextFiles: prepared.contextFiles,
+			}),
 		run: (prepared, stageLog) =>
 			runGoogleGeneration(cfg, provider, prepared, stream, stageLog),
 	});

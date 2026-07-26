@@ -9,8 +9,9 @@ import {
 	errorLogSummary,
 } from "../../shared/errors";
 import { log } from "../../shared/logging";
-import { getDefaultSocketPool, resolveConnect, socketHttp } from "./socket";
-import type { SocketHttpResponse } from "./socket";
+import { getDefaultSocketPool } from "./pool";
+import { resolveConnect, socketHttp } from "./socket";
+import type { SocketHttpResponse } from "./socket-types";
 
 type HttpBodyInit = BodyInit | ArrayBufferView;
 

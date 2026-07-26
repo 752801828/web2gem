@@ -4,7 +4,7 @@ import {
 	relativeUnit,
 	tr,
 } from "./i18n";
-import { AdminLocalError } from "./local-errors";
+import { AdminLocalError } from "./session";
 import type {
 	AccountIdentifier,
 	GeminiAccount,
@@ -12,7 +12,7 @@ import type {
 	MutationResult,
 } from "./types";
 
-export type BatchImportItem = { label?: string; psid: string; psidts: string };
+type BatchImportItem = { label?: string; psid: string; psidts: string };
 
 export function text(value: unknown): string {
 	return String(value == null ? "" : value);
