@@ -1,6 +1,6 @@
 import { describe, test } from "vitest";
-import { buildGeminiModelHeaders } from "../../../../src/gemini/client/model-headers";
-import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
+import { buildGeminiModelHeaders } from "../../../../src/gemini/client/protocol";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/routes";
 import { assert } from "../../assertions.js";
 
 const route: GeminiRouteTuple = {

@@ -3,7 +3,7 @@ import type { RuntimeConfig } from "../../../../src/config";
 import { generate } from "../../../../src/gemini/client";
 import {
 	configWithCachedGeminiBuildLabel,
-	getFreshGeminiBuildLabel,
+	refreshGeminiBuildLabelForRetry,
 	resetGeminiBuildLabelCacheForTest,
 	waitBeforeRetry,
 } from "../../../../src/gemini/client/retry";
@@ -141,22 +141,24 @@ describe("Gemini retry and build-label integration", () => {
 	test("persists build labels with executionContext.waitUntil", async () => {
 		const cache = createMemoryCache();
 		const pending: Promise<unknown>[] = [];
+		const cfg = baseGeminiClientConfig({
+			execution_ctx: {
+				waitUntil(promise) {
+					pending.push(promise);
+				},
+			},
+		});
 		await withCaches(cache, async () => {
 			await withFetch(
 				async () => new Response('<script>{"cfb2h":"waituntil-bl"}</script>'),
 				async () => {
-					assert.equal(
-						await getFreshGeminiBuildLabel(
-							baseGeminiClientConfig({
-								execution_ctx: {
-									waitUntil(promise) {
-										pending.push(promise);
-									},
-								},
-							}),
-						),
-						"waituntil-bl",
+					const refreshed = await refreshGeminiBuildLabelForRetry(
+						cfg,
+						cfg,
+						false,
+						"test",
 					);
+					assert.equal(refreshed?.gemini_bl, "waituntil-bl");
 				},
 			);
 			assert.equal(pending.length, 1);
@@ -211,13 +213,24 @@ describe("Gemini retry and build-label integration", () => {
 					});
 				},
 				async () => {
-					const firstRefresh = getFreshGeminiBuildLabel(first);
-					const secondRefresh = getFreshGeminiBuildLabel(second);
+					const firstRefresh = refreshGeminiBuildLabelForRetry(
+						first,
+						first,
+						false,
+						"first",
+					);
+					const secondRefresh = refreshGeminiBuildLabelForRetry(
+						second,
+						second,
+						false,
+						"second",
+					);
 					release();
-					assert.deepEqual(await Promise.all([firstRefresh, secondRefresh]), [
-						"fresh-bl",
-						"fresh-bl",
-					]);
+					const labels = await Promise.all([firstRefresh, secondRefresh]);
+					assert.deepEqual(
+						labels.map((item) => item?.gemini_bl),
+						["fresh-bl", "fresh-bl"],
+					);
 				},
 			);
 		});

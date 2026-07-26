@@ -1,7 +1,6 @@
 import {
 	normalizeUploadFileInput,
 	parseImageUrl,
-	type UploadFileInput,
 	uploadFilenameFromObject,
 	uploadMimeFromObject,
 } from "../attachments/input";
@@ -9,72 +8,18 @@ import {
 	existingFileRefFromRecord,
 	recognizedFileRefID,
 } from "../attachments/refs";
-import type { AttachmentFileRef } from "../attachments/types";
 import { parseJsonObject } from "../shared/json";
 import { firstNonEmptyString } from "../shared/strings";
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
-
-export type MessageRole = "system" | "user" | "assistant" | "tool";
-
-export type TextPart = {
-	kind: "text";
-	text: string;
-	/**
-	 * True when the text came from direct input text (string parts and
-	 * text/input_text-typed parts); false for assistant output/summary echoes
-	 * and unknown-typed text fallbacks, which prompt rendering includes but
-	 * user-input extraction (image generation) must skip.
-	 */
-	inputText: boolean;
-};
-
-export type ReasoningPart = {
-	kind: "reasoning";
-	text: string;
-};
-
-export type ImagePart = {
-	kind: "image";
-	b64: string;
-	mime: string;
-	filename: string;
-	remoteUrl: string;
-	fileRef: AttachmentFileRef | null;
-	hasInline: boolean;
-};
-
-export type FilePart = {
-	kind: "file";
-	upload: UploadFileInput | null;
-	filename: string;
-	remoteUrl: string;
-	fileRef: AttachmentFileRef | null;
-	label: string;
-};
-
-export type MessagePart = TextPart | ReasoningPart | ImagePart | FilePart;
-
-export type InternalToolCall = {
-	id: string;
-	name: string;
-	args: UnknownRecord;
-};
-
-export type InternalMessage = {
-	role: MessageRole;
-	roleLabel: string;
-	parts: MessagePart[];
-	toolCalls: InternalToolCall[];
-	toolCallId: string;
-	toolName: string;
-	reasoningText: string;
-};
-
-export type MessageProjectionMode =
-	| "prompt"
-	| "history"
-	| "latest-input"
-	| "reasoning";
+import {
+	createInternalMessage,
+	type FilePart,
+	type ImagePart,
+	type InternalMessage,
+	type InternalToolCall,
+	type MessagePart,
+	normalizeMessageRole,
+} from "./message-types";
 
 export function parseOpenAIMessages(messages: unknown): InternalMessage[] {
 	if (!Array.isArray(messages)) return [];
@@ -86,142 +31,13 @@ export function parseOpenAIMessages(messages: unknown): InternalMessage[] {
 	return out;
 }
 
-function projectMessageParts(
-	message: InternalMessage,
-	mode: Exclude<MessageProjectionMode, "reasoning">,
-): string {
-	const parts: string[] = [];
-	for (const part of message.parts) {
-		const text = projectMessagePart(part, mode);
-		if (text) parts.push(text);
-	}
-	return parts.join("\n");
-}
-
-export function projectMessageText(
-	message: InternalMessage,
-	mode: MessageProjectionMode,
-): string {
-	if (mode !== "reasoning") return projectMessageParts(message, mode);
-	const parts: string[] = [];
-	for (const part of message.parts) {
-		if (part.kind === "reasoning" && part.text) parts.push(part.text);
-	}
-	const embedded = parts.join("\n").trim();
-	return embedded || message.reasoningText.trim();
-}
-
-export function renderMessageBody(
-	message: InternalMessage,
-	mode: Exclude<MessageProjectionMode, "reasoning">,
-): string {
-	const content = projectMessageParts(message, mode);
-	if (message.role !== "assistant") return content;
-	const hasEmbeddedReasoning = message.parts.some(
-		(part) => part.kind === "reasoning" && !!part.text,
-	);
-	const reasoning =
-		hasEmbeddedReasoning || content.includes("[reasoning_content]")
-			? ""
-			: message.reasoningText.trim();
-	if (!reasoning) return content;
-	return [reasoningBlock(reasoning), content].filter(Boolean).join("\n\n");
-}
-
-export function latestUserInputText(
-	messages: readonly InternalMessage[],
-): string {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const message = messages[i];
-		if (message?.roleLabel !== "user") continue;
-		const text = renderMessageBody(message, "latest-input").trim();
-		if (text) return text;
-	}
-	return "";
-}
-
-function projectMessagePart(
-	part: MessagePart,
-	_mode: Exclude<MessageProjectionMode, "reasoning">,
-): string {
-	if (part.kind === "text") return part.text;
-	if (part.kind === "reasoning")
-		return part.text ? reasoningBlock(part.text) : "";
-	if (part.kind === "image") return "[image input]";
-	return `[file input${part.label ? ` ${part.label}` : ""}]`;
-}
-
-function reasoningBlock(text: string): string {
-	return `[reasoning_content]\n${text}\n[/reasoning_content]`;
-}
-
-export type ParsedAssistantContent = {
-	text: string;
-	reasoning: string;
-	toolCalls: InternalToolCall[];
-};
-
-/** Parse assistant content parts once for Responses item normalization. */
-export function parseAssistantContent(
-	item: UnknownRecord,
-): ParsedAssistantContent {
-	const content =
-		item.content ?? (typeof item.text === "string" ? item.text : null);
-	let text = "";
-	let reasoning = flattenText(
-		item.reasoning_content || item.reasoning || item.thinking,
-	);
-	const toolCalls = parseMessageToolCalls(item.tool_calls);
-	const parts = Array.isArray(content)
-		? content
-		: [content].filter((part) => part != null);
-	for (const raw of parts) {
-		if (isRecord(raw)) {
-			const type = String(raw.type || "")
-				.trim()
-				.toLowerCase();
-			if (type === "function_call" || type === "tool_call") {
-				const call = parseContentToolCall(raw, toolCalls.length);
-				if (call) toolCalls.push(call);
-				continue;
-			}
-		}
-		if (typeof raw === "string") {
-			text += raw;
-			continue;
-		}
-		const part = parseMessagePart(raw);
-		if (!part) continue;
-		if (part.kind === "text") text += part.text;
-		else if (part.kind === "reasoning") reasoning += part.text;
-	}
-	return { text, reasoning, toolCalls };
-}
-
-function parseContentToolCall(
-	raw: UnknownRecord,
-	index: number,
-): InternalToolCall | null {
-	const fn = isRecord(raw.function) ? raw.function : {};
-	const name = String(raw.name || fn.name || "").trim();
-	if (!name) return null;
-	const id = String(raw.call_id || raw.id || `call_${index}`);
-	return {
-		id,
-		name,
-		args: parseToolCallArguments(
-			raw.arguments ?? raw.input ?? fn.arguments ?? fn.input,
-		),
-	};
-}
-
 export function parseToolCallArguments(value: unknown): UnknownRecord {
 	return isRecord(value) ? value : parseJsonObject(String(value ?? "{}"));
 }
 
 function parseOpenAIMessage(msg: UnknownRecord): InternalMessage {
+	// normalizeMessageRole already maps function->tool and developer->system.
 	const roleLabel = normalizeMessageRole(msg.role);
-	const role = messageRoleBucket(roleLabel);
 	return createInternalMessage(
 		roleLabel,
 		[
@@ -230,93 +46,12 @@ function parseOpenAIMessage(msg: UnknownRecord): InternalMessage {
 		],
 		{
 			toolCalls:
-				role === "assistant" ? parseMessageToolCalls(msg.tool_calls) : [],
-			toolCallId: role === "tool" ? msg.tool_call_id : "",
-			toolName: role === "tool" ? msg.name : "",
-			reasoningText: role === "assistant" ? directReasoningText(msg) : "",
+				roleLabel === "assistant" ? parseMessageToolCalls(msg.tool_calls) : [],
+			toolCallId: roleLabel === "tool" ? msg.tool_call_id : "",
+			toolName: roleLabel === "tool" ? msg.name : "",
+			reasoningText: roleLabel === "assistant" ? directReasoningText(msg) : "",
 		},
 	);
-}
-
-export function createInternalMessage(
-	roleValue: unknown,
-	parts: MessagePart[],
-	options: {
-		toolCalls?: InternalToolCall[];
-		toolCallId?: unknown;
-		toolName?: unknown;
-		reasoningText?: unknown;
-	} = {},
-): InternalMessage {
-	const roleLabel = normalizeMessageRole(roleValue);
-	return {
-		role: messageRoleBucket(roleLabel),
-		roleLabel,
-		parts,
-		toolCalls: options.toolCalls || [],
-		toolCallId: options.toolCallId == null ? "" : String(options.toolCallId),
-		toolName: options.toolName == null ? "" : String(options.toolName),
-		reasoningText:
-			typeof options.reasoningText === "string"
-				? options.reasoningText.trim()
-				: "",
-	};
-}
-
-/**
- * Role normalization for message/history records: `function` -> `tool`,
- * `developer` -> `system`, default `user`.
- */
-export function normalizeMessageRole(role: unknown): string {
-	const r = String(role || "")
-		.trim()
-		.toLowerCase();
-	if (r === "function") return "tool";
-	if (r === "developer") return "system";
-	return r || "user";
-}
-
-/** Whether an item/part type flattens to text (text|input_text|output_text|summary_text). */
-export function isTextPartType(type: unknown): boolean {
-	const t = String(type || "")
-		.trim()
-		.toLowerCase();
-	return (
-		t === "text" ||
-		t === "input_text" ||
-		t === "output_text" ||
-		t === "summary_text"
-	);
-}
-
-/** Reasoning text of a raw OpenAI-shaped message record (direct field or content parts). */
-export function rawRecordReasoningText(msg: unknown): string {
-	if (!isRecord(msg)) return "";
-	const direct = msg.reasoning_content || msg.reasoning || msg.thinking;
-	if (typeof direct === "string" && direct.trim()) return direct.trim();
-	const content = msg.content;
-	if (!Array.isArray(content)) return "";
-	const parts: string[] = [];
-	for (const c of content) {
-		if (!isRecord(c)) continue;
-		const typ = String(c.type || "").toLowerCase();
-		if (
-			(typ === "reasoning" || typ === "thinking") &&
-			typeof c.text === "string"
-		)
-			parts.push(c.text);
-	}
-	return parts.join("\n").trim();
-}
-
-function messageRoleBucket(roleLabel: string): MessageRole {
-	if (
-		roleLabel === "system" ||
-		roleLabel === "assistant" ||
-		roleLabel === "tool"
-	)
-		return roleLabel;
-	return "user";
 }
 
 function directReasoningText(msg: UnknownRecord): string {

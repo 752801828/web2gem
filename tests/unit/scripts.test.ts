@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, test } from "vitest";
-import { CONFIG_ENV_KEYS } from "../../src/config";
+import { CONFIG_ENV_KEYS } from "../../src/config/spec";
 import { isRecord, type UnknownRecord } from "../../src/shared/types";
 import { assert } from "./assertions.js";
 
@@ -52,7 +52,7 @@ function fullCoverageSummary(): CoverageSummary {
 		total: coverageEntry(),
 		"src/admin-ui/logic.ts": coverageEntry(),
 		"src/attachments/plan.ts": coverageEntry(),
-		"src/completion/index.ts": coverageEntry(),
+		"src/completion/ports.ts": coverageEntry(),
 		"src/config/index.ts": coverageEntry(),
 		"src/gemini/accounts/pool.ts": coverageEntry(),
 		"src/gemini/app-page.ts": coverageEntry(),
@@ -61,7 +61,7 @@ function fullCoverageSummary(): CoverageSummary {
 		"src/gemini/client/index.ts": coverageEntry(),
 		"src/gemini/client/parse-parts.ts": coverageEntry(),
 		"src/gemini/transport/http.ts": coverageEntry(),
-		"src/gemini/uploads/index.ts": coverageEntry(),
+		"src/gemini/uploads/execute.ts": coverageEntry(),
 		"src/http/core/json.ts": coverageEntry(),
 		"src/http/admin/gemini-accounts.ts": coverageEntry(),
 		"src/http/google/handlers.ts": coverageEntry(),
@@ -75,7 +75,7 @@ function fullCoverageSummary(): CoverageSummary {
 		"src/promptcompat/responses-input.ts": coverageEntry(),
 		"src/promptcompat/token-accounting.ts": coverageEntry(),
 		"src/shared/text-metrics.ts": coverageEntry(),
-		"src/toolcall/markdown.ts": coverageEntry(),
+		"src/toolcall/parse.ts": coverageEntry(),
 		"src/completion/structured-output.ts": coverageEntry(),
 		"src/toolcall/sieve.ts": coverageEntry(),
 	};
@@ -270,17 +270,58 @@ function requiredString(value: unknown, label: string): string {
 	return value;
 }
 
+async function readPackageScripts(): Promise<UnknownRecord> {
+	const packageJson = requiredRecord(
+		JSON.parse(await readFile("package.json", "utf8")),
+		"package.json",
+	);
+	return requiredRecord(packageJson.scripts, "package scripts");
+}
+
+function parseIgnorePatterns(source: string): string[] {
+	return source
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter((line) => line && !line.startsWith("#"));
+}
+
+async function readBothReadmes(): Promise<readonly [string, string]> {
+	return Promise.all([
+		readFile("README.md", "utf8"),
+		readFile("README.zh.md", "utf8"),
+	]);
+}
+
 function typeScriptDirective(suffix: string): string {
 	return ["@", "ts-", suffix].join("");
 }
 
+type ScriptCase = {
+	name: string;
+	code: number;
+	stdout?: readonly RegExp[];
+	stderr?: readonly RegExp[];
+};
+
+async function assertScriptCase(
+	result: ScriptResult,
+	scriptCase: ScriptCase,
+): Promise<void> {
+	assert.equal(result.code, scriptCase.code, scriptCase.name);
+	for (const pattern of scriptCase.stdout || []) {
+		assert.match(result.stdout, pattern, scriptCase.name);
+	}
+	for (const pattern of scriptCase.stderr || []) {
+		assert.match(result.stderr, pattern, scriptCase.name);
+	}
+}
+
 describe("quality scripts", () => {
-	test("accepts the repository when unit tests contain no type suppressions", async () => {
-		const result = await runNodeScript("scripts/check-test-types.mjs", null);
-		assert.equal(result.code, 0);
-		assert.match(result.stdout, /type suppression check passed/);
-	});
-	test("reports every forbidden type suppression in a temporary test root", async () => {
+	test("enforces type-suppression accept and reject paths", async () => {
+		const accepted = await runNodeScript("scripts/check-test-types.mjs", null);
+		assert.equal(accepted.code, 0);
+		assert.match(accepted.stdout, /type suppression check passed/);
+
 		await withTempDir(async (dir) => {
 			const suffixes = ["nocheck", "ignore", "expect-error"];
 			const fixture = join(dir, "fixture.ts");
@@ -288,15 +329,15 @@ describe("quality scripts", () => {
 				.map((suffix) => `// ${typeScriptDirective(suffix)}`)
 				.join("\n");
 			await writeFile(fixture, source, "utf8");
-			const result = await runNodeScript("scripts/check-test-types.mjs", dir);
-			assert.equal(result.code, 1);
+			const rejected = await runNodeScript("scripts/check-test-types.mjs", dir);
+			assert.equal(rejected.code, 1);
 			const displayFixture = relative(process.cwd(), fixture).replaceAll(
 				"\\",
 				"/",
 			);
 			for (const [index, suffix] of suffixes.entries()) {
 				assert.equal(
-					result.stderr.includes(
+					rejected.stderr.includes(
 						`- ${displayFixture}:${index + 1}: ${typeScriptDirective(suffix)}`,
 					),
 					true,
@@ -304,86 +345,96 @@ describe("quality scripts", () => {
 			}
 		});
 	});
-	test("accepts coverage summaries that satisfy line and branch gates", async () => {
-		await withCoverageSummary(fullCoverageSummary(), async (summaryPath) => {
-			const result = await runNodeScript(
-				"scripts/check-coverage.mjs",
-				summaryPath,
-			);
-			assert.equal(result.code, 0);
-			assert.match(result.stdout, /Coverage gates passed/);
-		});
-	});
-	test("ignores third-party coverage when evaluating source gates", async () => {
-		const summary = fullCoverageSummary();
-		summary["node_modules/example/index.mjs"] = coverageEntry(0, 0);
-		await withCoverageSummary(summary, async (summaryPath) => {
-			const result = await runNodeScript(
-				"scripts/check-coverage.mjs",
-				summaryPath,
-			);
-			assert.equal(result.code, 0);
-			assert.match(result.stdout, /src: 100\.00% lines/);
-		});
-	});
-	test("rejects coverage summaries below branch gates", async () => {
-		const summary = fullCoverageSummary();
-		const sieveCoverage = summary["src/toolcall/sieve.ts"];
-		if (!sieveCoverage) throw new Error("missing sieve coverage fixture");
-		sieveCoverage.branches.covered = 54;
-		await withCoverageSummary(summary, async (summaryPath) => {
-			const result = await runNodeScript(
-				"scripts/check-coverage.mjs",
-				summaryPath,
-			);
-			assert.equal(result.code, 1);
-			assert.match(result.stderr, /Coverage gate failed/);
-			assert.match(result.stderr, /src\/toolcall/);
-		});
-	});
-	test("rejects missing coverage data for required targets", async () => {
-		const summary = fullCoverageSummary();
-		for (const key of Object.keys(summary)) {
-			if (key.startsWith("src/http/openai/")) delete summary[key];
-		}
-		await withCoverageSummary(summary, async (summaryPath) => {
-			const result = await runNodeScript(
-				"scripts/check-coverage.mjs",
-				summaryPath,
-			);
-			assert.equal(result.code, 1);
-			assert.match(result.stderr, /missing lines coverage data/);
-			assert.match(result.stderr, /src\/http\/openai/);
-		});
-	});
-	test("rejects completion provider coverage below its file gates", async () => {
-		const summary = fullCoverageSummary();
-		summary["src/gemini/completion-provider.ts"] = coverageEntry(94, 84);
-		await withCoverageSummary(summary, async (summaryPath) => {
-			const result = await runNodeScript(
-				"scripts/check-coverage.mjs",
-				summaryPath,
-			);
-			assert.equal(result.code, 1);
-			assert.match(result.stderr, /src\/gemini\/completion-provider\.ts/);
-			assert.match(result.stderr, /94\.00% lines/);
-			assert.match(result.stderr, /84\.00% branches/);
-		});
-	});
-	test("accepts bundle size within the configured budget", async () => {
-		await withTempFile("worker.js", "x".repeat(128), async (bundlePath) => {
-			const result = await runNodeScript(
-				"scripts/check-bundle-size.mjs",
-				bundlePath,
-				{
-					BUNDLE_GZIP_SIZE_LIMIT_BYTES: "256",
+	test("enforces coverage summary gates for required source targets", async () => {
+		const cases: ReadonlyArray<
+			ScriptCase & { mutate?: (summary: CoverageSummary) => void }
+		> = [
+			{
+				name: "accepts line and branch gates",
+				code: 0,
+				stdout: [/Coverage gates passed/],
+			},
+			{
+				name: "ignores third-party coverage",
+				mutate: (summary) => {
+					summary["node_modules/example/index.mjs"] = coverageEntry(0, 0);
 				},
-			);
-			assert.equal(result.code, 0);
-			assert.match(result.stdout, /bundle size ok/);
-			assert.match(result.stdout, /raw 128 bytes, gzip \d+ bytes/);
-			assert.match(result.stdout, /headroom \d+ bytes/);
-		});
+				code: 0,
+				stdout: [/src: 100\.00% lines/],
+			},
+			{
+				name: "rejects below branch gates",
+				mutate: (summary) => {
+					const sieveCoverage = summary["src/toolcall/sieve.ts"];
+					if (!sieveCoverage) throw new Error("missing sieve coverage fixture");
+					sieveCoverage.branches.covered = 54;
+				},
+				code: 1,
+				stderr: [/Coverage gate failed/, /src\/toolcall/],
+			},
+			{
+				name: "rejects missing required target data",
+				mutate: (summary) => {
+					for (const key of Object.keys(summary)) {
+						if (key.startsWith("src/http/openai/")) delete summary[key];
+					}
+				},
+				code: 1,
+				stderr: [/missing lines coverage data/, /src\/http\/openai/],
+			},
+			{
+				name: "rejects completion provider file gates",
+				mutate: (summary) => {
+					summary["src/gemini/completion-provider.ts"] = coverageEntry(94, 84);
+				},
+				code: 1,
+				stderr: [
+					/src\/gemini\/completion-provider\.ts/,
+					/94\.00% lines/,
+					/84\.00% branches/,
+				],
+			},
+		];
+		for (const coverageCase of cases) {
+			const summary = fullCoverageSummary();
+			coverageCase.mutate?.(summary);
+			await withCoverageSummary(summary, async (summaryPath) => {
+				await assertScriptCase(
+					await runNodeScript("scripts/check-coverage.mjs", summaryPath),
+					coverageCase,
+				);
+			});
+		}
+	});
+	test("enforces configured bundle size budgets", async () => {
+		const cases: ReadonlyArray<ScriptCase & { body: string | Uint8Array }> = [
+			{
+				name: "accepts within budget",
+				body: "x".repeat(128),
+				code: 0,
+				stdout: [
+					/bundle size ok/,
+					/raw 128 bytes, gzip \d+ bytes/,
+					/headroom \d+ bytes/,
+				],
+			},
+			{
+				name: "rejects over budget",
+				body: deterministicBytes(512),
+				code: 1,
+				stderr: [/Bundle size gate failed/],
+			},
+		];
+		for (const bundleCase of cases) {
+			await withTempFile("worker.js", bundleCase.body, async (bundlePath) => {
+				await assertScriptCase(
+					await runNodeScript("scripts/check-bundle-size.mjs", bundlePath, {
+						BUNDLE_GZIP_SIZE_LIMIT_BYTES: "256",
+					}),
+					bundleCase,
+				);
+			});
+		}
 	});
 	test("classifies documentation-only and runtime-impacting CI changes", async () => {
 		for (const [files, expected] of [
@@ -394,136 +445,95 @@ describe("quality scripts", () => {
 			[["migrations/0001_gemini_accounts.sql"], "runtime"],
 			[["src/admin-ui/app.tsx"], "runtime"],
 			[[], "runtime"],
-		]) {
+		] as const) {
 			const result = await runNodeScript(
 				"scripts/classify-ci-changes.mjs",
 				null,
-				{ CI_CHANGED_FILES_JSON: JSON.stringify(files) },
+				{
+					CI_CHANGED_FILES_JSON: JSON.stringify(files),
+				},
 			);
 			assert.equal(result.code, 0);
 			assert.equal(result.stdout.trim(), expected);
 		}
 	});
-	test("rejects bundle size over the configured budget", async () => {
-		await withTempFile(
-			"worker.js",
-			deterministicBytes(512),
-			async (bundlePath) => {
-				const result = await runNodeScript(
-					"scripts/check-bundle-size.mjs",
-					bundlePath,
-					{
-						BUNDLE_GZIP_SIZE_LIMIT_BYTES: "256",
-					},
-				);
-				assert.equal(result.code, 1);
-				assert.match(result.stderr, /Bundle size gate failed/);
+	test("enforces text and machine-readable benchmark median budgets", async () => {
+		const textCases: ReadonlyArray<
+			ScriptCase & { body: string; maxMedianMs: string }
+		> = [
+			{
+				name: "accepts within budget",
+				body: "stream_sieve_held_tool          n=20  median=12.500ms  p95=13.000ms\n",
+				maxMedianMs: "20",
+				code: 0,
+				stdout: [/benchmark gate ok/],
 			},
-		);
-	});
-	test("accepts benchmark medians within the configured budget", async () => {
-		await withTempFile(
-			"bench.txt",
-			"stream_sieve_held_tool          n=20  median=12.500ms  p95=13.000ms\n",
-			async (benchPath) => {
-				const result = await runNodeScript(
-					"scripts/check-benchmark.mjs",
-					benchPath,
-					{
-						BENCH_MAX_MEDIAN_MS: "20",
-					},
-				);
-				assert.equal(result.code, 0);
-				assert.match(result.stdout, /benchmark gate ok/);
+			{
+				name: "rejects over budget",
+				body: "stream_sieve_held_tool          n=20  median=25.000ms  p95=26.000ms\n",
+				maxMedianMs: "20",
+				code: 1,
+				stderr: [/Benchmark gate failed/],
 			},
-		);
-	});
-	test("rejects benchmark medians over the configured budget", async () => {
-		await withTempFile(
-			"bench.txt",
-			"stream_sieve_held_tool          n=20  median=25.000ms  p95=26.000ms\n",
-			async (benchPath) => {
-				const result = await runNodeScript(
-					"scripts/check-benchmark.mjs",
-					benchPath,
-					{
-						BENCH_MAX_MEDIAN_MS: "20",
-					},
-				);
-				assert.equal(result.code, 1);
-				assert.match(result.stderr, /Benchmark gate failed/);
+			{
+				name: "parses microsecond medians",
+				body: "stream_sieve_held_tool          n=20  median=850.0us  p95=900.0us\n",
+				maxMedianMs: "1",
+				code: 0,
+				stdout: [/850\.0us <= 1\.000ms/],
 			},
-		);
-	});
-	test("parses microsecond benchmark output for the performance gate", async () => {
-		await withTempFile(
-			"bench.txt",
-			"stream_sieve_held_tool          n=20  median=850.0us  p95=900.0us\n",
-			async (benchPath) => {
-				const result = await runNodeScript(
-					"scripts/check-benchmark.mjs",
-					benchPath,
-					{
-						BENCH_MAX_MEDIAN_MS: "1",
-					},
+		];
+		for (const benchCase of textCases) {
+			await withTempFile("bench.txt", benchCase.body, async (benchPath) => {
+				await assertScriptCase(
+					await runNodeScript("scripts/check-benchmark.mjs", benchPath, {
+						BENCH_MAX_MEDIAN_MS: benchCase.maxMedianMs,
+					}),
+					benchCase,
 				);
-				assert.equal(result.code, 0);
-				assert.match(result.stdout, /850\.0us <= 1\.000ms/);
-			},
-		);
-	});
-	test("accepts machine-readable multi-case benchmark results", async () => {
-		await withTempFile(
-			"bench.json",
-			JSON.stringify({
+			});
+		}
+		const budgets = JSON.stringify({
+			stream_sieve_held_tool: 2,
+			stream_text_cumulative_deltas: 4,
+		});
+		const jsonCases: ReadonlyArray<
+			ScriptCase & {
+				results: ReadonlyArray<{ name: string; medianMs: number }>;
+			}
+		> = [
+			{
+				name: "accepts complete gated cases",
 				results: [
 					{ name: "stream_sieve_held_tool", medianMs: 1.5 },
 					{ name: "stream_text_cumulative_deltas", medianMs: 3.25 },
 				],
-			}),
-			async (benchPath) => {
-				const result = await runNodeScript(
-					"scripts/check-benchmark.mjs",
-					benchPath,
-					{
-						BENCH_GATE_BUDGETS: JSON.stringify({
-							stream_sieve_held_tool: 2,
-							stream_text_cumulative_deltas: 4,
-						}),
-					},
-				);
-				assert.equal(result.code, 0);
-				assert.match(result.stdout, /stream_sieve_held_tool/);
-				assert.match(result.stdout, /stream_text_cumulative_deltas/);
+				code: 0,
+				stdout: [/stream_sieve_held_tool/, /stream_text_cumulative_deltas/],
 			},
-		);
-	});
-	test("rejects machine-readable benchmark results missing a gated case", async () => {
-		await withTempFile(
-			"bench.json",
-			JSON.stringify({
+			{
+				name: "rejects missing gated case",
 				results: [{ name: "stream_sieve_held_tool", medianMs: 1.5 }],
-			}),
-			async (benchPath) => {
-				const result = await runNodeScript(
-					"scripts/check-benchmark.mjs",
-					benchPath,
-					{
-						BENCH_GATE_BUDGETS: JSON.stringify({
-							stream_sieve_held_tool: 2,
-							stream_text_cumulative_deltas: 4,
-						}),
-					},
-				);
-				assert.equal(result.code, 1);
-				assert.match(
-					result.stderr,
-					/missing benchmark median for stream_text_cumulative_deltas/,
-				);
+				code: 1,
+				stderr: [/missing benchmark median for stream_text_cumulative_deltas/],
 			},
-		);
+		];
+		for (const benchCase of jsonCases) {
+			await withTempFile(
+				"bench.json",
+				JSON.stringify({ results: benchCase.results }),
+				async (benchPath) => {
+					await assertScriptCase(
+						await runNodeScript("scripts/check-benchmark.mjs", benchPath, {
+							BENCH_GATE_BUDGETS: budgets,
+						}),
+						benchCase,
+					);
+				},
+			);
+		}
 	});
-	test("skips Docker smoke when Docker is not installed", async () => {
+	test("keeps Docker packaging contracts for smoke, compose, and image runtime files", async () => {
 		await withTempDir(async (dir) => {
 			const result = await runNodeScript("scripts/docker-smoke.mjs", null, {
 				PATH: dir,
@@ -534,8 +544,7 @@ describe("quality scripts", () => {
 				/Docker smoke skipped: docker executable not found/,
 			);
 		});
-	});
-	test("keeps Docker Compose port mapping aligned with the container listener", async () => {
+
 		const compose = await readFile("compose.yaml", "utf8");
 		const dockerEnv = await readFile(".env.docker.example", "utf8");
 		assert.match(compose, /\$\{PORT:-52389\}:\$\{PORT:-52389\}/);
@@ -548,8 +557,7 @@ describe("quality scripts", () => {
 			compose,
 			/REQUEST_BODY_MAX_BYTES:\s*"\$\{REQUEST_BODY_MAX_BYTES:-67108864\}"/,
 		);
-	});
-	test("copies every local Docker server runtime import into the final image", async () => {
+
 		const server = await readFile("server/docker-server.mjs", "utf8");
 		const dockerfile = await readFile("Dockerfile", "utf8");
 		const runtimeImports = Array.from(
@@ -566,33 +574,63 @@ describe("quality scripts", () => {
 			);
 		}
 	});
-	test("keeps Docker build contexts minimal without excluding build inputs", async () => {
-		const patterns = (await readFile(".dockerignore", "utf8"))
-			.split(/\r?\n/)
-			.map((line) => line.trim())
-			.filter((line) => line && !line.startsWith("#"));
-		const excluded = new Set(patterns.filter((line) => !line.startsWith("!")));
-		for (const pattern of [
-			".env",
-			".env.*",
-			".dev.vars",
-			".dev.vars.*",
-			"tests",
-			"docs",
-			"release-assets",
-			"reports",
-		]) {
-			assert.equal(excluded.has(pattern), true, `missing ${pattern}`);
+	test("keeps env secret templates trackable in docker and git ignore files", async () => {
+		const dockerPatterns = parseIgnorePatterns(
+			await readFile(".dockerignore", "utf8"),
+		);
+		const gitPatterns = parseIgnorePatterns(
+			await readFile(".gitignore", "utf8"),
+		);
+		const dockerExcluded = new Set(
+			dockerPatterns.filter((line) => !line.startsWith("!")),
+		);
+		for (const pattern of [".env", ".env.*", ".dev.vars", ".dev.vars.*"]) {
+			assert.equal(
+				gitPatterns.includes(pattern),
+				true,
+				`gitignore missing ${pattern}`,
+			);
+			assert.equal(
+				dockerExcluded.has(pattern),
+				true,
+				`dockerignore missing ${pattern}`,
+			);
+		}
+		for (const pattern of ["tests", "docs", "release-assets", "reports"]) {
+			assert.equal(
+				dockerExcluded.has(pattern),
+				true,
+				`dockerignore missing ${pattern}`,
+			);
 		}
 		for (const example of [
 			"!.env.example",
 			"!.env.docker.example",
 			"!.dev.vars.example",
 		]) {
-			assert.equal(patterns.includes(example), true, `missing ${example}`);
+			assert.equal(
+				gitPatterns.includes(example),
+				true,
+				`gitignore missing ${example}`,
+			);
+			assert.equal(
+				dockerPatterns.includes(example),
+				true,
+				`dockerignore missing ${example}`,
+			);
 		}
 		assert.equal(
-			patterns.indexOf("!.env.docker.example") > patterns.indexOf(".env.*"),
+			dockerPatterns.indexOf("!.env.docker.example") >
+				dockerPatterns.indexOf(".env.*"),
+			true,
+		);
+		assert.equal(
+			gitPatterns.indexOf("!.env.example") > gitPatterns.indexOf(".env.*"),
+			true,
+		);
+		assert.equal(
+			gitPatterns.indexOf("!.dev.vars.example") >
+				gitPatterns.indexOf(".dev.vars.*"),
 			true,
 		);
 		for (const dockerInput of [
@@ -603,33 +641,8 @@ describe("quality scripts", () => {
 			"scripts",
 			"src",
 		]) {
-			assert.equal(excluded.has(dockerInput), false, dockerInput);
+			assert.equal(dockerExcluded.has(dockerInput), false, dockerInput);
 		}
-	});
-	test("keeps local environment secrets ignored while templates remain trackable", async () => {
-		const patterns = (await readFile(".gitignore", "utf8"))
-			.split(/\r?\n/)
-			.map((line) => line.trim())
-			.filter((line) => line && !line.startsWith("#"));
-
-		for (const pattern of [".env", ".env.*", ".dev.vars", ".dev.vars.*"]) {
-			assert.equal(patterns.includes(pattern), true, `missing ${pattern}`);
-		}
-		for (const example of [
-			"!.env.example",
-			"!.env.docker.example",
-			"!.dev.vars.example",
-		]) {
-			assert.equal(patterns.includes(example), true, `missing ${example}`);
-		}
-		assert.equal(
-			patterns.indexOf("!.env.example") > patterns.indexOf(".env.*"),
-			true,
-		);
-		assert.equal(
-			patterns.indexOf("!.dev.vars.example") > patterns.indexOf(".dev.vars.*"),
-			true,
-		);
 	});
 	test("keeps runtime config env keys aligned with Docker docs and Compose", async () => {
 		const dockerEnvExample = parseEnvExampleKeys(
@@ -764,26 +777,8 @@ describe("quality scripts", () => {
 		assert.match(workflow, /upstream_pull_args: ["']--ff-only["']/);
 		assert.doesNotMatch(workflow, /\t/);
 	});
-	test("keeps source quality workflows out of deployment copies", async () => {
-		const workflow = await readFile(
-			".github/workflows/quality-gates.yml",
-			"utf8",
-		);
-
-		assert.match(
-			workflow,
-			/classify:[\s\S]*if: \$\{\{ github\.repository == 'Guardinary\/web2gem' \}\}/,
-		);
-		assert.match(
-			workflow,
-			/docker-smoke:[\s\S]*if: \$\{\{ github\.repository == 'Guardinary\/web2gem'/,
-		);
-	});
 	test("documents first deployment and automatic fork updates", async () => {
-		const [english, chinese] = await Promise.all([
-			readFile("README.md", "utf8"),
-			readFile("README.zh.md", "utf8"),
-		]);
+		const [english, chinese] = await readBothReadmes();
 
 		const readmeCases: ReadonlyArray<
 			readonly [string, string, readonly RegExp[]]
@@ -822,9 +817,8 @@ describe("quality scripts", () => {
 		}
 	});
 	test("keeps README quality-command docs aligned with config", async () => {
-		const [english, chinese, vitestConfig] = await Promise.all([
-			readFile("README.md", "utf8"),
-			readFile("README.zh.md", "utf8"),
+		const [[english, chinese], vitestConfig] = await Promise.all([
+			readBothReadmes(),
 			readFile("vitest.config.mjs", "utf8"),
 		]);
 
@@ -858,14 +852,7 @@ describe("quality scripts", () => {
 		assert.doesNotMatch(vitestConfig, /isolate:\s*false/);
 	});
 	test("keeps the account-pool release control plane on main", async () => {
-		const packageJson = requiredRecord(
-			JSON.parse(await readFile("package.json", "utf8")),
-			"package.json",
-		);
-		const packageScripts = requiredRecord(
-			packageJson.scripts,
-			"package scripts",
-		);
+		const packageScripts = await readPackageScripts();
 		const runner = await readFile("scripts/check-release.mjs", "utf8");
 		assert.equal(
 			packageScripts["check:release"],
@@ -895,10 +882,7 @@ describe("quality scripts", () => {
 			await assert.rejects(readFile(workflow, "utf8"), /ENOENT/, workflow);
 		}
 
-		const [english, chinese] = await Promise.all([
-			readFile("README.md", "utf8"),
-			readFile("README.zh.md", "utf8"),
-		]);
+		const [english, chinese] = await readBothReadmes();
 		for (const readme of [english, chinese]) {
 			assert.match(readme, /Release Account Pool Edition/);
 			assert.match(readme, /pool-v\*/);
@@ -952,14 +936,7 @@ describe("quality scripts", () => {
 		);
 	});
 	test("keeps generated Worker binding types aligned with runtime config", async () => {
-		const packageJson = requiredRecord(
-			JSON.parse(await readFile("package.json", "utf8")),
-			"package.json",
-		);
-		const packageScripts = requiredRecord(
-			packageJson.scripts,
-			"package scripts",
-		);
+		const packageScripts = await readPackageScripts();
 		const generatedTypes = await readFile("worker-configuration.d.ts", "utf8");
 		assert.match(packageScripts["worker:types"], /^wrangler types/);
 		assert.match(packageScripts["check:worker-types"], /^wrangler types/);
@@ -969,18 +946,19 @@ describe("quality scripts", () => {
 			assert.match(generatedTypes, new RegExp(`\\b${key}:`), key);
 		}
 	});
-	test("keeps static warnings blocking and account-pool branch gates required", async () => {
-		const packageJson = requiredRecord(
-			JSON.parse(await readFile("package.json", "utf8")),
-			"package.json",
-		);
-		const packageScripts = requiredRecord(
-			packageJson.scripts,
-			"package scripts",
-		);
+	test("keeps quality-gates origin-scoped, static-blocking, and branch-gated", async () => {
+		const packageScripts = await readPackageScripts();
 		const workflow = await readFile(
 			".github/workflows/quality-gates.yml",
 			"utf8",
+		);
+		assert.match(
+			workflow,
+			/classify:[\s\S]*if: \$\{\{ github\.repository == 'Guardinary\/web2gem' \}\}/,
+		);
+		assert.match(
+			workflow,
+			/docker-smoke:[\s\S]*if: \$\{\{ github\.repository == 'Guardinary\/web2gem'/,
 		);
 		assert.match(
 			packageScripts["check:static"],

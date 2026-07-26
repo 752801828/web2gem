@@ -1,10 +1,40 @@
 import type { RuntimeConfig } from "../../../../src/config";
+import type { GeminiAccountLease } from "../../../../src/gemini/accounts/lease";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/routes";
+import { basicRouteForFamily } from "../../../../src/gemini/accounts/routes";
+import type { AccountPoolService } from "../../../../src/gemini/accounts/pool";
+import type { GeminiAccountAcquireOptions } from "../../../../src/gemini/accounts/types";
 import type { GeminiCompletionProviderOptions } from "../../../../src/gemini/completion-provider";
 import type { ResolvedModelOk } from "../../../../src/models";
 import { baseGeminiClientConfig } from "./client-fixtures.js";
 
 type ClientOverrides = NonNullable<GeminiCompletionProviderOptions["client"]>;
 type UploadOverrides = NonNullable<GeminiCompletionProviderOptions["uploads"]>;
+
+export type ScriptedAcquireRecord = {
+	base: RuntimeConfig;
+	excludeAccountIds: string[];
+	routeRequirement: GeminiAccountAcquireOptions["routeRequirement"];
+	capabilityMode: GeminiAccountAcquireOptions["capabilityMode"];
+	capabilityFreshAfterMs: GeminiAccountAcquireOptions["capabilityFreshAfterMs"];
+};
+
+export type ScriptedRuntimeRecords = {
+	route: [ResolvedModelOk, number][];
+	acquire: ScriptedAcquireRecord[];
+};
+
+export type ScriptedPoolMethods = {
+	acquireLease: AccountPoolService["acquireLease"];
+	resolveModel: AccountPoolService["resolveModel"];
+	routeCandidatesForModel: AccountPoolService["routeCandidatesForModel"];
+	modelCatalog: AccountPoolService["modelCatalog"];
+	modelRoutingOverview: AccountPoolService["modelRoutingOverview"];
+};
+
+export type ScriptedRuntimeWithRoutes = ScriptedPoolMethods & {
+	records: ScriptedRuntimeRecords;
+};
 
 export function flashModel(extended = false): ResolvedModelOk {
 	return {
@@ -97,4 +127,77 @@ export function failFastUploads(
 		},
 		...overrides,
 	};
+}
+
+export function rateLimitError(accountId: string) {
+	return Object.assign(new Error(`rate limited ${accountId}`), { status: 429 });
+}
+
+export function requestScopedError(message = "model invalid for this request") {
+	return Object.assign(new Error(message), { code: "invalid_model" });
+}
+
+export function proRoutes(): [GeminiRouteTuple, GeminiRouteTuple] {
+	return [
+		basicRouteForFamily("pro"),
+		{
+			providerModelId: "e6fa609c3fa255c0",
+			capacity: 4,
+			capacityField: 12,
+			modelNumber: 3,
+		},
+	];
+}
+
+/**
+ * Lightweight scripted runtime for failover/recovery contracts.
+ * Uses a plain object (not AccountPoolService) to keep fixtures free of
+ * heavy runtime/store import cycles.
+ */
+export function scriptedRuntimeWithRoutes(
+	leases: GeminiAccountLease[],
+	routes: GeminiRouteTuple[],
+): ScriptedRuntimeWithRoutes {
+	const pending = [...leases];
+	const records: ScriptedRuntimeRecords = { route: [], acquire: [] };
+	return {
+		records,
+		async resolveModel(): Promise<never> {
+			throw new Error("unexpected accountPool.resolveModel call");
+		},
+		async modelCatalog(): Promise<never> {
+			throw new Error("unexpected accountPool.modelCatalog call");
+		},
+		async modelRoutingOverview(): Promise<never> {
+			throw new Error("unexpected accountPool.modelRoutingOverview call");
+		},
+		async routeCandidatesForModel(
+			model: ResolvedModelOk,
+			freshAfterMs: number,
+		) {
+			records.route.push([model, freshAfterMs]);
+			return routes;
+		},
+		async acquireLease(
+			base: RuntimeConfig,
+			options: GeminiAccountAcquireOptions = {},
+		) {
+			records.acquire.push({
+				base,
+				excludeAccountIds: [...(options.excludeAccountIds || [])],
+				routeRequirement: options.routeRequirement,
+				capabilityMode: options.capabilityMode,
+				capabilityFreshAfterMs: options.capabilityFreshAfterMs,
+			});
+			if (!pending.length)
+				throw new Error("unexpected extra account acquisition");
+			return pending.shift() ?? null;
+		},
+	} as ScriptedRuntimeWithRoutes;
+}
+
+export function asAccountPool(
+	pool: ScriptedRuntimeWithRoutes,
+): ScriptedRuntimeWithRoutes & AccountPoolService {
+	return pool as unknown as ScriptedRuntimeWithRoutes & AccountPoolService;
 }

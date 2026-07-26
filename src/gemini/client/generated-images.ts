@@ -3,8 +3,8 @@ import { detectUploadMimeFromBytes } from "../../attachments/mime";
 import type { RuntimeConfig } from "../../config";
 import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
-import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { httpFetch } from "../transport";
+import { GEMINI_WEB_USER_AGENT } from "./protocol";
+import { httpFetch } from "../transport/http";
 import { upstreamImageFetchFailedError } from "./errors";
 import type { GeminiParsedImage } from "./parse-images";
 

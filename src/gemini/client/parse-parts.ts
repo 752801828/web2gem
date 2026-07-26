@@ -9,7 +9,7 @@ import {
 	extractCandidateResponse,
 	type GeminiParsedImage,
 } from "./parse-images";
-import { getNested } from "./parse-values";
+import { getNested } from "./parse-images";
 
 export type GeminiResponseParts = {
 	text: string;
@@ -47,7 +47,7 @@ export function hasArtifactMarkers(source: string): boolean {
 	);
 }
 
-export function cleanText(text: unknown): string {
+function cleanText(text: unknown): string {
 	return stripArtifacts(text).trim();
 }
 

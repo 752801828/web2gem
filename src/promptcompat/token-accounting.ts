@@ -1,3 +1,4 @@
+import { asText, firstNonASCIIIndex } from "../shared/text-metrics";
 export type TokenCharCounts = {
 	asciiChars: number;
 	nonASCIIChars: number;
@@ -17,7 +18,7 @@ export type TokenCounter = {
 };
 
 export function tokenEst(value: unknown): number {
-	const text = asTokenText(value);
+	const text = asText(value);
 	if (!text) return 0;
 	const counts = tokenCharCounts(text);
 	return tokenCountFromCharCounts(counts.asciiChars, counts.nonASCIIChars);
@@ -60,7 +61,7 @@ export function createTokenCounter(): TokenCounter {
 	let pendingHighSurrogate = false;
 	return {
 		append(text: unknown) {
-			const source = asTokenText(text);
+			const source = asText(text);
 			if (!source) return;
 			hasText = true;
 			const firstNonASCII = firstNonASCIIIndex(source);
@@ -144,7 +145,7 @@ export function buildTextWithTokens(
 	const out: string[] | null = keepText ? [] : null;
 	const counter = createTokenCounter();
 	for (const part of parts || []) {
-		const text = asTokenText(part);
+		const text = asText(part);
 		if (!text) continue;
 		if (out) out.push(text);
 		counter.append(text);
@@ -155,18 +156,4 @@ export function buildTextWithTokens(
 		tokens: tokenCountFromCounts(counts),
 		counts,
 	};
-}
-
-export function asTokenText(value: unknown): string {
-	if (typeof value === "string") return value;
-	if (Array.isArray(value)) return asTokenText(value[0]);
-	if (value == null) return "";
-	return String(value);
-}
-
-function firstNonASCIIIndex(source: string): number {
-	for (let i = 0; i < source.length; i++) {
-		if (source.charCodeAt(i) > 0x7f) return i;
-	}
-	return -1;
 }

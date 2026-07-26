@@ -3,9 +3,8 @@ import {
 	flattenText,
 	parseMessageContent,
 	parseOpenAIMessages,
-	rawRecordReasoningText,
-	renderMessageBody,
-} from "../../../src/promptcompat/message-model";
+} from "../../../src/promptcompat/message-parse";
+import { renderMessageBody } from "../../../src/promptcompat/message-project";
 import { assert } from "../assertions.js";
 import {
 	filePartAt,
@@ -112,15 +111,23 @@ describe("prompt compatibility", () => {
 		assert.equal(text.text, "fallback output");
 	});
 	test("normalizes reasoning and object-shaped message parts", async () => {
+		const reasoningMessage = messageAt(
+			parseOpenAIMessages([
+				{
+					role: "assistant",
+					reasoning_content: "checked plan",
+					content: [
+						{ type: "thinking", text: "picked tool" },
+						{ type: "text", text: "visible" },
+					],
+				},
+			]),
+			0,
+		);
+		assert.equal(reasoningMessage.reasoningText, "checked plan");
 		assert.equal(
-			rawRecordReasoningText({
-				content: [
-					{ type: "reasoning", text: "checked plan" },
-					{ type: "thinking", text: "picked tool" },
-					{ type: "text", text: "visible" },
-				],
-			}),
-			"checked plan\npicked tool",
+			renderMessageBody(reasoningMessage, "history"),
+			"[reasoning_content]\npicked tool\n[/reasoning_content]\nvisible",
 		);
 		assert.equal(
 			flattenText({

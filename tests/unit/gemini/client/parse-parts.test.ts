@@ -1,6 +1,5 @@
 import { describe, test } from "vitest";
 import {
-	cleanText,
 	extractResponseFatalCode,
 	extractResponseParts,
 	extractResponseText,
@@ -40,7 +39,8 @@ describe("Gemini response parts", () => {
 			"http://googleusercontent.com/image_generation_content/0",
 		].join("\n");
 		assert.equal(stripArtifacts(source).trim(), "keep");
-		assert.equal(cleanText(`  ${source}  `), "keep");
+		// cleanText is module-private; public path is extractResponseText/parts.
+		assert.equal(stripArtifacts(`  ${source}  `).trim(), "keep");
 	});
 	test("selects the longest cleaned response text", () => {
 		const short = generatedImageCandidate("short");

@@ -3,9 +3,9 @@ import { sleep } from "../../shared/abort";
 import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import { extractGeminiBuildLabel } from "../app-page";
-import { createOriginScopedStringCache } from "../cache";
-import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { httpFetch } from "../transport";
+import { createOriginScopedStringCache, geminiOrigin } from "../cache";
+import { GEMINI_WEB_USER_AGENT } from "./protocol";
+import { httpFetch } from "../transport/http";
 
 const GEMINI_BL_CACHE_TTL_SEC = 12 * 60 * 60;
 
@@ -28,9 +28,7 @@ export async function configWithCachedGeminiBuildLabel(
 	return { ...cfg, gemini_bl: cachedBL };
 }
 
-export async function getFreshGeminiBuildLabel(
-	cfg: RuntimeConfig,
-): Promise<string> {
+async function getFreshGeminiBuildLabel(cfg: RuntimeConfig): Promise<string> {
 	return buildLabelCache.getFresh(cfg, fetchFreshGeminiBuildLabel);
 }
 
@@ -45,15 +43,12 @@ async function fetchFreshGeminiBuildLabel(cfg: RuntimeConfig): Promise<string> {
 			"Accept-Language": "en-US,en;q=0.9",
 		};
 		if (cfg.cookie) headers.Cookie = cfg.cookie;
-		const resp = await httpFetch(
-			`${cfg.gemini_origin || "https://gemini.google.com"}/app`,
-			{
-				headers,
-				timeoutMs: 30000,
-				socket: cfg.upstream_socket,
-				cfg,
-			},
-		);
+		const resp = await httpFetch(`${geminiOrigin(cfg)}/app`, {
+			headers,
+			timeoutMs: 30000,
+			socket: cfg.upstream_socket,
+			cfg,
+		});
 		return await extractGeminiBuildLabel(resp);
 	} catch (e) {
 		log(cfg, `failed to refresh Gemini BL ${errorLogSummary(e)}`);

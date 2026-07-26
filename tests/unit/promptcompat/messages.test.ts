@@ -1,11 +1,11 @@
 import { describe, test } from "vitest";
 import { parseGoogleRequest } from "../../../src/promptcompat/google";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
 import { messagesToPrompt } from "../../../src/promptcompat/messages";
 import {
 	googleToolChoiceInstructionFromPolicy,
 	parseGoogleToolChoicePolicy,
-} from "../../../src/toolcall/policy-google";
+} from "../../../src/toolcall/policy";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 

@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import type { AttachmentSource } from "../../../src/attachments/types";
 import { openAIAttachmentPlanFromRequest } from "../../../src/promptcompat/attachment-inputs";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
 import { assert } from "../assertions.js";
 
 function base64Data(source: AttachmentSource): unknown {

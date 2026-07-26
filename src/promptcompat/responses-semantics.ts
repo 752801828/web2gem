@@ -1,10 +1,7 @@
 import { randHex } from "../shared/crypto";
 import { isRecord, type UnknownRecord } from "../shared/types";
-import {
-	flattenText,
-	isTextPartType,
-	normalizeMessageRole,
-} from "./message-model";
+import { flattenText } from "./message-parse";
+import { isTextPartType, normalizeMessageRole } from "./message-types";
 
 export type ResponsesToolCallInput = {
 	id: string;

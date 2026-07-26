@@ -1,6 +1,7 @@
-import { formatPromptToolCallBlock } from "../toolcall/prompt-format";
+import { formatPromptToolCallBlock } from "../toolcall/tool-bundle";
 import type { ToolBundle } from "../toolcall/tool-bundle";
-import { type InternalMessage, renderMessageBody } from "./message-model";
+import { renderMessageBody } from "./message-project";
+import type { InternalMessage } from "./message-types";
 import {
 	createPromptPartAccumulator,
 	type PromptBuildResult,

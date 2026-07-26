@@ -13,7 +13,8 @@ import {
 } from "../attachments/refs";
 import type { AttachmentFileRef, AttachmentPlan } from "../attachments/types";
 import { isRecord } from "../shared/types";
-import { type InternalMessage, parseMessagePart } from "./message-model";
+import { parseMessagePart } from "./message-parse";
+import type { InternalMessage } from "./message-types";
 
 type MessageImageInput = { b64: string; mime: string; filename: string };
 type MessageAttachmentInputs = {

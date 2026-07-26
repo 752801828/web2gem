@@ -1,9 +1,9 @@
 import { isRecord } from "../shared/types";
-import { GEMINI_NATIVE_HIDDEN_TOOLS_PROMPT } from "../toolcall/prompt-format";
+import { GEMINI_NATIVE_HIDDEN_TOOLS_PROMPT } from "../toolcall/tool-bundle";
+import { asText } from "../shared/text-metrics";
 import type { PreparedTokenText, TokenCharCounts } from "./token-accounting";
 import {
 	addTokenCharCounts,
-	asTokenText,
 	buildTextWithTokens,
 	tokenCharCounts,
 	tokenCountFromCounts,
@@ -41,7 +41,7 @@ export function appendTextToPreparedWithTokens(
 	addTokenCharCounts(counts, prepared.counts);
 	const out = keepText ? [prepared.text] : null;
 	for (const part of parts || []) {
-		const partText = asTokenText(part);
+		const partText = asText(part);
 		if (!partText) continue;
 		const partCounts = tokenCharCounts(partText);
 		addTokenCharCounts(counts, { ...partCounts, hasText: true });

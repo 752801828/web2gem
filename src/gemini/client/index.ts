@@ -1,16 +1,9 @@
 import type { RuntimeConfig } from "../../config";
-import { throwIfAborted } from "../../shared/abort";
 import { log } from "../../shared/logging";
-import { observeGeminiAccountResponseCookies } from "../cookies";
-import { cancelResponseBody, httpFetch } from "../transport";
-import { getPageTokens } from "../uploads/index";
+import { cancelResponseBody } from "../transport/http";
 import {
-	dataAnalysisEmptyResponseError,
 	geminiSemanticError,
 	invalidGeminiCookieError,
-	largePromptEmptyResponseError,
-	largePromptEmptyResponseThreshold,
-	unverifiedGeminiCookieError,
 	upstreamEmptyResponseError,
 	upstreamImageGenerationEmptyError,
 	upstreamImageProviderError,
@@ -18,63 +11,24 @@ import {
 import type { GeminiRichImage } from "./generated-images";
 import { hydrateGeneratedImages } from "./generated-images";
 import {
+	fetchGeminiStreamGenerate,
+	resolveEmptyUpstream,
+} from "./generate-core";
+import { wrbResponseShapeSummary } from "./parse-envelope";
+import {
 	extractResponseFatalCode,
 	extractResponseParts,
 	extractResponseText,
 	richResponseShapeSummary,
 } from "./parse-parts";
-import { wrbResponseShapeSummary } from "./parse-envelope";
-import { buildHeaders, getUrl } from "./protocol";
+import type { SameAccountAttemptState } from "./generate-core";
 import {
 	CONTINUE_SAME_ACCOUNT_ATTEMPT,
 	type GeminiFileRef,
 	runSameAccountGenerateAttempts,
-	runSameAccountStreamAttempts,
-} from "./same-account-generate";
-import { consumeGeminiWrbStream } from "./stream-consumer";
+} from "./generate-core";
 
-type GeminiStreamOptions = {
-	signal?: AbortSignal;
-};
-
-type EmptyUpstreamDecision =
-	| { kind: "throw"; error: Error }
-	| { kind: "continue" };
-
-/**
- * Shared empty-upstream resolution for generate / generateRich / generateStream.
- * Order is fixed: data-analysis → large-prompt → build-label continue → final error.
- */
-async function resolveEmptyUpstream(args: {
-	cfg: RuntimeConfig;
-	prompt: string;
-	raw: string;
-	status: number;
-	fileRefs: GeminiFileRef[] | null | undefined;
-	rawLength: number | null;
-	tryRefreshBuildLabel: (label: string) => Promise<boolean>;
-	refreshLabel: string;
-	finalError: (status: number, rawLen: number | null) => Error;
-}): Promise<EmptyUpstreamDecision> {
-	const dataAnalysisErr = dataAnalysisEmptyResponseError(
-		args.raw,
-		args.fileRefs,
-	);
-	if (dataAnalysisErr) return { kind: "throw", error: dataAnalysisErr };
-	const largePromptErr = largePromptEmptyResponseError(
-		args.prompt,
-		args.status,
-		args.rawLength,
-		largePromptEmptyResponseThreshold(args.cfg),
-	);
-	if (largePromptErr) return { kind: "throw", error: largePromptErr };
-	if (await args.tryRefreshBuildLabel(args.refreshLabel))
-		return { kind: "continue" };
-	return {
-		kind: "throw",
-		error: args.finalError(args.status, args.rawLength),
-	};
-}
+export { generateStream } from "./generate-stream";
 
 type GeminiRichOptions = {
 	hydrateGeneratedImageBytes?: boolean;
@@ -87,42 +41,79 @@ export type GeminiRichOutput = {
 	images: GeminiRichImage[];
 };
 
-async function appendGeminiPageToken(
-	cfg: RuntimeConfig,
-	body: string,
-): Promise<string> {
-	if (!cfg.cookie) return body;
-	const tokens = await getPageTokens(cfg);
-	if (!tokens.at) {
-		log(cfg, "gemini cookie verification failed reason=missing_page_at_token");
-		throw unverifiedGeminiCookieError("missing_page_at_token");
-	}
-	return `${body}&at=${encodeURIComponent(tokens.at)}`;
-}
+type NonStreamParseResult<T> =
+	| { kind: "value"; value: T }
+	| { kind: "empty"; raw: string; status: number }
+	| { kind: "throw"; error: Error };
 
-async function fetchGeminiStreamGenerate(
-	cfg: RuntimeConfig,
-	activeCfg: RuntimeConfig,
-	body: string,
-	signal: AbortSignal | null | undefined = undefined,
-	modelHeaders: Record<string, string> | null = null,
-	requestId: string | null = null,
-) {
-	const url = getUrl(activeCfg);
-	const headers = await buildHeaders(activeCfg, modelHeaders, requestId);
-	const requestBody = await appendGeminiPageToken(activeCfg, body);
-	const response = await httpFetch(url, {
-		method: "POST",
-		headers,
-		body: requestBody,
-		timeoutMs: cfg.request_timeout_sec * 1000,
-		socket: cfg.upstream_socket,
-		socketFallback: "never",
-		signal,
-		cfg,
+/**
+ * Shared non-stream shell for generate / generateRich.
+ * Owns fetch, cookie status check, body text, and empty-upstream resolution.
+ * Mode-specific parse and final empty errors stay in the strategies.
+ */
+async function runNonStreamGeminiGenerate<T>(args: {
+	cfg: RuntimeConfig;
+	prompt: string;
+	modelNumber: number;
+	extended: boolean;
+	fileRefs: GeminiFileRef[] | null | undefined;
+	modelHeaders: Record<string, string> | null;
+	label: string;
+	parse: (
+		raw: string,
+		resp: { ok: boolean; status: number },
+	) => NonStreamParseResult<T> | Promise<NonStreamParseResult<T>>;
+	emptyFinalError: (status: number, rawLen: number | null) => Error;
+	refreshLabel?: string;
+	afterValue?: (
+		value: T,
+		attemptState: SameAccountAttemptState,
+	) => Promise<T> | T;
+}): Promise<T> {
+	return runSameAccountGenerateAttempts({
+		cfg: args.cfg,
+		prompt: args.prompt,
+		modelNumber: args.modelNumber,
+		extended: args.extended,
+		fileRefs: args.fileRefs,
+		label: args.label,
+		async execute({ attemptState, body, requestId }) {
+			const resp = await fetchGeminiStreamGenerate(
+				args.cfg,
+				attemptState.activeConfig,
+				body,
+				undefined,
+				args.modelHeaders,
+				requestId,
+			);
+			const cookieErr = invalidGeminiCookieError(args.cfg, resp.status);
+			if (cookieErr) {
+				await cancelResponseBody(resp);
+				throw cookieErr;
+			}
+			const raw = await resp.text();
+			const parsed = await args.parse(raw, resp);
+			if (parsed.kind === "throw") throw parsed.error;
+			if (parsed.kind === "empty") {
+				const decision = await resolveEmptyUpstream({
+					cfg: args.cfg,
+					prompt: args.prompt,
+					raw: parsed.raw,
+					status: parsed.status,
+					fileRefs: args.fileRefs,
+					rawLength: parsed.raw.length,
+					tryRefreshBuildLabel: (label) =>
+						attemptState.tryRefreshBuildLabel(label),
+					refreshLabel: args.refreshLabel || "",
+					finalError: args.emptyFinalError,
+				});
+				if (decision.kind === "continue") return CONTINUE_SAME_ACCOUNT_ATTEMPT;
+				throw decision.error;
+			}
+			if (args.afterValue) return args.afterValue(parsed.value, attemptState);
+			return parsed.value;
+		},
 	});
-	observeGeminiAccountResponseCookies(activeCfg, response);
-	return response;
 }
 
 export async function generate(
@@ -133,30 +124,22 @@ export async function generate(
 	fileRefs: GeminiFileRef[] | null | undefined,
 	modelHeaders: Record<string, string> | null = null,
 ): Promise<string> {
-	return runSameAccountGenerateAttempts({
+	return runNonStreamGeminiGenerate({
 		cfg,
 		prompt,
 		modelNumber,
 		extended,
 		fileRefs,
+		modelHeaders,
 		label: "Retry",
-		async execute({ attemptState, body, requestId }) {
-			const resp = await fetchGeminiStreamGenerate(
-				cfg,
-				attemptState.activeConfig,
-				body,
-				undefined,
-				modelHeaders,
-				requestId,
-			);
-			const cookieErr = invalidGeminiCookieError(cfg, resp.status);
-			if (cookieErr) {
-				await cancelResponseBody(resp);
-				throw cookieErr;
-			}
-			const raw = await resp.text();
+		parse(raw, resp) {
 			const fatalCode = extractResponseFatalCode(raw);
-			if (fatalCode) throw geminiSemanticError("stream_generate", fatalCode);
+			if (fatalCode) {
+				return {
+					kind: "throw",
+					error: geminiSemanticError("stream_generate", fatalCode),
+				};
+			}
 			const text = extractResponseText(raw);
 			if (!resp.ok || !text) {
 				const shape =
@@ -166,25 +149,11 @@ export async function generate(
 					`upstream status=${resp.status} rawLen=${raw.length} parsedLen=${text.length}${shape}`,
 				);
 			}
-			if (!text) {
-				const decision = await resolveEmptyUpstream({
-					cfg,
-					prompt,
-					raw,
-					status: resp.status,
-					fileRefs,
-					rawLength: raw.length,
-					tryRefreshBuildLabel: (label) =>
-						attemptState.tryRefreshBuildLabel(label),
-					refreshLabel: "",
-					finalError: (status, rawLen) =>
-						upstreamEmptyResponseError(status, rawLen, "non-stream"),
-				});
-				if (decision.kind === "continue") return CONTINUE_SAME_ACCOUNT_ATTEMPT;
-				throw decision.error;
-			}
-			return text;
+			if (!text) return { kind: "empty", raw, status: resp.status };
+			return { kind: "value", value: text };
 		},
+		emptyFinalError: (status, rawLen) =>
+			upstreamEmptyResponseError(status, rawLen, "non-stream"),
 	});
 }
 
@@ -197,30 +166,22 @@ export async function generateRich(
 	modelHeaders: Record<string, string> | null = null,
 	options: GeminiRichOptions = {},
 ): Promise<GeminiRichOutput> {
-	return runSameAccountGenerateAttempts({
+	return runNonStreamGeminiGenerate({
 		cfg,
 		prompt,
 		modelNumber,
 		extended,
 		fileRefs,
+		modelHeaders,
 		label: "Rich retry",
-		async execute({ attemptState, body, requestId }) {
-			const resp = await fetchGeminiStreamGenerate(
-				cfg,
-				attemptState.activeConfig,
-				body,
-				undefined,
-				modelHeaders,
-				requestId,
-			);
-			const cookieErr = invalidGeminiCookieError(cfg, resp.status);
-			if (cookieErr) {
-				await cancelResponseBody(resp);
-				throw cookieErr;
-			}
-			const raw = await resp.text();
+		parse(raw, resp) {
 			const parts = extractResponseParts(raw);
-			if (parts.fatalCode) throw upstreamImageProviderError(parts.fatalCode);
+			if (parts.fatalCode) {
+				return {
+					kind: "throw",
+					error: upstreamImageProviderError(parts.fatalCode),
+				};
+			}
 			if (!resp.ok || (!parts.text && !parts.images.length)) {
 				const shape = cfg.log_requests
 					? ` ${richResponseShapeSummary(raw)}`
@@ -231,143 +192,25 @@ export async function generateRich(
 				);
 			}
 			if (!parts.text && !parts.images.length) {
-				const decision = await resolveEmptyUpstream({
-					cfg,
-					prompt,
-					raw,
-					status: resp.status,
-					fileRefs,
-					rawLength: raw.length,
-					tryRefreshBuildLabel: (label) =>
-						attemptState.tryRefreshBuildLabel(label),
-					refreshLabel: "",
-					finalError: (status, rawLen) =>
-						upstreamImageGenerationEmptyError(status, rawLen, "non-stream"),
-				});
-				if (decision.kind === "continue") return CONTINUE_SAME_ACCOUNT_ATTEMPT;
-				throw decision.error;
+				return { kind: "empty", raw, status: resp.status };
 			}
+			return {
+				kind: "value",
+				value: { text: parts.text, images: parts.images },
+			};
+		},
+		emptyFinalError: (status, rawLen) =>
+			upstreamImageGenerationEmptyError(status, rawLen, "non-stream"),
+		afterValue: async (value, attemptState) => {
 			const images =
 				options.hydrateGeneratedImageBytes === false
-					? parts.images
+					? value.images
 					: await hydrateGeneratedImages(
 							cfg,
 							attemptState.activeConfig,
-							parts.images,
+							value.images,
 						);
-			return { text: parts.text, images };
-		},
-	});
-}
-
-export async function* generateStream(
-	cfg: RuntimeConfig,
-	prompt: string,
-	modelNumber: number,
-	extended: boolean,
-	fileRefs: GeminiFileRef[] | null | undefined,
-	options: GeminiStreamOptions = {},
-	modelHeaders: Record<string, string> | null = null,
-): AsyncIterable<string> {
-	const signal = options?.signal;
-	yield* runSameAccountStreamAttempts({
-		cfg,
-		prompt,
-		modelNumber,
-		extended,
-		fileRefs,
-		label: "Stream retry",
-		signal,
-		async *execute({ attemptState, body, requestId, signal: attemptSignal }) {
-			throwIfAborted(attemptSignal);
-			const resp = await fetchGeminiStreamGenerate(
-				cfg,
-				attemptState.activeConfig,
-				body,
-				attemptSignal,
-				modelHeaders,
-				requestId,
-			);
-			const cookieErr = invalidGeminiCookieError(cfg, resp.status);
-			if (cookieErr) {
-				await cancelResponseBody(resp);
-				throw cookieErr;
-			}
-			if (!resp.body) {
-				const raw = await resp.text();
-				const fatalCode = extractResponseFatalCode(raw);
-				if (fatalCode) throw geminiSemanticError("stream_generate", fatalCode);
-				const text = extractResponseText(raw);
-				if (text) {
-					attemptState.markOutputStarted();
-					yield text;
-				}
-				if (!text) {
-					const shape = cfg.log_requests
-						? ` ${wrbResponseShapeSummary(raw)}`
-						: "";
-					log(
-						cfg,
-						`stream upstream produced no text without body (status=${resp.status}) rawLen=${raw.length}${shape}`,
-					);
-					const decision = await resolveEmptyUpstream({
-						cfg,
-						prompt,
-						raw,
-						status: resp.status,
-						fileRefs,
-						rawLength: raw.length,
-						tryRefreshBuildLabel: (label) =>
-							attemptState.tryRefreshBuildLabel(label),
-						refreshLabel: "stream without body",
-						finalError: (status, rawLen) =>
-							upstreamEmptyResponseError(status, rawLen, "stream without body"),
-					});
-					if (decision.kind === "continue")
-						return CONTINUE_SAME_ACCOUNT_ATTEMPT;
-					throw decision.error;
-				}
-				return;
-			}
-			let rawSnippet = "";
-			let rawLength = 0;
-			for await (const event of consumeGeminiWrbStream(
-				resp.body,
-				attemptSignal,
-			)) {
-				if (event.type === "delta") {
-					attemptState.markOutputStarted();
-					yield event.text;
-				} else {
-					rawSnippet = event.rawSnippet;
-					rawLength = event.rawLength;
-				}
-			}
-			if (!attemptState.outputStarted) {
-				const shape = cfg.log_requests
-					? ` ${wrbResponseShapeSummary(rawSnippet)}`
-					: "";
-				log(
-					cfg,
-					`stream upstream produced no text (status=${resp.status}) rawLen=${rawLength}${shape}`,
-				);
-				const decision = await resolveEmptyUpstream({
-					cfg,
-					prompt,
-					raw: rawSnippet,
-					status: resp.status,
-					fileRefs,
-					rawLength: null,
-					tryRefreshBuildLabel: (label) =>
-						attemptState.tryRefreshBuildLabel(label),
-					refreshLabel: "stream",
-					finalError: (status, _rawLen) =>
-						upstreamEmptyResponseError(status, rawLength, "stream"),
-				});
-				if (decision.kind === "continue") return CONTINUE_SAME_ACCOUNT_ATTEMPT;
-				throw decision.error;
-			}
-			return undefined;
+			return { text: value.text, images };
 		},
 	});
 }

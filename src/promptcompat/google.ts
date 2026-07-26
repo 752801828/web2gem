@@ -1,11 +1,11 @@
 import { uploadFilenameFromObject } from "../attachments/input";
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
-import {
-	type InternalMessage,
-	type InternalToolCall,
-	type MessagePart,
-	parseMessagePart,
-} from "./message-model";
+import { parseMessagePart } from "./message-parse";
+import type {
+	InternalMessage,
+	InternalToolCall,
+	MessagePart,
+} from "./message-types";
 
 /**
  * Parse a Google `generateContent` request (contents/parts + systemInstruction)

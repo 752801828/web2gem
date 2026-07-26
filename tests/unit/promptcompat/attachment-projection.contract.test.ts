@@ -2,7 +2,7 @@ import { describe, test } from "vitest";
 import type { AttachmentSource } from "../../../src/attachments/types";
 import { attachmentPlanFromMessages } from "../../../src/promptcompat/attachment-inputs";
 import { parseGoogleRequest } from "../../../src/promptcompat/google";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
 import { messagesToPrompt } from "../../../src/promptcompat/messages";
 import { parseResponsesInput } from "../../../src/promptcompat/responses-input";
 import { assert } from "../assertions.js";

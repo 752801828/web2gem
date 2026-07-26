@@ -2,7 +2,11 @@ import type { RuntimeConfig } from "../../config";
 import { uuid } from "../../shared/crypto";
 import { nowSec } from "../../shared/logging";
 import { makeSapisidHash } from "../auth";
-import { GEMINI_WEB_USER_AGENT } from "../constants";
+import type { GeminiRouteTuple } from "../accounts/routes";
+import { isGeminiRouteTuple } from "../accounts/routes";
+import { geminiOrigin } from "../cache";
+import { GEMINI_WEB_USER_AGENT } from "../cookies";
+export { GEMINI_WEB_USER_AGENT } from "../cookies";
 
 type PayloadFileRef =
 	| string
@@ -130,10 +134,7 @@ function createGeminiPayloadInner(
 
 export function getUrl(cfg: RuntimeConfig): string {
 	const reqid = nowSec() % 1000000;
-	const origin = (cfg.gemini_origin || "https://gemini.google.com").replace(
-		/\/$/,
-		"",
-	);
+	const origin = geminiOrigin(cfg);
 	return (
 		origin +
 		"/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate" +
@@ -160,4 +161,42 @@ export async function buildHeaders(
 	if (cfg.cookie) headers.Cookie = cfg.cookie;
 	if (cfg.sapisid) headers.Authorization = await makeSapisidHash(cfg.sapisid);
 	return headers;
+}
+
+const GEMINI_MODEL_HEADER_KEY = "x-goog-ext-525001261-jspb";
+
+export function buildGeminiModelHeaders(
+	route: GeminiRouteTuple,
+	extended: boolean,
+	sessionId: string,
+): Record<string, string> {
+	if (!isGeminiRouteTuple(route)) throw new Error("invalid Gemini route tuple");
+	const normalizedSessionId = String(sessionId || "")
+		.trim()
+		.toUpperCase();
+	if (!normalizedSessionId)
+		throw new Error("missing Gemini provider session id");
+	const payload: unknown[] = [
+		1,
+		null,
+		null,
+		null,
+		route.providerModelId,
+		null,
+		null,
+		0,
+		[4, 5, 6, 8],
+		null,
+		null,
+	];
+	payload[route.capacityField - 1] = route.capacity;
+	payload[route.capacityField] = null;
+	payload[route.capacityField + 1] = null;
+	payload[route.capacityField + 2] = route.modelNumber;
+	payload.push(extended ? 2 : 1, normalizedSessionId);
+	return {
+		[GEMINI_MODEL_HEADER_KEY]: JSON.stringify(payload),
+		"x-goog-ext-73010989-jspb": "[0]",
+		"x-goog-ext-73010990-jspb": "[0,0,0]",
+	};
 }

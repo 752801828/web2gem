@@ -1,9 +1,6 @@
-import { formatPromptToolCallBlock } from "../toolcall/prompt-format";
-import {
-	type InternalMessage,
-	latestUserInputText,
-	renderMessageBody,
-} from "./message-model";
+import { formatPromptToolCallBlock } from "../toolcall/tool-bundle";
+import { renderMessageBody } from "./message-project";
+import type { InternalMessage } from "./message-types";
 
 type HistoryTranscriptEntry = {
 	role: string;
@@ -45,10 +42,4 @@ export function buildOpenAIHistoryTranscript(
 			`=== ${idx + 1}. ${entry.role.toUpperCase()} ===\n${entry.content}`,
 	);
 	return `# ${filename || "message.txt"}\nPrior conversation history and tool progress.\n\n${sections.join("\n\n")}\n`;
-}
-
-export function latestOpenAIUserInputText(
-	messages: readonly InternalMessage[],
-): string {
-	return latestUserInputText(messages);
 }

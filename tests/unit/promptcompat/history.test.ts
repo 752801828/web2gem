@@ -1,10 +1,8 @@
 import { describe, test } from "vitest";
 import { parseGoogleRequest } from "../../../src/promptcompat/google";
-import {
-	buildOpenAIHistoryTranscript,
-	latestOpenAIUserInputText,
-} from "../../../src/promptcompat/history";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
+import { buildOpenAIHistoryTranscript } from "../../../src/promptcompat/history";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
+import { latestUserInputText } from "../../../src/promptcompat/message-project";
 import { messagesToPrompt } from "../../../src/promptcompat/messages";
 import { assert } from "../assertions.js";
 
@@ -61,9 +59,9 @@ describe("prompt compatibility", () => {
 			),
 			"",
 		);
-		assert.equal(latestOpenAIUserInputText([]), "");
+		assert.equal(latestUserInputText([]), "");
 		assert.equal(
-			latestOpenAIUserInputText(
+			latestUserInputText(
 				parseOpenAIMessages([{ role: "assistant", content: "answer" }]),
 			),
 			"",
@@ -109,13 +107,13 @@ describe("prompt compatibility", () => {
 		assert.match(transcript, /\[name=Lookup\]\n\{"ok":true\}/);
 		assert.match(transcript, /\[file input gemini:\/\/file\/1\]\nlatest/);
 		assert.equal(
-			latestOpenAIUserInputText(messages),
+			latestUserInputText(messages),
 			"[file input gemini://file/1]\nlatest",
 		);
 	});
 	test("extracts latest Google user text from image and file-only turns", async () => {
 		assert.equal(
-			latestOpenAIUserInputText(
+			latestUserInputText(
 				parseGoogleRequest({
 					contents: [
 						{ role: "model", parts: [{ text: "assistant" }] },
@@ -126,7 +124,7 @@ describe("prompt compatibility", () => {
 			"[image input]",
 		);
 		assert.equal(
-			latestOpenAIUserInputText(
+			latestUserInputText(
 				parseGoogleRequest({
 					contents: [{ role: "user", parts: [{ fileData: {} }] }],
 				}),
@@ -134,7 +132,7 @@ describe("prompt compatibility", () => {
 			"[file input]",
 		);
 		assert.equal(
-			latestOpenAIUserInputText(
+			latestUserInputText(
 				parseGoogleRequest({
 					contents: [{ role: "model", parts: [{ text: "assistant only" }] }],
 				}),
@@ -144,7 +142,7 @@ describe("prompt compatibility", () => {
 	});
 	test("extracts latest OpenAI user text while ignoring empty and assistant messages", async () => {
 		assert.equal(
-			latestOpenAIUserInputText(
+			latestUserInputText(
 				parseOpenAIMessages([
 					{ role: "user", content: "first" },
 					{ role: "assistant", content: "answer" },
@@ -188,7 +186,7 @@ describe("prompt compatibility", () => {
 		assert.match(transcript, /\[file input readme\.md\]/);
 		assert.doesNotMatch(transcript, /\[image input\]/);
 		assert.equal(
-			latestOpenAIUserInputText(messages),
+			latestUserInputText(messages),
 			"[file input notes.txt]\n[file input readme.md]",
 		);
 	});
@@ -211,6 +209,6 @@ describe("prompt compatibility", () => {
 		assert.equal((transcript.match(/checked once/g) || []).length, 1);
 		assert.match(prompt, /first\nsecond/);
 		assert.match(transcript, /first\nsecond/);
-		assert.equal(latestOpenAIUserInputText(messages), "first\nsecond");
+		assert.equal(latestUserInputText(messages), "first\nsecond");
 	});
 });
