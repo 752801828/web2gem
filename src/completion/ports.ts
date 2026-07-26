@@ -1,5 +1,5 @@
 import type { AttachmentPlan } from "../attachments/types";
-import { type ResolvedModel, resolveModel } from "../models";
+import type { ResolvedModel } from "../models";
 import type { AttachmentResolutionResult, FileRef } from "./types";
 
 export type CompletionTextInput = {
@@ -34,11 +34,15 @@ export type CompletionRichOptions = {
 	hydrateGeneratedImageBytes?: boolean;
 };
 
+/**
+ * Internal Gemini-only layer seam used by HTTP adapters and completion modules.
+ * This is not multi-provider scaffolding: production has one implementer.
+ */
 export type CompletionProvider = {
-	supportsAuthenticatedSession?: boolean;
-	resolveModel?(name: unknown, defaultName: unknown): Promise<ResolvedModel>;
+	supportsAuthenticatedSession: boolean;
+	resolveModel(name: unknown, defaultName: unknown): Promise<ResolvedModel>;
 	generateText(input: CompletionTextInput): Promise<string>;
-	generateRich?(
+	generateRich(
 		input: CompletionTextInput,
 		options?: CompletionRichOptions,
 	): Promise<CompletionRichOutput>;
@@ -48,7 +52,7 @@ export type CompletionProvider = {
 	): AsyncIterable<string>;
 	resolveAttachments(plan: AttachmentPlan): Promise<AttachmentResolutionResult>;
 	uploadTextFile(text: string, filename: string): Promise<FileRef>;
-	dispose?(): void | Promise<void>;
+	dispose(): void | Promise<void>;
 };
 
 export function resolveCompletionModel(
@@ -56,7 +60,5 @@ export function resolveCompletionModel(
 	name: unknown,
 	defaultName: unknown,
 ): Promise<ResolvedModel> {
-	return provider.resolveModel
-		? provider.resolveModel(name, defaultName)
-		: Promise.resolve(resolveModel(name, defaultName));
+	return provider.resolveModel(name, defaultName);
 }

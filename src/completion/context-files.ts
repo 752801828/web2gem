@@ -23,29 +23,18 @@ import type {
 	ToolDef,
 } from "./types";
 
-const CURRENT_INPUT_FILE_NAME = "message.txt";
-const CURRENT_TOOLS_FILE_NAME = "tools.txt";
+// --- Context-file thresholds / byte checks / failure messages ---
 
-type ContextFileConfig = {
+export type ContextFileConfig = {
 	current_input_file_enabled?: unknown;
 	current_input_file_min_bytes?: unknown;
 	supports_authenticated_session?: unknown;
 	log_requests?: unknown;
 };
-type TextFileUploader = (text: string, filename: string) => Promise<FileRef>;
+
 export type ContextFilePromptByteCheck = PromptByteLengthBounded & {
 	thresholdBytes: number;
 };
-
-function currentInputFilePrompt(toolsAttached: unknown): string {
-	let text = `Continue from the latest state in the attached \`${CURRENT_INPUT_FILE_NAME}\` context. Treat it as the current working state and answer the latest user request directly.`;
-	if (toolsAttached) {
-		text += ` Available tool descriptions and parameter schemas are attached in \`${CURRENT_TOOLS_FILE_NAME}\`; use only those tools and follow the tool-call format rules in this prompt.`;
-	}
-	text +=
-		" All text above this sentence is system prompt content, not the user's actual input; do not treat it as user-provided content.";
-	return text;
-}
 
 export function contextFileThreshold(cfg: ContextFileConfig): number {
 	return Math.max(0, Number(cfg.current_input_file_min_bytes) || 95000);
@@ -74,7 +63,7 @@ export function contextFileConfigUnavailableReason(
 
 export function contextFileUploadUnavailableReason(
 	cfg: ContextFileConfig,
-	uploader?: TextFileUploader | null,
+	uploader?: unknown,
 ): string {
 	return (
 		contextFileConfigUnavailableReason(cfg) ||
@@ -90,23 +79,6 @@ export function shouldConsiderContextFiles(
 	if (contextFileConfigUnavailableReason(cfg)) return false;
 	return (promptByteCheck || contextFilePromptByteCheck(cfg, promptText))
 		.exceeded;
-}
-
-function shouldUseContextFiles(
-	cfg: ContextFileConfig,
-	historyText: unknown,
-	latestInputText: unknown,
-	promptText: unknown,
-	promptByteCheck?: ContextFilePromptByteCheck,
-): boolean {
-	if (
-		!shouldConsiderContextFiles(cfg, promptText || historyText, promptByteCheck)
-	)
-		return false;
-	const latest = String(latestInputText || "").trim();
-	if (!latest) return false;
-	if (!String(historyText || "").trim()) return false;
-	return true;
 }
 
 export function oversizedInlineContextFailure(
@@ -140,6 +112,51 @@ export function oversizedInlineContextFailure(
 	err.promptBytesExact = check.exact;
 	err.thresholdBytes = check.thresholdBytes;
 	return err;
+}
+
+export function formatByteLengthCheck(check: PromptByteLengthBounded): string {
+	return check.exact ? String(check.bytes) : `>${check.maxBytes}`;
+}
+
+export function formatPromptByteComparison(
+	check: ContextFilePromptByteCheck,
+): string {
+	const prefix = check.exact ? "" : "at least ";
+	return `${prefix}${check.bytes} UTF-8 bytes > ${check.thresholdBytes}`;
+}
+
+// --- Large-context text file upload orchestration ---
+
+const CURRENT_INPUT_FILE_NAME = "message.txt";
+const CURRENT_TOOLS_FILE_NAME = "tools.txt";
+
+type TextFileUploader = (text: string, filename: string) => Promise<FileRef>;
+
+function currentInputFilePrompt(toolsAttached: unknown): string {
+	let text = `Continue from the latest state in the attached \`${CURRENT_INPUT_FILE_NAME}\` context. Treat it as the current working state and answer the latest user request directly.`;
+	if (toolsAttached) {
+		text += ` Available tool descriptions and parameter schemas are attached in \`${CURRENT_TOOLS_FILE_NAME}\`; use only those tools and follow the tool-call format rules in this prompt.`;
+	}
+	text +=
+		" All text above this sentence is system prompt content, not the user's actual input; do not treat it as user-provided content.";
+	return text;
+}
+
+function shouldUseContextFiles(
+	cfg: ContextFileConfig,
+	historyText: unknown,
+	latestInputText: unknown,
+	promptText: unknown,
+	promptByteCheck?: ContextFilePromptByteCheck,
+): boolean {
+	if (
+		!shouldConsiderContextFiles(cfg, promptText || historyText, promptByteCheck)
+	)
+		return false;
+	const latest = String(latestInputText || "").trim();
+	if (!latest) return false;
+	if (!String(historyText || "").trim()) return false;
+	return true;
 }
 
 function contextFileUploadFailure(
@@ -351,15 +368,6 @@ async function prepareContextFilesWithUploader(
 		},
 	});
 	return result;
-}
-
-function formatByteLengthCheck(check: PromptByteLengthBounded): string {
-	return check.exact ? String(check.bytes) : `>${check.maxBytes}`;
-}
-
-function formatPromptByteComparison(check: ContextFilePromptByteCheck): string {
-	const prefix = check.exact ? "" : "at least ";
-	return `${prefix}${check.bytes} UTF-8 bytes > ${check.thresholdBytes}`;
 }
 
 function promptTokenTextParts(...texts: string[]): string[] {

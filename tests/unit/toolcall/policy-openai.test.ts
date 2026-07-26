@@ -1,14 +1,12 @@
 import { describe, test } from "vitest";
 import { isRecord } from "../../../src/shared/types";
-import type { ToolChoicePolicy } from "../../../src/toolcall/policy-openai";
+import type { ToolChoicePolicy } from "../../../src/toolcall/policy";
 import {
 	buildToolChoiceInstructionFromPolicy,
-	extractToolNames,
-	namesToSet,
 	parseOpenAIToolChoicePolicy,
 	validateRequiredToolCalls,
 	validateToolPolicyCalls,
-} from "../../../src/toolcall/policy-openai";
+} from "../../../src/toolcall/policy";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,
@@ -131,20 +129,30 @@ describe("toolcall", () => {
 			/requires function\.name/,
 		);
 	});
-	test("extracts unique declared tool names for OpenAI and Google shapes", async () => {
+	test("exposes unique declared tool names through public policy parsing", async () => {
 		const toolsBundle = policyTools();
 		const googleGroup = {
 			functionDeclarations: [{ name: "Lookup" }, { name: "Read" }],
 		};
-		assert.deepEqual(extractToolNames(toolsBundle), ["Read", "Search"]);
-		assert.deepEqual(extractToolNames(createToolBundle(googleGroup)), [
-			"Lookup",
+		const openAIPolicy = parseOpenAIToolChoicePolicy("auto", toolsBundle);
+		assert.deepEqual(openAIPolicy.declared, ["Read", "Search"]);
+		const googlePolicy = parseOpenAIToolChoicePolicy(
+			"auto",
+			createToolBundle(googleGroup),
+		);
+		assert.deepEqual(googlePolicy.declared, ["Lookup", "Read"]);
+		const allowed = parseOpenAIToolChoicePolicy(
+			{
+				type: "allowed_tools",
+				mode: "auto",
+				tools: ["Read", "", null, "Search"],
+			},
+			toolsBundle,
+		);
+		assert.deepEqual(Object.keys(required(allowed.allowed)), [
 			"Read",
+			"Search",
 		]);
-		assert.deepEqual(namesToSet(["Read", "", null, "Search"]), {
-			Read: true,
-			Search: true,
-		});
 	});
 
 	test("parses none forced required and invalid OpenAI policy modes", async () => {

@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { ensureInlineToolPrompt } from "../../../src/completion/tool-prompt-guard";
+import { ensureInlineToolPrompt } from "../../../src/completion/prepare";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 

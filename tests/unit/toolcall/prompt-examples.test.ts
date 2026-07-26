@@ -2,7 +2,7 @@ import { describe, test } from "vitest";
 import {
 	buildCorrectToolExamples,
 	buildReadToolCacheGuard,
-} from "../../../src/toolcall/prompt-examples";
+} from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 
 describe("toolcall", () => {

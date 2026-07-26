@@ -8,7 +8,7 @@ import type {
 	GeminiContextPrepareResult,
 	PreparedGeminiContext,
 } from "../../../src/completion/types";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
 import { assert } from "../assertions.js";
 import { attachmentResult } from "../attachments/_support/result.js";
 import { contextFileConfig } from "./_support/context-fixtures.js";
@@ -27,8 +27,14 @@ function createContextProvider({
 	}
 	const provider: CompletionProvider = {
 		supportsAuthenticatedSession: true,
+		async resolveModel() {
+			throw new Error("unexpected context provider resolveModel call");
+		},
 		generateText() {
 			throw new Error("unexpected context provider generateText call");
+		},
+		generateRich() {
+			throw new Error("unexpected context provider generateRich call");
 		},
 		streamText() {
 			throw new Error("unexpected context provider streamText call");
@@ -39,6 +45,7 @@ function createContextProvider({
 		async uploadTextFile() {
 			throw new Error("unexpected context provider uploadTextFile call");
 		},
+		dispose() {},
 	};
 	return provider;
 }

@@ -1,6 +1,6 @@
 import { describe, test } from "vitest";
-import { parseDSMLToolCallsDetailed } from "../../../src/toolcall/dsml";
-import { normalizeParsedToolCallsForSchemas } from "../../../src/toolcall/schema-normalize";
+import { parseDSMLToolCallsDetailed } from "../../../src/toolcall/parse";
+import { normalizeParsedToolCallsForSchemas } from "../../../src/toolcall/parse";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 import { record, required } from "./_support/assertions.js";

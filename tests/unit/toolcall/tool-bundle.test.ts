@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
 import { messagesToPrompt } from "../../../src/promptcompat/messages";
 import {
 	createToolBundle,

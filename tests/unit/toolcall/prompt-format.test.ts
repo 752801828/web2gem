@@ -1,11 +1,11 @@
 import { describe, test } from "vitest";
-import { formatPromptToolCallBlock } from "../../../src/toolcall/prompt-format";
+import { formatPromptToolCallBlock } from "../../../src/toolcall/tool-bundle";
 import {
 	indentPromptParameters,
 	promptCDATA,
 	wrapParameter,
 	xmlEscapeAttr,
-} from "../../../src/toolcall/prompt-xml";
+} from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 
 describe("toolcall", () => {

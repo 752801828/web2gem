@@ -1,9 +1,9 @@
 import { describe, test } from "vitest";
-import { parseToolCalls } from "../../../src/toolcall/dsml";
+import { parseToolCalls } from "../../../src/toolcall/parse";
 import {
 	containsToolMarkupSyntax,
 	findToolCallSyntaxCandidateStart,
-} from "../../../src/toolcall/syntax-probe";
+} from "../../../src/toolcall/parse";
 import { assert } from "../assertions.js";
 
 describe("toolcall", () => {

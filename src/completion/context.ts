@@ -6,11 +6,9 @@ import {
 	attachmentPlanFromMessages,
 	openAIAttachmentPlanFromRequest,
 } from "../promptcompat/attachment-inputs";
-import {
-	buildOpenAIHistoryTranscript,
-	latestOpenAIUserInputText,
-} from "../promptcompat/history";
-import type { InternalMessage } from "../promptcompat/message-model";
+import { buildOpenAIHistoryTranscript } from "../promptcompat/history";
+import type { InternalMessage } from "../promptcompat/message-types";
+import { latestUserInputText } from "../promptcompat/message-project";
 import type { PromptToolContext } from "../promptcompat/messages";
 import { messagesToPrompt } from "../promptcompat/messages";
 import {
@@ -29,11 +27,12 @@ import {
 	createPromptByteLengthSniffer,
 	type PromptByteLengthBounded,
 } from "../shared/text-metrics";
-import type { ToolChoicePolicy } from "../toolcall/policy-openai";
-import { buildToolChoiceInstructionFromPolicy } from "../toolcall/policy-openai";
+import type { UnknownRecord } from "../shared/types";
+import type { ToolChoicePolicy } from "../toolcall/policy";
+import { buildToolChoiceInstructionFromPolicy } from "../toolcall/policy";
 import type { ToolBundle } from "../toolcall/tool-bundle";
-import type { ContextFilePromptByteCheck } from "./context-files";
 import {
+	type ContextFilePromptByteCheck,
 	contextFilePromptByteCheck,
 	contextFileThreshold,
 	contextFileUploadUnavailableReason,
@@ -48,13 +47,14 @@ import type {
 	ContextFileResult,
 	FileRef,
 	GeminiContextPrepareResult,
-	LooseRequest,
 	PromptMetadata,
 	ToolDef,
 } from "./types";
 import { hasCompletionError } from "./types";
 
-type FileRefGroup = "context" | "existing" | "generic" | "image";
+// --- Dialect entries (OpenAI / Google) ---
+
+export type FileRefGroup = "context" | "existing" | "generic" | "image";
 
 const OPENAI_FILE_REF_ORDER: readonly FileRefGroup[] = [
 	"context",
@@ -71,7 +71,7 @@ const GOOGLE_FILE_REF_ORDER: readonly FileRefGroup[] = [
 export async function prepareOpenAIGeminiContext(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
-	req: LooseRequest,
+	req: UnknownRecord,
 	messages: readonly InternalMessage[],
 	tools: ToolBundle | null | undefined,
 	promptToolChoice: unknown,
@@ -128,7 +128,7 @@ type PrepareGeminiContextParams = {
 	provider: CompletionProvider;
 	messages: readonly InternalMessage[];
 	toolContext: PromptToolContext | null;
-	attachmentPlan: AttachmentPlan;
+	attachmentPlan: ReturnType<typeof attachmentPlanFromMessages>;
 	structured: unknown;
 	fileRefOrder: readonly FileRefGroup[];
 };
@@ -165,14 +165,15 @@ async function prepareGeminiContext(
 		buildHistoryText: () =>
 			buildOpenAIHistoryTranscript(params.messages, "message.txt"),
 		getLatestInputText: () =>
-			promptResult.latestInputText ||
-			latestOpenAIUserInputText(params.messages),
+			promptResult.latestInputText || latestUserInputText(params.messages),
 		structured: params.structured,
 		fileRefOrder: params.fileRefOrder,
 	});
 }
 
-type PromptWithAttachmentParams = {
+// --- Prompt + attachments + context-file orchestration ---
+
+export type PromptWithAttachmentParams = {
 	cfg: RuntimeConfig;
 	provider: CompletionProvider;
 	basePrompt: string;
@@ -190,7 +191,7 @@ type PromptWithAttachmentParams = {
 	fileRefOrder: readonly FileRefGroup[];
 };
 
-async function preparePromptWithAttachments(
+export async function preparePromptWithAttachments(
 	params: PromptWithAttachmentParams,
 ): Promise<GeminiContextPrepareResult> {
 	const plannedDroppedNote = droppedAttachmentNote(
@@ -472,27 +473,6 @@ function prepareStructuredPrompt(
 		: prompt;
 }
 
-function promptResultToPrepared(
-	promptResult: Pick<PreparedTokenText, "tokens" | "counts">,
-	text: string,
-): PreparedTokenText {
-	return {
-		text,
-		tokens: promptResult.tokens,
-		counts: promptResult.counts,
-	};
-}
-
-function contextFilePromptByteCheckFromBounded(
-	cfg: RuntimeConfig,
-	check: PromptByteLengthBounded | null | undefined,
-): ContextFilePromptByteCheck | null {
-	if (!check) return null;
-	const thresholdBytes = contextFileThreshold(cfg);
-	if (check.maxBytes !== thresholdBytes) return null;
-	return { ...check, thresholdBytes };
-}
-
 function inlinePreparedPromptByteCheck(
 	cfg: RuntimeConfig,
 	prompt: string,
@@ -514,4 +494,25 @@ function inlinePreparedPromptByteCheck(
 		sniffer.append(instruction);
 	}
 	return { ...sniffer.result(), thresholdBytes };
+}
+
+export function promptResultToPrepared(
+	promptResult: Pick<PreparedTokenText, "tokens" | "counts">,
+	text: string,
+): PreparedTokenText {
+	return {
+		text,
+		tokens: promptResult.tokens,
+		counts: promptResult.counts,
+	};
+}
+
+export function contextFilePromptByteCheckFromBounded(
+	cfg: RuntimeConfig,
+	check: PromptByteLengthBounded | null | undefined,
+): ContextFilePromptByteCheck | null {
+	if (!check) return null;
+	const thresholdBytes = contextFileThreshold(cfg);
+	if (check.maxBytes !== thresholdBytes) return null;
+	return { ...check, thresholdBytes };
 }

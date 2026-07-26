@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { parseGoogleToolChoicePolicy } from "../../../src/toolcall/policy-google";
+import { parseGoogleToolChoicePolicy } from "../../../src/toolcall/policy";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,

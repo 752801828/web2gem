@@ -4,7 +4,7 @@ import {
 	googleToolChoiceInstructionFromPolicy,
 	parseGoogleToolChoicePolicy,
 	validateGoogleToolPolicyCalls,
-} from "../../../src/toolcall/policy-google";
+} from "../../../src/toolcall/policy";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,

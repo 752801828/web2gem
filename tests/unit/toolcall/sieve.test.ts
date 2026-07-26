@@ -5,7 +5,7 @@ import {
 	flushToolSieve,
 	processToolSieveChunk,
 } from "../../../src/toolcall/sieve";
-import { isPartialToolCallSyntaxPrefix } from "../../../src/toolcall/syntax-probe";
+import { isPartialToolCallSyntaxPrefix } from "../../../src/toolcall/parse";
 import { assert } from "../assertions.js";
 import { required } from "./_support/assertions.js";
 

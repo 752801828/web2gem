@@ -2,10 +2,9 @@ import { describe, test } from "vitest";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import {
 	extractToolMeta,
-	firstNonNil,
 	toolFunctionDeclarations,
 	toolItemsFromTools,
-} from "../../../src/toolcall/tool-meta";
+} from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 import { required } from "./_support/assertions.js";
 
@@ -103,7 +102,6 @@ describe("toolcall", () => {
 				parameters: {},
 			},
 		]);
-		assert.equal(firstNonNil(null, undefined, false, "fallback"), false);
 	});
 	test("accepts OpenAI tool schema aliases", async () => {
 		for (const key of ["input_schema", "inputSchema", "schema"]) {

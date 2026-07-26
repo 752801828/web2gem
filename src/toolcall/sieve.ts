@@ -1,15 +1,14 @@
-import { parseDSMLToolCallsDetailed } from "./dsml";
-import type { DSMLToolCallParseResult, ParsedToolCall } from "./dsml";
 import {
+	parseDSMLToolCallsDetailed,
+	type DSMLToolCallParseResult,
+	type ParsedToolCall,
 	markdownProtectedSpanStartAtCut,
 	markdownProtectedTailStart,
-} from "./markdown";
-import {
 	findToolCallSyntaxCandidateStart,
 	hasClosedToolCallsSyntax,
 	isPartialToolCallSyntaxPrefix,
 	toolCallSieveSafeTailLength,
-} from "./syntax-probe";
+} from "./parse";
 
 export type ToolSieveState = {
 	buffer: string;

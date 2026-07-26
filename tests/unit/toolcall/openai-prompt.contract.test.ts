@@ -4,7 +4,7 @@ import type { CompletionProvider } from "../../../src/completion/ports";
 import { hasCompletionError } from "../../../src/completion/types";
 import type { RuntimeConfig } from "../../../src/config";
 import { createRuntimeConfig, getConfig } from "../../../src/config";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 
@@ -31,6 +31,10 @@ function noAttachmentResult() {
 
 function promptProvider(): CompletionProvider {
 	return {
+		supportsAuthenticatedSession: false,
+		async resolveModel() {
+			throw new Error("unexpected resolveModel call");
+		},
 		async resolveAttachments(plan) {
 			assert.deepEqual(plan.candidates, []);
 			return noAttachmentResult();
@@ -38,12 +42,16 @@ function promptProvider(): CompletionProvider {
 		generateText() {
 			throw new Error("unexpected generateText call");
 		},
+		generateRich() {
+			throw new Error("unexpected generateRich call");
+		},
 		streamText() {
 			throw new Error("unexpected streamText call");
 		},
 		uploadTextFile() {
 			throw new Error("unexpected uploadTextFile call");
 		},
+		dispose() {},
 	};
 }
 

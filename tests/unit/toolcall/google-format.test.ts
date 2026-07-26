@@ -1,6 +1,6 @@
 import { describe, test } from "vitest";
 import { isRecord } from "../../../src/shared/types";
-import { parseGoogleFunctionCalls } from "../../../src/toolcall/google";
+import { parseGoogleFunctionCalls } from "../../../src/toolcall/parse";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 import { required } from "./_support/assertions.js";

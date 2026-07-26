@@ -5,8 +5,8 @@ import {
 	markdownProtectedTailStart,
 	maskMarkdownProtectedSpans,
 	parseMarkdownFenceLine,
-} from "../../../src/toolcall/markdown";
-import { findToolCallSyntaxCandidateStart } from "../../../src/toolcall/syntax-probe";
+} from "../../../src/toolcall/parse";
+import { findToolCallSyntaxCandidateStart } from "../../../src/toolcall/parse";
 import { assert } from "../assertions.js";
 
 describe("toolcall", () => {

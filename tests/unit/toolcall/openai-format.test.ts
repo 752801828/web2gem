@@ -2,7 +2,7 @@ import { describe, test } from "vitest";
 import {
 	formatOpenAIStreamToolCalls,
 	formatOpenAIToolCalls,
-} from "../../../src/toolcall/openai-format";
+} from "../../../src/toolcall/parse";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 import { required } from "./_support/assertions.js";

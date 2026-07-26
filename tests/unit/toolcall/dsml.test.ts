@@ -2,7 +2,7 @@ import { describe, test } from "vitest";
 import {
 	parseDSMLToolCallsDetailed,
 	parseToolCalls,
-} from "../../../src/toolcall/dsml";
+} from "../../../src/toolcall/parse";
 import { assert } from "../assertions.js";
 import { required } from "./_support/assertions.js";
 

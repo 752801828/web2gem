@@ -1,6 +1,6 @@
 import type { RuntimeConfig } from "../config";
 import type { ResolvedModelOk } from "../models";
-import type { InternalMessage } from "../promptcompat/message-model";
+import type { InternalMessage } from "../promptcompat/message-types";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
@@ -11,16 +11,19 @@ import { log } from "../shared/logging";
 import {
 	googleToolChoiceInstructionFromPolicy,
 	parseGoogleToolChoicePolicy,
-} from "../toolcall/policy-google";
-import type { ToolChoicePolicy } from "../toolcall/policy-openai";
+} from "../toolcall/policy";
+import type { ToolChoicePolicy } from "../toolcall/policy";
 import {
 	buildToolChoiceInstructionFromPolicy,
 	parseOpenAIToolChoicePolicy,
-} from "../toolcall/policy-openai";
+} from "../toolcall/policy";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,
 	type ToolBundle,
+	toolCallInstructionsFor,
+	toolNamesForPromptSource,
+	toolPromptBlockFor,
 } from "../toolcall/tool-bundle";
 import {
 	prepareGoogleGeminiContext,
@@ -31,12 +34,12 @@ import {
 	buildStructuredOutputRequirement,
 	getStructuredResponseFormat,
 } from "./structured-output";
-import { ensureInlineToolPrompt } from "./tool-prompt-guard";
+import type { UnknownRecord } from "../shared/types";
 import type {
 	ContextFileResult,
 	FileRef,
 	GeminiContextPrepareResult,
-	LooseRequest,
+	PromptMetadata,
 } from "./types";
 import { hasCompletionError } from "./types";
 
@@ -74,7 +77,7 @@ export type PreparedCompletion = {
 type PrepareContextArgs = {
 	cfg: RuntimeConfig;
 	provider: CompletionProvider;
-	req: LooseRequest;
+	req: UnknownRecord;
 	messages: readonly InternalMessage[];
 	bundle: ToolBundle;
 	filtered: ToolBundle;
@@ -88,8 +91,8 @@ type PrepareContextArgs = {
 export type CompletionDialect = {
 	stage: "openai" | "google";
 	modelLogLabel(model: unknown): string;
-	structured(req: LooseRequest): StructuredOutputRequirementResult;
-	parsePolicy(req: LooseRequest, bundle: ToolBundle): ToolChoicePolicy;
+	structured(req: UnknownRecord): StructuredOutputRequirementResult;
+	parsePolicy(req: UnknownRecord, bundle: ToolBundle): ToolChoicePolicy;
 	choiceInstruction(policy: ToolChoicePolicy): string;
 	emptyPromptMessage: string;
 	defaultPrepareErrorCode: string | null;
@@ -159,7 +162,7 @@ export type PrepareCompletionOptions = {
 export async function prepareCompletion(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
-	req: LooseRequest,
+	req: UnknownRecord,
 	messages: readonly InternalMessage[],
 	model: unknown,
 	dialect: CompletionDialect,
@@ -271,4 +274,36 @@ export async function prepareCompletion(
 		promptTokens: ctx.promptTokens,
 		contextFiles: ctx.contextFiles,
 	};
+}
+
+export function ensureInlineToolPrompt(
+	prompt: string,
+	tools: ToolBundle | null | undefined,
+	toolChoiceInstruction: string,
+	contextFiles: unknown,
+	metadata: PromptMetadata,
+): string {
+	const text = String(prompt || "");
+	const toolNames = toolNamesForPromptSource(tools);
+	if (contextFiles) {
+		if (metadata.hasToolInstructions) return text;
+		if (!toolNames.length)
+			return withMissingInstruction(text, toolChoiceInstruction);
+		return [toolCallInstructionsFor(tools), toolChoiceInstruction, text]
+			.filter((part) => part.trim())
+			.join("\n\n");
+	}
+	if (!toolNames.length) {
+		return withMissingInstruction(text, toolChoiceInstruction);
+	}
+	if (metadata.hasToolPrompt && metadata.hasToolInstructions) return text;
+	return [toolPromptBlockFor(tools, toolChoiceInstruction), text]
+		.filter((part) => part.trim())
+		.join("\n\n");
+}
+
+function withMissingInstruction(text: string, instruction: string): string {
+	const trimmed = String(instruction || "").trim();
+	if (!trimmed || text.includes(trimmed)) return text;
+	return [instruction, text].filter((part) => part.trim()).join("\n\n");
 }
