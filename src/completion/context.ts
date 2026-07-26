@@ -1,23 +1,25 @@
-import { droppedAttachmentNote } from "../attachments/notes";
-import { recognizedFileRefKey } from "../attachments/refs";
+import {
+	droppedAttachmentNote,
+	recognizedFileRefKey,
+} from "../attachments/plan";
 import type { AttachmentPlan } from "../attachments/types";
 import type { RuntimeConfig } from "../config";
 import {
-	attachmentPlanFromMessages,
-	openAIAttachmentPlanFromRequest,
-} from "../promptcompat/attachment-inputs";
-import { buildOpenAIHistoryTranscript } from "../promptcompat/history";
-import type { InternalMessage } from "../promptcompat/message-types";
-import { latestUserInputText } from "../promptcompat/message-project";
-import type { PromptToolContext } from "../promptcompat/messages";
-import { messagesToPrompt } from "../promptcompat/messages";
+	latestUserInputText,
+	type InternalMessage,
+} from "../promptcompat/message-model";
 import {
 	appendStructuredOutputInstructionToPrepared,
 	appendTextToPreparedWithTokens,
+	attachmentPlanFromMessages,
+	buildOpenAIHistoryTranscript,
+	messagesToPrompt,
+	openAIAttachmentPlanFromRequest,
+	type PromptToolContext,
 	structuredInstruction,
 	withGeminiNativeHiddenToolsPromptForPrepared,
 	withGeminiNativeHiddenToolsPromptWithTokens,
-} from "../promptcompat/prompt-build";
+} from "../promptcompat/prompt";
 import {
 	buildTextWithTokens,
 	type PreparedTokenText,

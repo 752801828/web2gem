@@ -7,7 +7,7 @@ import type {
 	GeneratedImage,
 } from "../../completion/ports";
 import type { RuntimeConfig } from "../../config";
-import { parseResponsesInput } from "../../promptcompat/responses-input";
+import { parseResponsesInput } from "../../promptcompat/responses";
 import { nowSec } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
 import { jsonResponse } from "../core/json";

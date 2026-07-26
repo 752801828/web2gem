@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { createPromptPartAccumulator } from "../../../src/promptcompat/prompt-text";
+import { createPromptPartAccumulator } from "../../../src/promptcompat/prompt";
 import { assert } from "../assertions.js";
 
 describe("prompt compatibility", () => {

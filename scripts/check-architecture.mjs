@@ -77,29 +77,17 @@ const rules = [
 		label:
 			"completion modules must import prompt compatibility owner modules instead of the compatibility barrel",
 		files: "src/completion/**/*.ts",
-		disallowed: [
+		// Package-level: any concrete owner under promptcompat/* is allowed.
+		// Only bare barrel / index imports are banned (no per-file allowlist).
+		disallowedExact: [
 			"../promptcompat",
 			"../promptcompat/",
+			"../promptcompat/index",
+			"../promptcompat/index.ts",
 			"../../promptcompat",
 			"../../promptcompat/",
-		],
-		allowed: [
-			"../promptcompat/attachment-inputs",
-			"../promptcompat/history",
-			"../promptcompat/message-parse",
-			"../promptcompat/message-project",
-			"../promptcompat/message-types",
-			"../promptcompat/messages",
-			"../promptcompat/prompt-build",
-			"../promptcompat/token-accounting",
-			"../../promptcompat/attachment-inputs",
-			"../../promptcompat/history",
-			"../../promptcompat/message-parse",
-			"../../promptcompat/message-project",
-			"../../promptcompat/message-types",
-			"../../promptcompat/messages",
-			"../../promptcompat/prompt-build",
-			"../../promptcompat/token-accounting",
+			"../../promptcompat/index",
+			"../../promptcompat/index.ts",
 		],
 	},
 	{

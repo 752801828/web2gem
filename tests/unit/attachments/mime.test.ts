@@ -8,7 +8,7 @@ import {
 	mimeFromFilename,
 	normalizeMimeType,
 	sanitizeUploadFilename,
-} from "../../../src/attachments/mime";
+} from "../../../src/attachments/bytes";
 import { assert } from "../assertions.js";
 
 const encoder = new TextEncoder();

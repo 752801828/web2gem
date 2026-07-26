@@ -3,7 +3,7 @@ import type {
 	ImagePart,
 	InternalMessage,
 	TextPart,
-} from "../../../../src/promptcompat/message-types";
+} from "../../../../src/promptcompat/message-model";
 export function messageAt(
 	messages: readonly InternalMessage[],
 	index: number,

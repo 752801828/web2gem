@@ -4,7 +4,7 @@ import type { CompletionProvider } from "../../../src/completion/ports";
 import { hasCompletionError } from "../../../src/completion/types";
 import type { RuntimeConfig } from "../../../src/config";
 import { createRuntimeConfig, getConfig } from "../../../src/config";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 

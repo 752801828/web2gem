@@ -2,7 +2,7 @@ import { describe, test } from "vitest";
 import {
 	attachmentDrop,
 	droppedAttachmentNote,
-} from "../../../src/attachments/notes";
+} from "../../../src/attachments/plan";
 import type {
 	AttachmentDropReason,
 	AttachmentKind,

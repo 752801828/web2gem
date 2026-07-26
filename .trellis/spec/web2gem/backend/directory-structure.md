@@ -8,14 +8,14 @@
 - `src/app.ts` is the application composition root. It owns the declarative `APP_ROUTES` table (route matching, admin-exempt vs public ordering, per-route JSON body policy and error envelope, session requirements), CORS wrapping, the public auth gate, provider composition, and top-level error conversion using Web-standard `Request` / `Response` types. Adding a route means adding one table entry, not a new dispatch branch. Pure composition helpers that do not own the route table live in `src/app-support.ts` (model catalog load, pool-availability flag, session-required/invalid-config/JSON-envelope error responses, multipart predicate).
 - `src/index.ts` is the single Worker entry used by Wrangler, Docker, harness re-export, and local tests. It exports only `default { fetch, assertRuntimeConfig }` (no named public-helper barrel); raw workerd entry bundles must not expose non-handler named exports.
 - Named smoke/bench helpers live only in `src/harness-exports.ts`; they are not part of the production Worker surface.
-- `src/http/` owns HTTP boundary concerns. Generic, protocol- and completion-neutral helpers live under `http/core/` (enforced by check:arch), stream framing helpers under `http/stream/` (`coalescer.ts` for delta batching; `outcome.ts` for shared terminal stream-outcome logging/dispatch used by OpenAI chat/responses and Google stream adapters), protocol adapters under `http/openai/` and `http/google/`, and business-aware shared modules at the `src/http/` root: `route-body.ts` (completion-aware JSON body policy) and `generation.ts` (shared prepare/generate orchestration, stage logging, and the `GenerationProtocol` strategy consumed by both adapters).
+- `src/http/` owns HTTP boundary concerns. Generic, protocol- and completion-neutral helpers live under `http/core/` (enforced by check:arch), stream framing helpers under `http/stream/` (`coalescer.ts` for delta batching; `outcome.ts` for shared terminal stream-outcome logging/dispatch used by OpenAI chat/responses and Google stream adapters), protocol adapters under `http/openai/` and `http/google/`, and business-aware shared modules at the `src/http/` root: `route-body.ts` (completion-aware JSON body policy) and `generation.ts` (shared prepare/generate orchestration via `runPreparedCompletion` / `generate*Logged`, internal stage-timing handle, and the `GenerationProtocol` strategy consumed by both adapters). OpenAI non-stream finalize is file-private in `chat.ts` / `responses.ts` (no separate completion-tail owner).
 - `src/http/openai/images.ts` owns OpenAI image route orchestration and generation response flow. JSON and multipart image-edit input normalization, upload-size enforcement, and image-part coercion belong in `src/http/openai/images-input.ts`; keep provider calls and response formatting out of that input owner.
 - HTTP protocol adapters import `http/core/*`, `http/stream/*`, and `src/http/*` owner modules directly. There is no `src/http/index.ts` barrel and no `src/http/openai/index.ts` barrel; `src/app.ts` imports OpenAI route owners (`http/openai/chat`, `http/openai/responses`, `http/openai/images`) and other owners directly. New generation endpoints run through `runPreparedCompletion`/`generateTextLogged`/`generateRichLogged` with their protocol's `*_GENERATION_PROTOCOL` constant instead of hand-rolling prepare/generate/log/error pipelines.
 - `src/completion/` owns completion contracts and shared business behavior used by the Gemini adapter: prompt/context preparation, the completion-provider layer seam (`ports.ts`), empty-output handling, stream/tool-sieve event generation, one `CompletionStreamLifecycle` reducer plus terminal outcome classifier, and completion turn finalization. There is no `src/completion/index.ts` barrel — import concrete owners (`ports`, `stream-events`, `turn`, `prepare`, …). `context.ts` owns OpenAI/Google dialect entries plus `preparePromptWithAttachments` (file-ref group order, attachment notes, pre-upload prompt decisions). `context-files.ts` owns large-context text-file upload orchestration together with threshold/byte-check/failure-message helpers (formerly a separate limits microfile). Image-generation prepare orchestration and package-facing prepare types live in `image-generation.ts`; input extraction into attachment candidates/slots (and extract-local image-input types) lives in `image-generation-extract.ts`. Inline tool-prompt guarding lives in `prepare.ts` (`ensureInlineToolPrompt`). Protocol adapters must not mirror reducer-owned issue/empty/tool-call/policy/count state, and callback-style stream consumption APIs are not part of the contract.
-- `src/promptcompat/` owns the typed `InternalMessage` boundary. `message-types.ts` owns canonical parts/types, `message-parse.ts` owns the single raw content-part parser, and `message-project.ts` owns explicit prompt/history/latest-input/reasoning projections; `responses-input.ts` parses Responses items directly into that model; `attachment-inputs.ts` projects parsed messages plus request-level attachment channels into `AttachmentPlan`. HTTP adapters parse OpenAI Responses, OpenAI chat, and Google wire shapes once; prompt, history, attachment, and image-generation consumers receive the parsed model instead of re-walking raw content parts.
+- `src/promptcompat/` owns the typed `InternalMessage` boundary as four aggregate owners (no package barrel): `message-model.ts` (types + raw content-part parse + prompt/history/latest-input/reasoning projection), `prompt.ts` (messages-to-prompt, history transcript, prompt text/build helpers, attachment-plan projection from messages/request channels, Google request parse), `responses.ts` (Responses item parse + sequence semantics), and `token-accounting.ts` (prompt/completion token estimates and counters). HTTP adapters parse OpenAI Responses, OpenAI chat, and Google wire shapes once; prompt, history, attachment, and image-generation consumers receive the parsed model instead of re-walking raw content parts.
 - `src/toolcall/` owns tool-call prompt formatting, parsing, policy validation, schema normalization, and streamed sieve state as four aggregate owners: `parse.ts` (XML/markdown/syntax-probe/DSML parse, schema normalize, OpenAI/Google tool-call formatting), `sieve.ts` (stream sieve state machine; imports parse helpers), `policy.ts` (OpenAI + Google tool-choice policy parse/validation), and `tool-bundle.ts` (bundle construction, tool meta extraction, prompt instruction/examples including `promptCDATA` / `xmlEscapeAttr`). Import those concrete owners; there is no broad compatibility barrel.
 - `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. Prefer aggregate owners over one-function microfiles: add a section in an existing owner unless a file exceeds roughly 400–500 LOC with a distinct change rate. `gemini/client/index.ts` is the non-stream orchestration layer (`generate` / `generateRich` + non-stream shell) and re-exports `generateStream`; `client/generate-core.ts` owns same-account retry state, shared generate/stream attempt shells, `fetchGeminiStreamGenerate`, page-token append, and empty-upstream resolution (fixed order: data-analysis empty → large-prompt empty → build-label continue → mode-specific final empty error); `client/generate-stream.ts` owns the stream execute body (WRB consume, empty-without-body, `CONTINUE_SAME_ACCOUNT_ATTEMPT`); `client/stream-consumer.ts` owns WRB reader pulls, streaming UTF-8 decode, line buffering, fatal-first parsing, and bounded diagnostics. `client/protocol.ts` owns request URL/payload/header construction, `buildGeminiModelHeaders`, and re-exports `GEMINI_WEB_USER_AGENT` (defined in `gemini/cookies.ts` to avoid import cycles). WRB envelopes/parts/images/cumulative delta extraction live in concrete `client/parse-*.ts` owners (`getNested` / `stringAt` live in `parse-images.ts`); no catch-all parser barrel and no `constants.ts` / `model-headers.ts` microfiles.
-- `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection from `src/attachments/mime.ts` and encoding from `src/attachments/base64.ts`.
+- `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection and encoding from `src/attachments/bytes.ts`.
 - `src/gemini/accounts/admin-input.ts` owns all admin request normalization/validation (account create/update/list/bulk, model-route priority bodies, and admin error factories). `admin.ts` is the account-admin service: construction, factories, pool wiring, and inlined create/update/delete/bulk/refresh/routing/import-probe use cases. Admin and pool take one `GeminiAccountStore` (see `types.ts`); do not reintroduce dual Admin/Runtime store ports or optional store methods for partial fakes.
 - `src/gemini/accounts/domain.ts` is the single owner for account issue/state vocabularies, guards, derived-state rules, cookie/hash normalize helpers, outcome classification, and the shared account page limit. Admin input, runtime classification, and D1 summary projection must reuse this owner instead of maintaining parallel status arrays or limit clamps. Shared DTOs and the single `GeminiAccountStore` contract live in `types.ts` (or collocated with dense owners); do not recreate six type-only bags.
 - `src/gemini/accounts/routes.ts` owns capacity-aware route tuples, keys, parsing, capability projection, catalog projection helpers, and priority reconciliation. `pool.ts` is the account facade; `runtime.ts` is factory-only env/D1 bootstrap (`getGeminiAccountPoolFromEnv` → cached `AccountPoolService`); `lease.ts` owns lease lifecycle; `pool-selection.ts` owns pure selection; `pool-snapshot.ts` owns selectable snapshot caching, snapshot transitions, capability-fresh helpers, and catalog/overview glue; `pool-refresh.ts` owns refresh lock, rotation, verification, and observed-cookie writeback.
@@ -27,16 +27,15 @@
 - `src/gemini/completion-provider.ts` is the thin Gemini adapter for `src/completion/ports.ts` and the **only** production `CompletionProvider` implementer. Cross-account acquisition, recovery, finalize, and generate/stream/upload loops live in `completion-attempts.ts` (single attempt orchestrator owner). Request-local upload recipes, aliases, replay, and opaque-reference detection belong in `upload-replay.ts`.
 - `src/promptcompat/token-accounting.ts` owns prompt/completion token estimates, counters, and prepared-text accounting. `src/shared/text-metrics.ts` owns only provider-neutral UTF-8 byte, code-point, and continuation-overlap primitives.
 - `src/shared/` must stay leaf-level and provider-neutral. Production code imports concrete owners such as `encoding.ts`, `logging.ts`, `abort.ts`, `errors.ts`, `crypto.ts`, `strings.ts`, `text-metrics.ts`, and `json-schema.ts`; broad `runtime.ts` / `tokens.ts` compatibility barrels do not exist. Generic string selection and JSON-Schema subset validation belong here, while completion-specific structured-output parsing belongs in `src/completion/structured-output.ts`. Gemini SAPISID hashing belongs to `src/gemini/auth.ts`.
-- `src/attachments/**` owns request-local media helpers for Gemini Web uploads (plan/materialize/MIME/base64/refs/notes). Keep it a leaf package consumed by promptcompat, completion, Gemini uploads, and image generation; do not market it as a multi-provider attachment framework, and do not add compatibility shims under `src/shared/`.
+- `src/attachments/**` owns request-local media helpers for Gemini Web uploads as aggregate owners (no package barrel): `types.ts` (plan/candidate/drop types), `bytes.ts` (base64 encode/decode, MIME/filename helpers, filename metadata extraction), `plan.ts` (attachment plan + upload-input normalization + existing file-ref vocabulary + drop notes), and `materialize.ts` (candidate → bytes). Keep it a leaf package consumed by promptcompat, completion, Gemini uploads, and image generation; do not market it as a multi-provider attachment framework, and do not add compatibility shims under `src/shared/`.
 
 ### Attachment owner dependency direction
 
-`src/attachments/refs.ts` owns the recognized existing-file-reference vocabulary
-(`file_id`, `fileId`, `file_ref`, `fileRef`, `ref`, and context-sensitive `id`).
-Upload normalization may consume that owner, but `refs.ts` must not import the
-upload-input owner. Shared filename metadata extraction belongs in a leaf helper
-such as `src/attachments/metadata.ts` so reference collection and upload
-normalization do not form a cycle.
+`plan.ts` owns the recognized existing-file-reference vocabulary
+(`file_id`, `fileId`, `file_ref`, `fileRef`, `ref`, and context-sensitive `id`)
+together with upload-input normalization and drop notes (same-file sections avoid
+the former `refs`↔`input` cycle). `bytes.ts` must not import `plan.ts`;
+`materialize.ts` depends only on `bytes` + `types`.
 
 Model-detail route matchers must catch `decodeURIComponent` failures and return a
 non-match; malformed encoded IDs must reach the existing not-found response,
@@ -130,7 +129,6 @@ This package supports **only** the Gemini Web completion provider.
 - `CompletionProvider.uploadTextFile(text, filename)` returns a provider file reference for large context attachment.
 - `CompletionProvider.resolveModel(name, defaultName)` resolves static/dynamic models through the Gemini account pool when present.
 - `CompletionProvider.dispose()` releases any request-scoped account lease state.
-- `resolveCompletionModel(provider, name, defaultName)` always delegates to `provider.resolveModel`.
 - `CompletionTextInput.fileRefs` is `FileRef[] | null | undefined`; completion and HTTP modules should not pass untyped provider file payloads through this port.
 - `streamPlainCompletionEvents` and `streamToolSieveCompletionEvents` convert provider deltas into explicit completion events. Google tool streaming reuses the shared sieved-text loop with its protocol-specific tail finalizer.
 
@@ -190,13 +188,12 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 ### 2. Signatures
 
 - `src/attachments/types.ts` owns `AttachmentPlan`, `AttachmentCandidate`, `AttachmentDrop`, and `AttachmentUploadResult`.
-- `src/attachments/plan.ts` owns `createAttachmentPlan({ images, files, existingFileRefs, maxFiles })`, `mergeAttachmentPlans(...)`, candidate ordering, max-count enforcement, and request-local candidate normalization.
-- `src/promptcompat/message-types.ts` owns `InternalMessage`, `MessagePart`, part/tool-call types, `MessageProjectionMode`, `createInternalMessage(...)`, `normalizeMessageRole(...)`, and `isTextPartType(...)`.
-- `src/promptcompat/message-parse.ts` owns `parseOpenAIMessages(...)`, `parseMessageContent(...)`, the single `parseMessagePart(...)` raw content-part walker, `parseToolCallArguments(...)`, and `flattenText(...)` used while materializing wire content.
-- `src/promptcompat/message-project.ts` owns typed-message projections: `projectMessageText(...)`, `renderMessageBody(...)`, and `latestUserInputText(...)`. It must not reintroduce a second raw content-part walker.
-- `src/promptcompat/attachment-inputs.ts` owns `attachmentInputsFromMessages(...)`, `attachmentPlanFromMessages(...)`, `openAIAttachmentPlanFromRequest(...)`, and request-level `attachments`, `files`, `ref_file_ids`, `file_ids`, and Responses `input` reference-channel planning. Consumers import this concrete owner directly; message type/parse/project modules do not re-export attachment planning.
-- `src/attachments/refs.ts` owns recognized `file_id`, `fileId`, `file_ref`, `fileRef`, `ref`, and context-sensitive `id` extraction, naming, and dedupe keys. Raw message walking remains in `promptcompat`; completion may retain an opaque-object fallback after recognized-key lookup.
-- `src/attachments/notes.ts` owns dropped-attachment records and deterministic prompt notes.
+- `src/attachments/bytes.ts` owns base64 helpers, MIME/filename helpers, and `uploadFilenameFromObject`.
+- `src/attachments/plan.ts` owns `createAttachmentPlan({ images, files, existingFileRefs, maxFiles })`, `mergeAttachmentPlans(...)`, candidate ordering, max-count enforcement, upload-input normalization, recognized existing-file-ref extraction, and dropped-attachment notes.
+- `src/attachments/materialize.ts` owns candidate → bytes materialization and size limits.
+- `src/promptcompat/message-model.ts` owns `InternalMessage` / `MessagePart` types, `createInternalMessage` / `normalizeMessageRole` / `isTextPartType`, the single raw content-part walker (`parseMessagePart` / `parseOpenAIMessages` / `parseMessageContent` / `parseToolCallArguments` / `flattenText`), and typed projections (`projectMessageText` / `renderMessageBody` / `latestUserInputText`).
+- `src/promptcompat/prompt.ts` owns messages-to-prompt, history transcript, prompt text/build helpers, Google request parse, and attachment-plan projection (`attachmentPlanFromMessages` / `openAIAttachmentPlanFromRequest` / request-level attachment channels).
+- `src/promptcompat/responses.ts` owns Responses item parse and sequence semantics.
 - `CompletionProvider.resolveAttachments(plan)` resolves request-local candidates to provider file refs and prompt notes.
 - `CompletionProvider.uploadTextFile(text, filename)` uploads required large-context text files.
 - `src/gemini/uploads/execute.ts` owns request-local attachment execution end-to-end: limits, weighted scheduling, dedupe/pending maps, candidate materialization (authenticated upload vs anonymous inline), result aggregation, prompt notes, usage, and stage telemetry. Dense protocol helpers stay in `multipart.ts` and `tokens.ts`; shared content-push error factories stay in `errors.ts`. Production callers import those owners directly (no `uploads/index.ts` barrel).
@@ -204,7 +201,7 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 ### 3. Contracts
 
 - `src/attachments/**` is a request-local media leaf for Gemini Web uploads and may depend on `src/shared/**`, but must not import `src/gemini/**`, HTTP adapters, or completion modules.
-- Implementation modules import Base64 helpers from `src/attachments/base64.ts`, MIME/filename helpers from `src/attachments/mime.ts`, and upload-input normalization from `src/attachments/input.ts`; there is no broad attachment compatibility facade.
+- Implementation modules import byte/MIME helpers from `src/attachments/bytes.ts` and plan/input/ref/note helpers from `src/attachments/plan.ts`; there is no broad attachment compatibility facade or `attachments/index.ts` barrel.
 - `src/completion/**` must call provider ports for upload and must not import Gemini upload modules.
 - Chat/Responses image generation parses messages at the HTTP edge and passes `readonly InternalMessage[]` into completion. Completion image preparation must not accept or dispatch raw content-part arrays.
 - `src/gemini/uploads/**` owns Gemini Web upload protocol details. Preferred content-push upload is multipart and must not include Gemini cookie or SAPISID authorization headers.
@@ -260,7 +257,9 @@ const fileRefs = mergeFileRefs(...dialect.fileRefOrder.map((key) => groups[key])
 
 ## Architecture Guard
 
-`scripts/check-architecture.mjs` is the source of truth for import boundaries. It checks forbidden imports plus authored `.ts` / `.tsx` file and top-level owner cycles. Top-level owners are discovered from `src/` instead of maintained as a hard-coded allowlist; generated sources are excluded from the owner graph. Run `pnpm check:arch` after moving modules or changing imports.
+`scripts/check-architecture.mjs` is the source of truth for import boundaries. It checks package-level forbidden imports plus authored `.ts` / `.tsx` file and top-level package cycles. Top-level owners are discovered from `src/` instead of maintained as a hard-coded package allowlist; generated sources are excluded from the owner graph. Run `pnpm check:arch` after moving modules or changing imports.
+
+Policy focus: **package boundaries + ban bare barrels/index**, not per-file allowlists of every concrete owner path. Example: completion may import any concrete `../promptcompat/<file>` owner, but bare `../promptcompat` / `../promptcompat/index` is rejected. Do not reintroduce a maintained list of every promptcompat microfile.
 
 Current enforced rules include:
 
@@ -271,13 +270,18 @@ Current enforced rules include:
 - `src/gemini/**` may import completion port types only through the provider adapter path.
 - HTTP adapters must not call `gemini/client` directly.
 - `promptcompat` and `completion` must not depend on HTTP adapters.
-- `promptcompat` internals must not depend on `completion`; only the compatibility barrel may re-export legacy completion context helpers.
+- `promptcompat` internals must not depend on `completion`.
 - OpenAI and Google HTTP adapters must not import each other.
 - `toolcall` must not depend on prompt compatibility, HTTP adapters, or Gemini uploads; its sieve is tool-call domain state.
 - HTTP adapter barrels should not re-export lower-layer completion, prompt compatibility, tool-call, or Gemini client internals. Export protocol handlers/formatters from HTTP packages and import lower-layer owner modules directly when needed.
 - Implementation modules under `src/completion/`, `src/promptcompat/`, and `src/http/` import the specific tool-call owner module; bare `src/toolcall` / `src/toolcall/index` imports are invalid because no barrel exists.
-- Directory-level source dependency cycles are also rejected; compatibility-only barrels are excluded where explicitly documented.
-- Architecture-script tests must execute the real checker against temporary fixture roots and include TSX rejection plus dynamically discovered owner-cycle cases.
+- Directory-level source dependency cycles are also rejected.
+
+### Residual ceremony baseline (out of scope to re-open casually)
+
+- Accounts constellation is already collapsed enough; do not re-fold accounts into a single `pool-core` without a new task.
+- Keep the Gemini-only `CompletionProvider` seam and `client`/`uploads` test inject surface.
+- Keep `runPreparedCompletion` / `generate*Logged`; OpenAI non-stream finalize logic lives file-private in chat/responses (no `completion-tail` owner). `StageLog` is an internal generation logging handle, not a strategy port.
 
 ### Design Decision: Owner-Module Toolcall Imports
 
@@ -1033,14 +1037,14 @@ jsonValuesEqual(schemaValue, outputValue)
 
 ### 1. Scope / Trigger
 
-Use this contract when changing `src/promptcompat/responses-input.ts` or any OpenAI Responses route behavior that parses `req.input` into the canonical typed message model.
+Use this contract when changing `src/promptcompat/responses.ts` or any OpenAI Responses route behavior that parses `req.input` into the canonical typed message model.
 
 ### 2. Signatures
 
 - `parseResponsesInput(req, mode)` returns `InternalMessage[]` or a parse error, where mode is `completion | image-generation`.
 - `normalizeResponsesInputAsMessages(req)` remains a harness/test compatibility projection; production routes do not consume its chat-style wire records.
 - `parseToolCallArguments(value)` preserves object arguments and parses string arguments once into the internal object shape.
-- `generateOpenAICompletionTail(args)` owns the shared Chat/Responses non-stream `generateTextLogged -> finalizeOpenAICompletionResult -> protocol error` sequence; endpoint adapters still own IDs, payloads, usage, and timestamps.
+- OpenAI Chat/Responses non-stream finalize is file-private in `http/openai/chat.ts` and `http/openai/responses.ts` (`generateTextLogged` → `finalizeOpenAICompletionResult` → protocol error). There is no shared `completion-tail` owner; endpoint adapters still own IDs, payloads, usage, and timestamps.
 
 ### 3. Contracts
 
@@ -1056,7 +1060,7 @@ Use this contract when changing `src/promptcompat/responses-input.ts` or any Ope
   fallback-deferred items may retain their documented reasoning grouping, but
   they must not reorder an earlier immediate fallback.
 - Tool argument objects do not cross an internal stringify/parse boundary.
-- Production and compatibility Responses paths reuse the pure recognizers in `responses-semantics.ts` for item types, function-call inputs, reasoning text, call-name lookup, and pending-reasoning joins. Compatibility stringifies arguments only when projecting its final wire record. Their sequence grouping and role/type dispatch must also use the shared semantic reducer in that owner; only the final value projection differs.
+- Production and compatibility Responses paths reuse the pure recognizers in `responses.ts` (item types, function-call inputs, reasoning text, call-name lookup, and pending-reasoning joins). Compatibility stringifies arguments only when projecting its final wire record. Their sequence grouping and role/type dispatch must also use the shared semantic reducer in that owner; only the final value projection differs.
 - Compatibility consumer ledger: `normalizeResponsesInputAsMessages` is the only public/harness projection. The former exported helpers `responsesMessagesFromRequest`, `prependInstructionMessage`, `normalizeResponsesInputValueAsMessages`, `normalizeResponsesInputArray`, `normalizeResponsesInputItem`, `normalizeResponsesAssistantMessage`, `assistantReasoningOnlyContent`, `isAssistantMessage`, `isAssistantToolCallMessage`, `mergeResponsesAssistantToolCalls`, `normalizeResponsesFallbackPart`, and `stringifyToolCallArguments` were narrowed to module-private because no public or harness consumer used them directly. The removed `normalizeResponsesInputAsMessagesStrict` wrapper, `isFileInputType` duplicate, and `strictResponsesInputError` branch had no live consumer; the direct typed parser and the harness projection remain the explicit contracts.
 - Recognized message content parts (`text`, input/output/summary text, reasoning/thinking, image, and file) have the same typed result whether supplied as one object or a one-element array.
 - Generic message content retains the legacy unknown-singleton fallback for compatibility. This does not weaken the Responses top-level rule: unknown Responses items remain ignored.

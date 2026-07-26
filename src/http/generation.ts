@@ -22,6 +22,10 @@ export type GenerationProtocol = {
 	upstreamErrorResponse: (e: unknown) => Response;
 };
 
+/**
+ * Internal request-stage timing/logging handle used by runPreparedCompletion
+ * and generate*Logged. Not a strategy port or cross-package ceremony object.
+ */
 export type StageLog = {
 	enabled: boolean;
 	now: () => number;

@@ -54,11 +54,3 @@ export type CompletionProvider = {
 	uploadTextFile(text: string, filename: string): Promise<FileRef>;
 	dispose(): void | Promise<void>;
 };
-
-export function resolveCompletionModel(
-	provider: CompletionProvider,
-	name: unknown,
-	defaultName: unknown,
-): Promise<ResolvedModel> {
-	return provider.resolveModel(name, defaultName);
-}

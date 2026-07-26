@@ -1,22 +1,22 @@
-import { base64ToBytes } from "../attachments/base64";
+import { base64ToBytes } from "../attachments/bytes";
 import {
 	detectUploadMimeFromBytes,
 	imageFilenameFromMime,
 	normalizeMimeType,
 	sanitizeUploadFilename,
-} from "../attachments/mime";
+} from "../attachments/bytes";
 import { MAX_ATTACHMENTS_PER_REQUEST } from "../attachments/plan";
 import type {
 	AttachmentCandidate,
 	AttachmentFileRef,
 } from "../attachments/types";
-import { parseMessagePart } from "../promptcompat/message-parse";
+import { parseMessagePart } from "../promptcompat/message-model";
 import type {
 	FilePart,
 	ImagePart,
 	InternalMessage,
 	MessagePart,
-} from "../promptcompat/message-types";
+} from "../promptcompat/message-model";
 import { firstNonEmptyString } from "../shared/strings";
 import type { UnknownRecord } from "../shared/types";
 

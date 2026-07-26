@@ -4,7 +4,7 @@ import {
 	appendTextToPreparedWithTokens,
 	withGeminiNativeHiddenToolsPromptForPrepared,
 	withGeminiNativeHiddenToolsPromptWithTokens,
-} from "../../../src/promptcompat/prompt-build";
+} from "../../../src/promptcompat/prompt";
 import type { PreparedTokenText } from "../../../src/promptcompat/token-accounting";
 import { buildTextWithTokens } from "../../../src/promptcompat/token-accounting";
 import { assert } from "../assertions.js";

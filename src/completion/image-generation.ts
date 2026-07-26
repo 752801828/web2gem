@@ -2,7 +2,7 @@ import { MAX_ATTACHMENTS_PER_REQUEST } from "../attachments/plan";
 import type { AttachmentFileRef, AttachmentPlan } from "../attachments/types";
 import type { RuntimeConfig } from "../config";
 import type { ResolvedModel } from "../models";
-import type { InternalMessage } from "../promptcompat/message-types";
+import type { InternalMessage } from "../promptcompat/message-model";
 import {
 	geminiAuthenticatedSessionRequiredError,
 	upstreamErrorCode,
@@ -23,7 +23,7 @@ import {
 	extractFromResponseMessages,
 	extractFromUserInput,
 } from "./image-generation-extract";
-import { type CompletionProvider, resolveCompletionModel } from "./ports";
+import type { CompletionProvider } from "./ports";
 import type { AttachmentResolutionResult, FileRef } from "./types";
 
 export type {
@@ -120,7 +120,7 @@ async function prepareImageGenerationFromState(
 		};
 	}
 
-	const rm = await resolveCompletionModel(provider, model, cfg.default_model);
+	const rm = await provider.resolveModel(model, cfg.default_model);
 	if (rm.name === undefined) {
 		log(
 			cfg,

@@ -4,7 +4,7 @@ import {
 	existingFileRefFromRecord,
 	recognizedFileRefID,
 	recognizedFileRefKey,
-} from "../../../src/attachments/refs";
+} from "../../../src/attachments/plan";
 import type { AttachmentFileRef } from "../../../src/attachments/types";
 import { assert } from "../assertions.js";
 

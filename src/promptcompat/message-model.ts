@@ -1,25 +1,144 @@
-import {
-	normalizeUploadFileInput,
-	parseImageUrl,
-	uploadFilenameFromObject,
-	uploadMimeFromObject,
-} from "../attachments/input";
+/** Message model: types, parse, and projection. */
 import {
 	existingFileRefFromRecord,
+	normalizeUploadFileInput,
+	parseImageUrl,
 	recognizedFileRefID,
-} from "../attachments/refs";
+	type UploadFileInput,
+	uploadFilenameFromObject,
+	uploadMimeFromObject,
+} from "../attachments/plan";
+import type { AttachmentFileRef } from "../attachments/types";
 import { parseJsonObject } from "../shared/json";
 import { firstNonEmptyString } from "../shared/strings";
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
-import {
-	createInternalMessage,
-	type FilePart,
-	type ImagePart,
-	type InternalMessage,
-	type InternalToolCall,
-	type MessagePart,
-	normalizeMessageRole,
-} from "./message-types";
+
+// --- Message types ---
+
+export type MessageRole = "system" | "user" | "assistant" | "tool";
+
+export type TextPart = {
+	kind: "text";
+	text: string;
+	/**
+	 * True when the text came from direct input text (string parts and
+	 * text/input_text-typed parts); false for assistant output/summary echoes
+	 * and unknown-typed text fallbacks, which prompt rendering includes but
+	 * user-input extraction (image generation) must skip.
+	 */
+	inputText: boolean;
+};
+
+export type ReasoningPart = {
+	kind: "reasoning";
+	text: string;
+};
+
+export type ImagePart = {
+	kind: "image";
+	b64: string;
+	mime: string;
+	filename: string;
+	remoteUrl: string;
+	fileRef: AttachmentFileRef | null;
+	hasInline: boolean;
+};
+
+export type FilePart = {
+	kind: "file";
+	upload: UploadFileInput | null;
+	filename: string;
+	remoteUrl: string;
+	fileRef: AttachmentFileRef | null;
+	label: string;
+};
+
+export type MessagePart = TextPart | ReasoningPart | ImagePart | FilePart;
+
+export type InternalToolCall = {
+	id: string;
+	name: string;
+	args: UnknownRecord;
+};
+
+export type InternalMessage = {
+	role: MessageRole;
+	roleLabel: string;
+	parts: MessagePart[];
+	toolCalls: InternalToolCall[];
+	toolCallId: string;
+	toolName: string;
+	reasoningText: string;
+};
+
+export type MessageProjectionMode =
+	| "prompt"
+	| "history"
+	| "latest-input"
+	| "reasoning";
+
+export function createInternalMessage(
+	roleValue: unknown,
+	parts: MessagePart[],
+	options: {
+		toolCalls?: InternalToolCall[];
+		toolCallId?: unknown;
+		toolName?: unknown;
+		reasoningText?: unknown;
+	} = {},
+): InternalMessage {
+	const roleLabel = normalizeMessageRole(roleValue);
+	return {
+		role: messageRoleBucket(roleLabel),
+		roleLabel,
+		parts,
+		toolCalls: options.toolCalls || [],
+		toolCallId: options.toolCallId == null ? "" : String(options.toolCallId),
+		toolName: options.toolName == null ? "" : String(options.toolName),
+		reasoningText:
+			typeof options.reasoningText === "string"
+				? options.reasoningText.trim()
+				: "",
+	};
+}
+
+/**
+ * Role normalization for message/history records: `function` -> `tool`,
+ * `developer` -> `system`, default `user`.
+ */
+export function normalizeMessageRole(role: unknown): string {
+	const r = String(role || "")
+		.trim()
+		.toLowerCase();
+	if (r === "function") return "tool";
+	if (r === "developer") return "system";
+	return r || "user";
+}
+
+/** Whether an item/part type flattens to text (text|input_text|output_text|summary_text). */
+export function isTextPartType(type: unknown): boolean {
+	const t = String(type || "")
+		.trim()
+		.toLowerCase();
+	return (
+		t === "text" ||
+		t === "input_text" ||
+		t === "output_text" ||
+		t === "summary_text"
+	);
+}
+
+function messageRoleBucket(roleLabel: string): MessageRole {
+	if (
+		roleLabel === "system" ||
+		roleLabel === "assistant" ||
+		roleLabel === "tool"
+	)
+		return roleLabel;
+	return "user";
+}
+
+// --- Message parse ---
 
 export function parseOpenAIMessages(messages: unknown): InternalMessage[] {
 	if (!Array.isArray(messages)) return [];
@@ -320,4 +439,75 @@ function remoteUrlFromRecord(raw: UnknownRecord): string {
 
 function isRemoteUrl(value: unknown): boolean {
 	return typeof value === "string" && /^https?:\/\//i.test(value.trim());
+}
+
+// --- Message project ---
+
+function projectMessageParts(
+	message: InternalMessage,
+	mode: Exclude<MessageProjectionMode, "reasoning">,
+): string {
+	const parts: string[] = [];
+	for (const part of message.parts) {
+		const text = projectMessagePart(part, mode);
+		if (text) parts.push(text);
+	}
+	return parts.join("\n");
+}
+
+export function projectMessageText(
+	message: InternalMessage,
+	mode: MessageProjectionMode,
+): string {
+	if (mode !== "reasoning") return projectMessageParts(message, mode);
+	const parts: string[] = [];
+	for (const part of message.parts) {
+		if (part.kind === "reasoning" && part.text) parts.push(part.text);
+	}
+	const embedded = parts.join("\n").trim();
+	return embedded || message.reasoningText.trim();
+}
+
+export function renderMessageBody(
+	message: InternalMessage,
+	mode: Exclude<MessageProjectionMode, "reasoning">,
+): string {
+	const content = projectMessageParts(message, mode);
+	if (message.role !== "assistant") return content;
+	const hasEmbeddedReasoning = message.parts.some(
+		(part) => part.kind === "reasoning" && !!part.text,
+	);
+	const reasoning =
+		hasEmbeddedReasoning || content.includes("[reasoning_content]")
+			? ""
+			: message.reasoningText.trim();
+	if (!reasoning) return content;
+	return [reasoningBlock(reasoning), content].filter(Boolean).join("\n\n");
+}
+
+export function latestUserInputText(
+	messages: readonly InternalMessage[],
+): string {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message?.roleLabel !== "user") continue;
+		const text = renderMessageBody(message, "latest-input").trim();
+		if (text) return text;
+	}
+	return "";
+}
+
+function projectMessagePart(
+	part: MessagePart,
+	_mode: Exclude<MessageProjectionMode, "reasoning">,
+): string {
+	if (part.kind === "text") return part.text;
+	if (part.kind === "reasoning")
+		return part.text ? reasoningBlock(part.text) : "";
+	if (part.kind === "image") return "[image input]";
+	return `[file input${part.label ? ` ${part.label}` : ""}]`;
+}
+
+function reasoningBlock(text: string): string {
+	return `[reasoning_content]\n${text}\n[/reasoning_content]`;
 }

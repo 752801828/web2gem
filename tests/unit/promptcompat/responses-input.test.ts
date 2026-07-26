@@ -2,13 +2,13 @@ import { describe, test } from "vitest";
 import {
 	parseResponsesInput,
 	type ResponsesInputParseResult,
-} from "../../../src/promptcompat/responses-input";
+} from "../../../src/promptcompat/responses";
 import type {
 	ImagePart,
 	InternalMessage,
 	InternalToolCall,
 	MessagePart,
-} from "../../../src/promptcompat/message-types";
+} from "../../../src/promptcompat/message-model";
 import { assert } from "../assertions.js";
 
 function parsedMessages(result: ResponsesInputParseResult): InternalMessage[] {

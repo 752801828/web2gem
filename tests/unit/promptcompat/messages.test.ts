@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
-import { parseGoogleRequest } from "../../../src/promptcompat/google";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
-import { messagesToPrompt } from "../../../src/promptcompat/messages";
+import { parseGoogleRequest } from "../../../src/promptcompat/prompt";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
+import { messagesToPrompt } from "../../../src/promptcompat/prompt";
 import {
 	googleToolChoiceInstructionFromPolicy,
 	parseGoogleToolChoicePolicy,

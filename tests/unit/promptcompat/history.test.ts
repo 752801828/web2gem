@@ -1,9 +1,9 @@
 import { describe, test } from "vitest";
-import { parseGoogleRequest } from "../../../src/promptcompat/google";
-import { buildOpenAIHistoryTranscript } from "../../../src/promptcompat/history";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
-import { latestUserInputText } from "../../../src/promptcompat/message-project";
-import { messagesToPrompt } from "../../../src/promptcompat/messages";
+import { parseGoogleRequest } from "../../../src/promptcompat/prompt";
+import { buildOpenAIHistoryTranscript } from "../../../src/promptcompat/prompt";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
+import { latestUserInputText } from "../../../src/promptcompat/message-model";
+import { messagesToPrompt } from "../../../src/promptcompat/prompt";
 import { assert } from "../assertions.js";
 
 describe("prompt compatibility", () => {

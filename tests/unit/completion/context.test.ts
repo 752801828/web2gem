@@ -8,7 +8,7 @@ import type {
 	GeminiContextPrepareResult,
 	PreparedGeminiContext,
 } from "../../../src/completion/types";
-import { parseOpenAIMessages } from "../../../src/promptcompat/message-parse";
+import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { assert } from "../assertions.js";
 import { attachmentResult } from "../attachments/_support/result.js";
 import { contextFileConfig } from "./_support/context-fixtures.js";

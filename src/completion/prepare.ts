@@ -1,6 +1,6 @@
 import type { RuntimeConfig } from "../config";
 import type { ResolvedModelOk } from "../models";
-import type { InternalMessage } from "../promptcompat/message-types";
+import type { InternalMessage } from "../promptcompat/message-model";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
@@ -29,7 +29,7 @@ import {
 	prepareGoogleGeminiContext,
 	prepareOpenAIGeminiContext,
 } from "./context";
-import { type CompletionProvider, resolveCompletionModel } from "./ports";
+import type { CompletionProvider } from "./ports";
 import {
 	buildStructuredOutputRequirement,
 	getStructuredResponseFormat,
@@ -168,7 +168,7 @@ export async function prepareCompletion(
 	dialect: CompletionDialect,
 	options: PrepareCompletionOptions = {},
 ): Promise<PreparedCompletion | { error: CompletionPrepareError }> {
-	const rm = await resolveCompletionModel(provider, model, cfg.default_model);
+	const rm = await provider.resolveModel(model, cfg.default_model);
 	if (rm.name === undefined) {
 		log(
 			cfg,

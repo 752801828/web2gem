@@ -8,8 +8,8 @@ import type {
 } from "../../../../src/completion/image-generation";
 import { prepareOpenAIImageGenerationCompletion as prepareOpenAIImageGenerationFromMessages } from "../../../../src/completion/image-generation";
 import { imageGenerationMode } from "../../../../src/http/openai/image-generation";
-import { parseOpenAIMessages } from "../../../../src/promptcompat/message-parse";
-import { parseResponsesInput } from "../../../../src/promptcompat/responses-input";
+import { parseOpenAIMessages } from "../../../../src/promptcompat/message-model";
+import { parseResponsesInput } from "../../../../src/promptcompat/responses";
 import type {
 	ErrorWithMetadata,
 	UnknownRecord,

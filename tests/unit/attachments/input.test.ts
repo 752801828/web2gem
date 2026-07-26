@@ -4,7 +4,7 @@ import {
 	parseImageUrl,
 	uploadFilenameFromObject,
 	uploadMimeFromObject,
-} from "../../../src/attachments/input";
+} from "../../../src/attachments/plan";
 import { assert } from "../assertions.js";
 
 describe("attachment input", () => {

@@ -1,6 +1,6 @@
 import { describe, test } from "vitest";
 import type { ApplicationExecutionContext } from "../../../../src/app";
-import { base64ToBytes } from "../../../../src/attachments/base64";
+import { base64ToBytes } from "../../../../src/attachments/bytes";
 import type { AttachmentPlan } from "../../../../src/attachments/types";
 import type {
 	CompletionRichOptions,

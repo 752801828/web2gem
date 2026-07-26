@@ -1,5 +1,7 @@
-import { bytesToBase64 } from "../../attachments/base64";
-import { detectUploadMimeFromBytes } from "../../attachments/mime";
+import {
+	bytesToBase64,
+	detectUploadMimeFromBytes,
+} from "../../attachments/bytes";
 import type { RuntimeConfig } from "../../config";
 import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";

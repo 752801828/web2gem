@@ -4,8 +4,8 @@ import {
 	type MaterializedAttachment,
 	materializeAttachment,
 } from "../../attachments/materialize";
-import { normalizeMimeType } from "../../attachments/mime";
-import { attachmentDrop, droppedAttachmentNote } from "../../attachments/notes";
+import { normalizeMimeType } from "../../attachments/bytes";
+import { attachmentDrop, droppedAttachmentNote } from "../../attachments/plan";
 import type {
 	AttachmentCandidate,
 	AttachmentFileRef,

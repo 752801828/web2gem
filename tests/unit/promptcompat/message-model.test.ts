@@ -3,8 +3,8 @@ import {
 	flattenText,
 	parseMessageContent,
 	parseOpenAIMessages,
-} from "../../../src/promptcompat/message-parse";
-import { renderMessageBody } from "../../../src/promptcompat/message-project";
+} from "../../../src/promptcompat/message-model";
+import { renderMessageBody } from "../../../src/promptcompat/message-model";
 import { assert } from "../assertions.js";
 import {
 	filePartAt,

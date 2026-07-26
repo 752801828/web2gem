@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { parseGoogleRequest } from "../../../src/promptcompat/google";
+import { parseGoogleRequest } from "../../../src/promptcompat/prompt";
 import { assert } from "../assertions.js";
 import {
 	filePartAt,

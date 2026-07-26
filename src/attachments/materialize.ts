@@ -1,13 +1,14 @@
 import type { ErrorWithMetadata } from "../shared/types";
 import { firstNonEmptyString } from "../shared/strings";
-import { base64DecodedByteLength, base64ToBytes } from "./base64";
 import {
+	base64DecodedByteLength,
+	base64ToBytes,
 	chooseUploadMime,
 	detectUploadMimeFromBytes,
 	genericFilenameFromMime,
 	imageFilenameFromMime,
 	mimeFromFilename,
-} from "./mime";
+} from "./bytes";
 import type { AttachmentCandidate, AttachmentDropReason } from "./types";
 
 export type AttachmentLimits = {

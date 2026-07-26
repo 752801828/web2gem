@@ -1,5 +1,5 @@
 import type { RuntimeConfig } from "../../config";
-import { sanitizeUploadFilename } from "../../attachments/mime";
+import { sanitizeUploadFilename } from "../../attachments/bytes";
 import { TEXT_ENCODER } from "../../shared/encoding";
 import { bytesToHex } from "../../shared/crypto";
 import { GEMINI_WEB_USER_AGENT } from "../client/protocol";

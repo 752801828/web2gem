@@ -3,7 +3,7 @@ import {
 	base64DecodedByteLength,
 	base64ToBytes,
 	bytesToBase64,
-} from "../../../src/attachments/base64";
+} from "../../../src/attachments/bytes";
 import { assert } from "../assertions.js";
 
 async function withoutTypedArrayEncodingMethods<T>(

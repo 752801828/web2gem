@@ -4,7 +4,7 @@ import {
 	responsesItemKind,
 	responsesItemRole,
 	type ResponsesSequenceEvent,
-} from "../../../src/promptcompat/responses-semantics";
+} from "../../../src/promptcompat/responses";
 import { assert } from "../assertions.js";
 
 type ProjectedItem = {

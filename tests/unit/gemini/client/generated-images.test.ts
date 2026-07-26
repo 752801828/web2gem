@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { base64ToBytes } from "../../../../src/attachments/base64";
+import { base64ToBytes } from "../../../../src/attachments/bytes";
 import {
 	hydrateGeneratedImages,
 	type GeminiRichImage,

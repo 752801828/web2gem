@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, test } from "vitest";
-import { base64ToBytes } from "../../../../src/attachments/base64";
+import { base64ToBytes } from "../../../../src/attachments/bytes";
 import { generateRich } from "../../../../src/gemini/client";
 import { resetGeminiBuildLabelCacheForTest } from "../../../../src/gemini/client/retry";
 import { _setConnectForTest } from "../../../../src/gemini/transport/socket";

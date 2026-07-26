@@ -6,7 +6,7 @@ import type {
 import { prepareOpenAIImageGenerationCompletion } from "../../completion/image-generation";
 import type { RuntimeConfig } from "../../config";
 import type { ResolvedModelOk } from "../../models";
-import type { InternalMessage } from "../../promptcompat/message-types";
+import type { InternalMessage } from "../../promptcompat/message-model";
 import { generateRichLogged, runPreparedCompletion } from "../generation";
 import { OPENAI_GENERATION_PROTOCOL, openAIErrorResponse } from "./errors";
 
