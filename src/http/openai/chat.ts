@@ -1,26 +1,17 @@
-import type {
-	CompletionProvider,
-	CompletionTextInput,
-} from "../../completion/ports";
+import type { CompletionProvider } from "../../completion/ports";
 import {
 	OPENAI_COMPLETION_DIALECT,
 	prepareCompletion,
 } from "../../completion/prepare";
-import {
-	finalizeOpenAICompletionResult,
-	type OpenAICompletionTurn,
-	type OpenAICompletionTurnOptions,
-} from "../../completion/turn";
 import type { RuntimeConfig } from "../../config";
 import { parseOpenAIMessages } from "../../promptcompat/message-model";
 import { tokenEst } from "../../promptcompat/token-accounting";
 import { randHex } from "../../shared/crypto";
-import { log, nowSec } from "../../shared/logging";
+import { nowSec } from "../../shared/logging";
 import { isRecord, type UnknownRecord } from "../../shared/types";
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
 import {
-	generateTextLogged,
 	type PreparedOk,
 	preparedLogFields,
 	runPreparedCompletion,
@@ -30,6 +21,7 @@ import {
 	streamOpenAIChatPlain,
 	streamOpenAIChatWithToolSieve,
 } from "./chat-stream";
+import { generateOpenAICompletionFinalize } from "./completion-finalize";
 import { OPENAI_GENERATION_PROTOCOL, openAIErrorResponse } from "./errors";
 import {
 	imageGenerationChatContent,
@@ -174,7 +166,7 @@ async function runChatGeneration(
 		);
 	}
 
-	const generated = await generateChatCompletionTail({
+	const generated = await generateOpenAICompletionFinalize({
 		cfg,
 		provider,
 		stage: "openai_chat",
@@ -252,54 +244,4 @@ async function handleImageGenerationChat(
 			});
 		},
 	});
-}
-
-type OpenAICompletionSuccess = Extract<OpenAICompletionTurn, { text: string }>;
-
-type OpenAICompletionTailResult =
-	| { turn: OpenAICompletionSuccess; response?: undefined }
-	| { response: Response; turn?: undefined };
-
-/** Non-stream OpenAI chat generate + finalize (file-private; not a shared owner). */
-async function generateChatCompletionTail(args: {
-	cfg: RuntimeConfig;
-	provider: CompletionProvider;
-	stage: string;
-	logLabel: string;
-	stageLog: StageLog;
-	input: CompletionTextInput & { rm: { name: string } };
-	options: OpenAICompletionTurnOptions;
-	okLogFields: (text: string) => Record<string, unknown>;
-}): Promise<OpenAICompletionTailResult> {
-	const generated = await generateTextLogged({
-		cfg: args.cfg,
-		provider: args.provider,
-		stage: args.stage,
-		logLabel: args.logLabel,
-		protocol: OPENAI_GENERATION_PROTOCOL,
-		stageLog: args.stageLog,
-		input: args.input,
-		okLogFields: args.okLogFields,
-	});
-	if (generated.response) return generated;
-
-	const finalized = finalizeOpenAICompletionResult(
-		generated.text,
-		args.options,
-	);
-	if (finalized.error) {
-		if (finalized.error.code === "upstream_empty")
-			log(
-				args.cfg,
-				`${args.logLabel} generate produced no content model=${args.input.rm.name}`,
-			);
-		return {
-			response: openAIErrorResponse(
-				finalized.error.message,
-				finalized.error.status,
-				finalized.error.code,
-			),
-		};
-	}
-	return { turn: finalized };
 }

@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { parseGoogleRequest } from "../../../src/promptcompat/prompt";
+import { parseGoogleRequest } from "../../../src/promptcompat/google";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { messagesToPrompt } from "../../../src/promptcompat/prompt";
 import {

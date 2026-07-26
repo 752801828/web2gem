@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import type { AttachmentSource } from "../../../src/attachments/types";
-import { attachmentPlanFromMessages } from "../../../src/promptcompat/prompt";
-import { parseGoogleRequest } from "../../../src/promptcompat/prompt";
+import { attachmentPlanFromMessages } from "../../../src/promptcompat/attachment-inputs";
+import { parseGoogleRequest } from "../../../src/promptcompat/google";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { messagesToPrompt } from "../../../src/promptcompat/prompt";
 import { parseResponsesInput } from "../../../src/promptcompat/responses";

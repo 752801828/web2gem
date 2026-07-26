@@ -7,7 +7,7 @@ import {
 	prepareCompletion,
 } from "../../completion/prepare";
 import { finalizeGoogleCompletionResult } from "../../completion/turn";
-import { parseGoogleRequest } from "../../promptcompat/prompt";
+import { parseGoogleRequest } from "../../promptcompat/google";
 import { upstreamErrorCode } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import { tokenEst } from "../../promptcompat/token-accounting";

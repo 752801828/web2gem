@@ -5,16 +5,18 @@ import {
 import type { AttachmentPlan } from "../attachments/types";
 import type { RuntimeConfig } from "../config";
 import {
-	latestUserInputText,
+	attachmentPlanFromMessages,
+	openAIAttachmentPlanFromRequest,
+} from "../promptcompat/attachment-inputs";
+import {
 	type InternalMessage,
+	latestUserInputText,
 } from "../promptcompat/message-model";
 import {
 	appendStructuredOutputInstructionToPrepared,
 	appendTextToPreparedWithTokens,
-	attachmentPlanFromMessages,
 	buildOpenAIHistoryTranscript,
 	messagesToPrompt,
-	openAIAttachmentPlanFromRequest,
 	type PromptToolContext,
 	structuredInstruction,
 	withGeminiNativeHiddenToolsPromptForPrepared,
