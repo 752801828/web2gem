@@ -402,12 +402,12 @@ account-scoped page/push-token caches.
 
 ### 2. Signatures
 
-- `GeminiAccountRuntimeStore.listSelectableAccounts(nowMs, limit)` returns only
+- `GeminiAccountStore.listSelectableAccounts(nowMs, limit)` returns only
   `id`, `enabled`, `cookie_header`, `cookie_hash`, `issue`,
   `cooldown_until_ms`, and `last_used_at_ms`.
-- `GeminiAccountRuntimeStore.writeAccountOutcome(accountId, outcome)` accepts a
+- `GeminiAccountStore.writeAccountOutcome(accountId, outcome)` accepts a
   success or a failure with an optional normalized issue and cooldown.
-- `GeminiAccountRuntimeStore.writeRefreshedCookie(accountId, { cookieHeader,
+- `GeminiAccountStore.writeRefreshedCookie(accountId, { cookieHeader,
   refreshedAtMs, nowMs })` returns `{ changed, reason?: "duplicate_cookie" }`.
 - `AccountPoolService.acquireLease(baseConfig, { excludeAccountIds? })` returns
   one unexcluded account lease or `null`; a successful refresh updates that
@@ -776,11 +776,11 @@ await this.scheduleImportedAccountProbes([...stored.createdAccountIds]);
 
 ### 1. Scope / Trigger
 
-Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion-provider.ts`, changing provider request lifecycle behavior, changing Gemini upload/page-token caches, or changing generated-image byte fetching in account-pool mode.
+Use this contract when wiring `AccountPoolService` into `src/gemini/completion-provider.ts`, changing provider request lifecycle behavior, changing Gemini upload/page-token caches, or changing generated-image byte fetching in account-pool mode.
 
 ### 2. Signatures
 
-- `createGeminiCompletionProvider(cfg, { accountRuntime })` returns a request-scoped provider.
+- `createGeminiCompletionProvider(cfg, { accountPool })` returns a request-scoped provider.
 - Account-backed `RuntimeConfig` carries `gemini_account.accountId`,
   `gemini_account.cookieHash`, and an optional internal `observeSetCookie`
   callback plus the selected Cookie/SAPISID runtime values. The callback stages
@@ -897,7 +897,7 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
   `finally` that performs only neutral cleanup when no terminal outcome ran.
 - Good: create one guarded outcome promise, release the lease, then pass the
   guarded promise to `waitUntil`.
-- Good: HTTP prepare-error branches call `provider.dispose?.()` before returning a validation error after possible upload work.
+- Good: HTTP prepare-error branches call `provider.dispose()` before returning a validation error after possible upload work.
 - Good: generated-image byte hydration receives the same account-backed config as rich generation.
 - Good: eligible text reaches anonymous upstream without calling
   `AccountPoolService.acquireLease`; a pre-output failure then uses the normal

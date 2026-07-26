@@ -1,21 +1,28 @@
-import { createRuntimeConfig, getConfig, RuntimeConfigError } from "./config";
+import {
+	applicationModelCatalog,
+	authenticatedSessionRequiredOpenAIResponse,
+	invalidRuntimeConfigResponse,
+	isMultipartFormRequest,
+	routeJsonErrorResponse,
+	withAccountPoolAvailability,
+} from "./app-support";
+import { createRuntimeConfig, getConfig } from "./config";
 import { authorized } from "./http/core/auth";
 import { corsHeaders, withCORS, withHeaders } from "./http/core/cors";
 import { jsonResponse, jsonTextResponse } from "./http/core/json";
 import { openAIErrorResponse } from "./http/openai/errors";
+import { handleChat } from "./http/openai/chat";
 import {
-	handleChat,
 	handleImageEdits,
 	handleImageEditsMultipart,
 	handleImageGenerations,
-	handleResponses,
-} from "./http/openai";
+} from "./http/openai/images";
+import { handleResponses } from "./http/openai/responses";
 import { handleGoogleGenerate } from "./http/google/handlers";
 import {
 	type GoogleGenerationRoute,
 	parseGoogleGenerationPath,
 } from "./http/google/model-path";
-import { googleErrorResponseBody } from "./http/google/format";
 import {
 	googleModelDetailJson,
 	googleModelListJson,
@@ -38,24 +45,13 @@ import {
 	isGeminiModelRoutingAdminPath,
 } from "./http/admin/gemini-model-routing";
 import { createGeminiCompletionProvider } from "./gemini/completion-provider";
-import {
-	GEMINI_AUTHENTICATED_SESSION_REQUIRED_CODE,
-	GEMINI_AUTHENTICATED_SESSION_REQUIRED_STATUS,
-	geminiAuthenticatedSessionRequiredMessage,
-	type GeminiAuthenticatedSessionReason,
-} from "./shared/errors";
-import {
-	d1BindingFromEnv,
-	getGeminiAccountRuntimeFromEnv,
-} from "./gemini/accounts/runtime";
+import type { GeminiAuthenticatedSessionReason } from "./shared/errors";
+import { getGeminiAccountPoolFromEnv } from "./gemini/accounts/runtime";
 import { elapsedMs, log, logStage, nowMs } from "./shared/logging";
 import { errorLogSummary } from "./shared/errors";
 import { uuid } from "./shared/crypto";
-import { buildGeminiModelCatalog, type GeminiModelCatalog } from "./models";
-import { capabilityFreshAfterMs } from "./gemini/accounts/freshness";
 import type { RuntimeConfig, WorkerEnv } from "./config";
-import type { GeminiAccountRuntime } from "./gemini/accounts/runtime";
-import type { RouteJsonPostResult } from "./http/route-body";
+import type { AccountPoolService } from "./gemini/accounts/pool";
 import type { UnknownRecord } from "./shared/types";
 import { MODELS } from "./models";
 import { VERSION } from "./config";
@@ -88,7 +84,7 @@ type ApplicationRequestContext = {
 // owned by their handlers), "public" routes run after it.
 type AppRouteContext = ApplicationRequestContext & {
 	body?: UnknownRecord;
-	accountRuntime: GeminiAccountRuntime | null;
+	accountPool: AccountPoolService | null;
 };
 
 type AppRoute<P> = {
@@ -204,20 +200,16 @@ const APP_ROUTES: readonly AppRoute<unknown>[] = [
 		access: "public",
 		match: matchExact("/v1/chat/completions"),
 		body: "json",
-		handle: ({ body, cfg, accountRuntime }) =>
-			handleChat(
-				body as UnknownRecord,
-				cfg,
-				createProvider(cfg, accountRuntime),
-			),
+		handle: ({ body, cfg, accountPool }) =>
+			handleChat(body as UnknownRecord, cfg, createProvider(cfg, accountPool)),
 	}),
 	route({
 		method: "POST",
 		access: "public",
 		match: matchExact("/v1/responses"),
 		body: "json",
-		handle: ({ body, cfg, accountRuntime }) =>
-			handleResponses(body, cfg, createProvider(cfg, accountRuntime)),
+		handle: ({ body, cfg, accountPool }) =>
+			handleResponses(body, cfg, createProvider(cfg, accountPool)),
 	}),
 	route({
 		method: "POST",
@@ -225,11 +217,11 @@ const APP_ROUTES: readonly AppRoute<unknown>[] = [
 		match: matchExact("/v1/images/generations"),
 		body: "json",
 		requiresSession: "image",
-		handle: ({ body, cfg, accountRuntime }) =>
+		handle: ({ body, cfg, accountPool }) =>
 			handleImageGenerations(
 				body as UnknownRecord,
 				cfg,
-				createProvider(cfg, accountRuntime),
+				createProvider(cfg, accountPool),
 			),
 	}),
 	route({
@@ -238,12 +230,8 @@ const APP_ROUTES: readonly AppRoute<unknown>[] = [
 		match: matchExact("/v1/images/edits"),
 		when: isMultipartFormRequest,
 		requiresSession: "image",
-		handle: ({ request, cfg, accountRuntime }) =>
-			handleImageEditsMultipart(
-				request,
-				cfg,
-				createProvider(cfg, accountRuntime),
-			),
+		handle: ({ request, cfg, accountPool }) =>
+			handleImageEditsMultipart(request, cfg, createProvider(cfg, accountPool)),
 	}),
 	route({
 		method: "POST",
@@ -251,11 +239,11 @@ const APP_ROUTES: readonly AppRoute<unknown>[] = [
 		match: matchExact("/v1/images/edits"),
 		body: "json",
 		requiresSession: "image",
-		handle: ({ body, cfg, accountRuntime }) =>
+		handle: ({ body, cfg, accountPool }) =>
 			handleImageEdits(
 				body as UnknownRecord,
 				cfg,
-				createProvider(cfg, accountRuntime),
+				createProvider(cfg, accountPool),
 			),
 	}),
 	route({
@@ -264,11 +252,11 @@ const APP_ROUTES: readonly AppRoute<unknown>[] = [
 		match: parseGoogleGenerationPath,
 		body: "json",
 		envelope: "google",
-		handle: ({ body, cfg, accountRuntime }, googleRoute) =>
+		handle: ({ body, cfg, accountPool }, googleRoute) =>
 			handleGoogleGenerate(
 				body as UnknownRecord,
 				cfg,
-				createProvider(cfg, accountRuntime),
+				createProvider(cfg, accountPool),
 				googleRoute as GoogleGenerationRoute,
 			),
 	}),
@@ -392,110 +380,22 @@ async function runApplicationRoute(
 			return routeJsonErrorResponse(matched.envelope, parsed);
 		body = parsed.value;
 	}
-	let accountRuntime: GeminiAccountRuntime | null = null;
+	let accountPool: AccountPoolService | null = null;
 	if (matched.body === "json" || matched.requiresSession) {
-		accountRuntime = getGeminiAccountRuntimeFromEnv(env);
-		if (matched.requiresSession && !accountRuntime)
+		accountPool = getGeminiAccountPoolFromEnv(env);
+		if (matched.requiresSession && !accountPool)
 			return authenticatedSessionRequiredOpenAIResponse(
 				matched.requiresSession,
 			);
 	}
-	const routeContext: AppRouteContext = { ...context, accountRuntime };
+	const routeContext: AppRouteContext = { ...context, accountPool };
 	if (body !== undefined) routeContext.body = body;
 	return matched.handle(routeContext, params);
 }
 
-function routeJsonErrorResponse(
-	envelope: "google" | undefined,
-	parsed: Extract<RouteJsonPostResult, { error: string }>,
-): Response {
-	if (envelope === "google") {
-		return jsonResponse(
-			googleErrorResponseBody(parsed.error, parsed.code, parsed.reason),
-			parsed.status || 400,
-		);
-	}
-	return openAIErrorResponse(
-		parsed.error,
-		parsed.status || 400,
-		parsed.code,
-		parsed.reason,
-	);
-}
-
-async function applicationModelCatalog(
-	context: Pick<ApplicationRequestContext, "env" | "cfg">,
-): Promise<GeminiModelCatalog> {
-	const fallback = buildGeminiModelCatalog([], Date.now());
-	const runtime = getGeminiAccountRuntimeFromEnv(context.env);
-	if (!runtime) return fallback;
-	try {
-		return await runtime.modelCatalog(
-			capabilityFreshAfterMs(
-				context.cfg.gemini_account_capability_ttl_sec,
-				Date.now(),
-			),
-		);
-	} catch (error) {
-		log(context.cfg, `model catalog load failed: ${errorLogSummary(error)}`);
-		return fallback;
-	}
-}
-
 function createProvider(
 	cfg: RuntimeConfig,
-	accountRuntime: GeminiAccountRuntime | null,
+	accountPool: AccountPoolService | null,
 ) {
-	return createGeminiCompletionProvider(cfg, { accountRuntime });
-}
-
-function withAccountPoolAvailability(
-	cfg: RuntimeConfig,
-	env: WorkerEnv,
-): RuntimeConfig {
-	if (!d1BindingFromEnv(env)) return cfg;
-	return { ...cfg, supports_authenticated_session: true };
-}
-
-function authenticatedSessionRequiredOpenAIResponse(
-	reason: GeminiAuthenticatedSessionReason,
-): Response {
-	return openAIErrorResponse(
-		geminiAuthenticatedSessionRequiredMessage(reason),
-		GEMINI_AUTHENTICATED_SESSION_REQUIRED_STATUS,
-		GEMINI_AUTHENTICATED_SESSION_REQUIRED_CODE,
-		reason,
-	);
-}
-
-function isMultipartFormRequest(request: Request): boolean {
-	const contentType = request.headers.get("content-type") || "";
-	return (
-		contentType.split(";", 1)[0]?.trim().toLowerCase() === "multipart/form-data"
-	);
-}
-
-function invalidRuntimeConfigResponse(error: unknown): Response {
-	if (error instanceof RuntimeConfigError) {
-		return jsonResponse(
-			{
-				error: {
-					message: "invalid runtime configuration",
-					code: error.code,
-					setting: error.setting,
-					reason: error.reason,
-				},
-			},
-			500,
-		);
-	}
-	return jsonResponse(
-		{
-			error: {
-				message: "invalid runtime configuration",
-				code: "invalid_runtime_config",
-			},
-		},
-		500,
-	);
+	return createGeminiCompletionProvider(cfg, { accountPool });
 }

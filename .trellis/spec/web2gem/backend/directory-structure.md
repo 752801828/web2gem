@@ -2,34 +2,32 @@
 
 ## Source Layout
 
+- Packaging rule for this package: prefer a section inside an existing aggregate owner over creating a new microfile. Split only when a module exceeds roughly 400–500 LOC *and* has a clearly different change rate from its neighbors, or when layer/cycle rules require a boundary. Architecture checks enforce layers/cycles, not one-function-per-file ownership.
+
 - The root `package.json` / `src/` tree is the default `web2gem` package. The Cloudflare Worker build and architecture guard are scoped to this root package unless a task explicitly expands the scope.
-- `src/app.ts` is the application composition root. It owns the declarative `APP_ROUTES` table (route matching, admin-exempt vs public ordering, per-route JSON body policy and error envelope, session requirements), CORS wrapping, the public auth gate, provider composition, and top-level error conversion using Web-standard `Request` / `Response` types. Adding a route means adding one table entry, not a new dispatch branch.
-- `src/worker-entry.ts` is the default-only production bundle entry used by Wrangler and Docker. It exports only `default { fetch, assertRuntimeConfig }`; raw workerd entry bundles must not expose non-handler named exports.
-- `src/index.ts` is the thin default-only entry used by the harness re-export and local tests. It delegates `fetch` to `handleApplicationRequest` and must not re-export named helpers or protocol route branches.
+- `src/app.ts` is the application composition root. It owns the declarative `APP_ROUTES` table (route matching, admin-exempt vs public ordering, per-route JSON body policy and error envelope, session requirements), CORS wrapping, the public auth gate, provider composition, and top-level error conversion using Web-standard `Request` / `Response` types. Adding a route means adding one table entry, not a new dispatch branch. Pure composition helpers that do not own the route table live in `src/app-support.ts` (model catalog load, pool-availability flag, session-required/invalid-config/JSON-envelope error responses, multipart predicate).
+- `src/index.ts` is the single Worker entry used by Wrangler, Docker, harness re-export, and local tests. It exports only `default { fetch, assertRuntimeConfig }` (no named public-helper barrel); raw workerd entry bundles must not expose non-handler named exports.
 - Named smoke/bench helpers live only in `src/harness-exports.ts`; they are not part of the production Worker surface.
-- `src/http/` owns HTTP boundary concerns. Generic, protocol- and completion-neutral helpers live under `http/core/` (enforced by check:arch), stream framing helpers under `http/stream/`, protocol adapters under `http/openai/` and `http/google/`, and business-aware shared modules at the `src/http/` root: `route-body.ts` (completion-aware JSON body policy) and `generation.ts` (shared prepare/generate orchestration, stage logging, and the `GenerationProtocol` strategy consumed by both adapters).
+- `src/http/` owns HTTP boundary concerns. Generic, protocol- and completion-neutral helpers live under `http/core/` (enforced by check:arch), stream framing helpers under `http/stream/` (`coalescer.ts` for delta batching; `outcome.ts` for shared terminal stream-outcome logging/dispatch used by OpenAI chat/responses and Google stream adapters), protocol adapters under `http/openai/` and `http/google/`, and business-aware shared modules at the `src/http/` root: `route-body.ts` (completion-aware JSON body policy) and `generation.ts` (shared prepare/generate orchestration, stage logging, and the `GenerationProtocol` strategy consumed by both adapters).
 - `src/http/openai/images.ts` owns OpenAI image route orchestration and generation response flow. JSON and multipart image-edit input normalization, upload-size enforcement, and image-part coercion belong in `src/http/openai/images-input.ts`; keep provider calls and response formatting out of that input owner.
-- HTTP protocol adapters import `http/core/*`, `http/stream/*`, and `src/http/*` owner modules directly. There is no `src/http/index.ts` barrel; `src/app.ts` also imports owner modules directly. New generation endpoints run through `runPreparedCompletion`/`generateTextLogged`/`generateRichLogged` with their protocol's `*_GENERATION_PROTOCOL` constant instead of hand-rolling prepare/generate/log/error pipelines.
-- `src/completion/` owns provider-neutral completion contracts and shared business behavior: prompt/context preparation, provider text-generation ports, empty-output handling, stream/tool-sieve event generation, one `CompletionStreamLifecycle` reducer plus terminal outcome classifier, and completion turn finalization. Protocol adapters must not mirror reducer-owned issue/empty/tool-call/policy/count state, and callback-style stream consumption APIs are not part of the contract.
-- `src/promptcompat/` owns the typed `InternalMessage` boundary. `message-model.ts` owns canonical parts, the single raw content-part parser, and explicit prompt/history/latest-input/reasoning projections; `responses-input.ts` parses Responses items directly into that model; `attachment-inputs.ts` projects parsed messages plus request-level attachment channels into `AttachmentPlan`. HTTP adapters parse OpenAI Responses, OpenAI chat, and Google wire shapes once; prompt, history, attachment, and image-generation consumers receive the parsed model instead of re-walking raw content parts.
-- `src/toolcall/` owns tool-call prompt formatting, parsing, policy validation, schema normalization, and streamed sieve state. Import concrete owners such as `toolcall/sieve`, `toolcall/tool-bundle`, `toolcall/policy-openai`, `toolcall/policy-google`, `toolcall/dsml`, or `toolcall/openai-format`; there is no broad compatibility barrel.
-- `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` stays an orchestration layer; `client/same-account-attempt.ts` owns request-local active config, build-label/cookie recovery, retry classification, and the stream output-started gate; `client/same-account-generate.ts` owns the shared same-account attempt-loop shell for `generate` / `generateRich` / `generateStream` (payload/requestId, retry bound, recovery continue, final lastError) and the single `GeminiFileRef` type used by that shell and `client/index.ts`; mode-specific parse/hydration/stream bodies stay in `index.ts`, which also owns the private empty-upstream resolver shared by those three modes (fixed order: data-analysis empty → large-prompt empty → build-label continue → mode-specific final empty error); `client/stream-consumer.ts` owns WRB reader pulls, streaming UTF-8 decode, line buffering, fatal-first parsing, and bounded diagnostics. Model headers live in `client/model-headers.ts`, WRB envelopes/parts/images/cumulative delta extraction live in concrete `client/parse-*.ts` owners, and no catch-all parser barrel exists.
+- HTTP protocol adapters import `http/core/*`, `http/stream/*`, and `src/http/*` owner modules directly. There is no `src/http/index.ts` barrel and no `src/http/openai/index.ts` barrel; `src/app.ts` imports OpenAI route owners (`http/openai/chat`, `http/openai/responses`, `http/openai/images`) and other owners directly. New generation endpoints run through `runPreparedCompletion`/`generateTextLogged`/`generateRichLogged` with their protocol's `*_GENERATION_PROTOCOL` constant instead of hand-rolling prepare/generate/log/error pipelines.
+- `src/completion/` owns completion contracts and shared business behavior used by the Gemini adapter: prompt/context preparation, the completion-provider layer seam (`ports.ts`), empty-output handling, stream/tool-sieve event generation, one `CompletionStreamLifecycle` reducer plus terminal outcome classifier, and completion turn finalization. There is no `src/completion/index.ts` barrel — import concrete owners (`ports`, `stream-events`, `turn`, `prepare`, …). `context.ts` owns OpenAI/Google dialect entries plus `preparePromptWithAttachments` (file-ref group order, attachment notes, pre-upload prompt decisions). `context-files.ts` owns large-context text-file upload orchestration together with threshold/byte-check/failure-message helpers (formerly a separate limits microfile). Image-generation prepare orchestration and package-facing prepare types live in `image-generation.ts`; input extraction into attachment candidates/slots (and extract-local image-input types) lives in `image-generation-extract.ts`. Inline tool-prompt guarding lives in `prepare.ts` (`ensureInlineToolPrompt`). Protocol adapters must not mirror reducer-owned issue/empty/tool-call/policy/count state, and callback-style stream consumption APIs are not part of the contract.
+- `src/promptcompat/` owns the typed `InternalMessage` boundary. `message-types.ts` owns canonical parts/types, `message-parse.ts` owns the single raw content-part parser, and `message-project.ts` owns explicit prompt/history/latest-input/reasoning projections; `responses-input.ts` parses Responses items directly into that model; `attachment-inputs.ts` projects parsed messages plus request-level attachment channels into `AttachmentPlan`. HTTP adapters parse OpenAI Responses, OpenAI chat, and Google wire shapes once; prompt, history, attachment, and image-generation consumers receive the parsed model instead of re-walking raw content parts.
+- `src/toolcall/` owns tool-call prompt formatting, parsing, policy validation, schema normalization, and streamed sieve state as four aggregate owners: `parse.ts` (XML/markdown/syntax-probe/DSML parse, schema normalize, OpenAI/Google tool-call formatting), `sieve.ts` (stream sieve state machine; imports parse helpers), `policy.ts` (OpenAI + Google tool-choice policy parse/validation), and `tool-bundle.ts` (bundle construction, tool meta extraction, prompt instruction/examples including `promptCDATA` / `xmlEscapeAttr`). Import those concrete owners; there is no broad compatibility barrel.
+- `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. Prefer aggregate owners over one-function microfiles: add a section in an existing owner unless a file exceeds roughly 400–500 LOC with a distinct change rate. `gemini/client/index.ts` is the non-stream orchestration layer (`generate` / `generateRich` + non-stream shell) and re-exports `generateStream`; `client/generate-core.ts` owns same-account retry state, shared generate/stream attempt shells, `fetchGeminiStreamGenerate`, page-token append, and empty-upstream resolution (fixed order: data-analysis empty → large-prompt empty → build-label continue → mode-specific final empty error); `client/generate-stream.ts` owns the stream execute body (WRB consume, empty-without-body, `CONTINUE_SAME_ACCOUNT_ATTEMPT`); `client/stream-consumer.ts` owns WRB reader pulls, streaming UTF-8 decode, line buffering, fatal-first parsing, and bounded diagnostics. `client/protocol.ts` owns request URL/payload/header construction, `buildGeminiModelHeaders`, and re-exports `GEMINI_WEB_USER_AGENT` (defined in `gemini/cookies.ts` to avoid import cycles). WRB envelopes/parts/images/cumulative delta extraction live in concrete `client/parse-*.ts` owners (`getNested` / `stringAt` live in `parse-images.ts`); no catch-all parser barrel and no `constants.ts` / `model-headers.ts` microfiles.
 - `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection from `src/attachments/mime.ts` and encoding from `src/attachments/base64.ts`.
-- `src/gemini/accounts/admin-input.ts` owns admin request normalization and validation. `admin.ts` owns account-admin use-case orchestration and depends on capability-specific admin/runtime store contracts.
-- `src/gemini/accounts/domain.ts` is the single owner for account issue/state
-  vocabularies, guards, derived-state rules, and the shared
-  default/minimum/maximum account page limit. Admin input, runtime
-  classification, and D1 summary projection must reuse this owner instead of
-  maintaining parallel status arrays or limit clamps.
-- `src/gemini/accounts/routes.ts` owns capacity-aware route tuples, keys, parsing, capability projection, catalog projection, and priority reconciliation. `pool.ts` is the account facade; lease lifecycle, pure selection, catalog projection, and snapshot transitions live in focused `lease.ts` / `pool-*.ts` siblings.
-- `src/gemini/accounts/store-d1.ts` is the admin repository facade. Account-runtime/capability/route persistence lives in `store-d1-runtime.ts`, positional account insert SQL and row values live in `store-d1-codec.ts`, and admin projections live in `store-d1-admin.ts`; preserve SQL text and bind ordering across these owners.
-- `src/gemini/transport/http.ts` owns the unified upstream HTTP entry. It may choose `cloudflare:sockets` first and fall back to `fetch` only when request semantics are preserved.
-- `src/gemini/transport/index.ts` is the production transport barrel and exports only `httpFetch` and `cancelResponseBody`. Production Gemini client/upload/account modules import that barrel (or `http.ts` equivalents); pool/socket/timeout/byte-queue helpers are not re-exported there.
-- `src/gemini/transport/socket.ts` is the socket transport owner module (not the production barrel). Tests and socket-internal callers import it (and sibling owners under `src/gemini/transport/`) directly.
-- `src/gemini/completion-provider.ts` is the thin Gemini adapter for `src/completion/ports.ts`. Cross-account acquisition/recovery/outcome ordering belongs in `completion-attempts.ts`; request-local upload recipes, aliases, replay, and opaque-reference detection belong in `upload-replay.ts`.
+- `src/gemini/accounts/admin-input.ts` owns all admin request normalization/validation (account create/update/list/bulk, model-route priority bodies, and admin error factories). `admin.ts` is the account-admin service: construction, factories, pool wiring, and inlined create/update/delete/bulk/refresh/routing/import-probe use cases. Admin and pool take one `GeminiAccountStore` (see `types.ts`); do not reintroduce dual Admin/Runtime store ports or optional store methods for partial fakes.
+- `src/gemini/accounts/domain.ts` is the single owner for account issue/state vocabularies, guards, derived-state rules, cookie/hash normalize helpers, outcome classification, and the shared account page limit. Admin input, runtime classification, and D1 summary projection must reuse this owner instead of maintaining parallel status arrays or limit clamps. Shared DTOs and the single `GeminiAccountStore` contract live in `types.ts` (or collocated with dense owners); do not recreate six type-only bags.
+- `src/gemini/accounts/routes.ts` owns capacity-aware route tuples, keys, parsing, capability projection, catalog projection helpers, and priority reconciliation. `pool.ts` is the account facade; `runtime.ts` is factory-only env/D1 bootstrap (`getGeminiAccountPoolFromEnv` → cached `AccountPoolService`); `lease.ts` owns lease lifecycle; `pool-selection.ts` owns pure selection; `pool-snapshot.ts` owns selectable snapshot caching, snapshot transitions, capability-fresh helpers, and catalog/overview glue; `pool-refresh.ts` owns refresh lock, rotation, verification, and observed-cookie writeback.
+- `src/gemini/accounts/store-d1.ts` is the admin repository (overview/CRUD/import orchestration) and implements `GeminiAccountStore` by extending `store-d1-runtime.ts`. `store-d1-runtime.ts` is a single class owning runtime SQL (pool version, selectable list, outcomes, refresh locks/cookie writeback, probes/capabilities, model-route priority). Identity import/upsert batching and insert row builders live in `store-d1-import.ts`; preserve SQL text and bind ordering. Do not re-split runtime SQL into rebind facades or per-method cluster files without a clear second change-rate owner.
+- `src/gemini/transport/http.ts` owns the unified upstream HTTP entry (`httpFetch`, `cancelResponseBody`). It may choose `cloudflare:sockets` first and fall back to `fetch` only when request semantics are preserved. There is no `src/gemini/transport/index.ts` production barrel — production Gemini client/upload/account modules import `transport/http` directly. Pool/socket/timeout/byte-queue helpers stay as sibling owners and are not re-exported through a transport facade.
+- `src/gemini/transport/socket.ts` is the socket transport owner module. Tests and socket-internal callers import it (and sibling owners under `src/gemini/transport/`) directly.
+- `src/gemini/cookies.ts` owns active cookie state, rotation scheduling, observed Set-Cookie writeback, `fetchGoogleCookieRotation`, and the `GEMINI_WEB_USER_AGENT` constant used by Gemini Web requests.
+- `src/gemini/uploads/execute.ts` owns request-local attachment execution. Content-push error factories and file-ref validation live in `uploads/errors.ts` (kept separate so multipart/tokens can share them without an `execute` ↔ `multipart` cycle). There is no `uploads/index.ts` barrel — import `uploads/execute`, `uploads/tokens`, or `uploads/errors` directly.
+- `src/gemini/completion-provider.ts` is the thin Gemini adapter for `src/completion/ports.ts` and the **only** production `CompletionProvider` implementer. Cross-account acquisition, recovery, finalize, and generate/stream/upload loops live in `completion-attempts.ts` (single attempt orchestrator owner). Request-local upload recipes, aliases, replay, and opaque-reference detection belong in `upload-replay.ts`.
 - `src/promptcompat/token-accounting.ts` owns prompt/completion token estimates, counters, and prepared-text accounting. `src/shared/text-metrics.ts` owns only provider-neutral UTF-8 byte, code-point, and continuation-overlap primitives.
 - `src/shared/` must stay leaf-level and provider-neutral. Production code imports concrete owners such as `encoding.ts`, `logging.ts`, `abort.ts`, `errors.ts`, `crypto.ts`, `strings.ts`, `text-metrics.ts`, and `json-schema.ts`; broad `runtime.ts` / `tokens.ts` compatibility barrels do not exist. Generic string selection and JSON-Schema subset validation belong here, while completion-specific structured-output parsing belongs in `src/completion/structured-output.ts`. Gemini SAPISID hashing belongs to `src/gemini/auth.ts`.
-- Media and attachment helpers live under `src/attachments/**`; do not add compatibility shims under `src/shared/`.
+- `src/attachments/**` owns request-local media helpers for Gemini Web uploads (plan/materialize/MIME/base64/refs/notes). Keep it a leaf package consumed by promptcompat, completion, Gemini uploads, and image generation; do not market it as a multi-provider attachment framework, and do not add compatibility shims under `src/shared/`.
 
 ### Attachment owner dependency direction
 
@@ -43,7 +41,7 @@ normalization do not form a cycle.
 Model-detail route matchers must catch `decodeURIComponent` failures and return a
 non-match; malformed encoded IDs must reach the existing not-found response,
 not the generic application 500 handler.
-- `src/admin-ui/html.ts` is the authored compile-time HTML injection boundary; `build-admin-ui.mjs` returns HTML in memory and no generated source directory is tracked. `admin-ui/session.ts` owns browser session cancellation, stale-result guards, feedback, and confirmation lifecycle; `actions.ts` owns account/model/import/edit use cases.
+- `src/admin-ui/html.ts` is the authored compile-time HTML injection boundary; `build-admin-ui.mjs` returns HTML in memory and no generated source directory is tracked. `admin-ui/session.ts` owns browser session cancellation, stale-result guards, feedback, confirmation lifecycle, and local admin error types (`AdminLocalError`); `actions.ts` owns account/model/import/edit use cases. `admin-ui/state.ts` owns signals plus derived `metricSummary` / `hasFilters`. There is no `admin-ui/components/index.ts` barrel — sections import concrete component files.
 - `server/docker-server.mjs` adapts Node HTTP requests to the Worker `fetch` entrypoint. It owns Node header/body/response-stream translation and propagates client disconnects into the Web `Request.signal`; `server/d1-http-binding.mjs` and `server/io.mjs` are its production runtime siblings. Development commands remain under `scripts/`.
 
 ## Scenario: Shared Application Routing Boundary
@@ -55,14 +53,13 @@ Use this contract when adding or moving routes, changing route-level authenticat
 ### 2. Signatures
 
 - `handleApplicationRequest(request, env, executionContext): Promise<Response>` in `src/app.ts` is the shared Web-standard application entrypoint.
-- `src/worker-entry.ts` exposes the production default export with `fetch: handleApplicationRequest` and `assertRuntimeConfig`.
-- `src/index.ts` exposes a default-only `{ fetch: handleApplicationRequest }` for harness/tests.
+- `src/index.ts` exposes the default export with `fetch: handleApplicationRequest` and `assertRuntimeConfig`.
 - `handleDockerRequest(req, res, options)` translates Node HTTP to the Worker `fetch` contract and links disconnects to `Request.signal`.
 
 ### 3. Contracts
 
-- Route matching, CORS, configuration composition, public/admin auth ordering, JSON validation, account-runtime acquisition, protocol dispatch, and sanitized top-level errors have one owner: `src/app.ts`.
-- `src/index.ts` and `src/worker-entry.ts` contain no protocol-specific route branches and expose only their default exports (no named public-helper barrel).
+- Route matching, CORS, configuration composition, public/admin auth ordering, JSON validation, account-runtime acquisition, protocol dispatch, and sanitized top-level errors have one owner: `src/app.ts`. Helper response/catalog utilities used by that owner live in `src/app-support.ts` and must not become a second dispatch root.
+- `src/index.ts` contains no protocol-specific route branches and exposes only its default export (no named public-helper barrel).
 - The Docker adapter delegates to the built Worker entrypoint and owns only platform translation, D1 binding injection, response streaming, and disconnect propagation.
 - Public authentication and request-body validation must finish before any account lease acquisition or D1 account read.
 
@@ -100,8 +97,11 @@ if (req.url === "/v1/models") return sendModels(res);
 #### Correct
 
 ```typescript
-// src/worker-entry.ts
-export default { fetch: handleApplicationRequest };
+// src/index.ts
+export default {
+	fetch: handleApplicationRequest,
+	assertRuntimeConfig,
+};
 ```
 
 ## Provider Ports and Stream Events
@@ -110,22 +110,38 @@ export default { fetch: handleApplicationRequest };
 
 Use the completion provider port when code needs model text generation, request-local attachment resolution, or large-context text-file upload from completion/business logic. This keeps Gemini Web details behind an adapter and prevents completion modules from depending on provider implementation packages.
 
+### Gemini-only provider policy (locked)
+
+This package supports **only** the Gemini Web completion provider.
+
+- Exactly one production implementer is allowed: `createGeminiCompletionProvider` in `src/gemini/completion-provider.ts`, composed in `src/app.ts`.
+- `src/completion/ports.ts` is an **internal layer seam** so `completion/*` and HTTP adapters stay free of Gemini protocol imports. That is **not** permission to grow a multi-provider plugin system.
+- **Forbidden**: a second `CompletionProvider` implementer, provider registry/map, dynamic backend selection by provider kind, multi-provider lifecycle, or expanding the port “for future backends.”
+- **Allowed**: Gemini-specific capability lands in `src/gemini/**` or the Gemini adapter. HTTP Chat/Responses/Google surface compatibility remains; those are protocol adapters, not alternate completion providers.
+- Treating a second provider as a natural extension is a **policy violation**. Refuse or redesign instead of adding scaffolding.
+
 ### 2. Signatures
 
+- `CompletionProvider` is a required structural surface for the single Gemini adapter: `supportsAuthenticatedSession`, `resolveModel`, `generateText`, `generateRich`, `streamText`, `resolveAttachments`, `uploadTextFile`, and `dispose`.
 - `CompletionProvider.generateText(input)` returns final text.
+- `CompletionProvider.generateRich(input, options)` returns text plus generated images for image routes.
 - `CompletionProvider.streamText(input, options)` returns provider text deltas as `AsyncIterable<string>`. Provider adapters normalize loose upstream chunks before they cross the port.
 - `CompletionProvider.resolveAttachments(plan)` accepts a provider-neutral attachment plan and returns provider file references plus request-local dropped-attachment notes.
 - `CompletionProvider.uploadTextFile(text, filename)` returns a provider file reference for large context attachment.
+- `CompletionProvider.resolveModel(name, defaultName)` resolves static/dynamic models through the Gemini account pool when present.
+- `CompletionProvider.dispose()` releases any request-scoped account lease state.
+- `resolveCompletionModel(provider, name, defaultName)` always delegates to `provider.resolveModel`.
 - `CompletionTextInput.fileRefs` is `FileRef[] | null | undefined`; completion and HTTP modules should not pass untyped provider file payloads through this port.
 - `streamPlainCompletionEvents` and `streamToolSieveCompletionEvents` convert provider deltas into explicit completion events. Google tool streaming reuses the shared sieved-text loop with its protocol-specific tail finalizer.
 
 ### 3. Contracts
 
-- `src/app.ts` is the composition root: create the concrete Gemini provider there and pass it into HTTP handlers.
+- `src/app.ts` is the composition root: obtain `AccountPoolService | null` via `getGeminiAccountPoolFromEnv`, create `createGeminiCompletionProvider(cfg, { accountPool })`, and pass that provider into HTTP handlers.
 - HTTP handlers may depend on completion ports/events, but must not call `gemini/client` or `gemini/uploads`.
 - Completion modules may depend on prompt compatibility, concrete tool-call owners, shared, config, and model types, but not `src/gemini/**`.
+- Ports remain an internal Gemini-only layer seam. Do not add optional method stubs for missing backends, provider registries, or a second implementer.
 - Stream adapters should format protocol-specific SSE frames from completion events rather than coordinating provider callbacks directly.
-- Context preparation should keep request-local attachment resolution and large-context text upload behind `CompletionProvider.resolveAttachments` and `CompletionProvider.uploadTextFile`. Shared prompt/file-reference sequencing belongs in `src/completion/context.ts`; OpenAI and Google branches should only supply protocol-specific prompt conversion and file-reference ordering.
+- Context preparation should keep request-local attachment resolution and large-context text upload behind `CompletionProvider.resolveAttachments` and `CompletionProvider.uploadTextFile`. Shared prompt/file-reference sequencing and attachment orchestration belong in `src/completion/context.ts`; large-context upload thresholds and orchestration belong in `src/completion/context-files.ts`. OpenAI and Google dialect entries in `context.ts` only supply protocol-specific prompt conversion and file-reference ordering.
 
 ### 4. Validation & Error Matrix
 
@@ -136,7 +152,7 @@ Use the completion provider port when code needs model text generation, request-
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `src/app.ts` creates `createGeminiCompletionProvider(cfg)` and passes it to `handleChat`.
+- Good: `src/app.ts` creates `createGeminiCompletionProvider(cfg, { accountPool })` and passes it to `handleChat`.
 - Base: completion consumes `CompletionProvider.streamText(...)` through completion event helpers.
 - Bad: a completion module imports `../gemini/client`, or HTTP stream code calls provider delta callbacks directly.
 
@@ -175,17 +191,19 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 
 - `src/attachments/types.ts` owns `AttachmentPlan`, `AttachmentCandidate`, `AttachmentDrop`, and `AttachmentUploadResult`.
 - `src/attachments/plan.ts` owns `createAttachmentPlan({ images, files, existingFileRefs, maxFiles })`, `mergeAttachmentPlans(...)`, candidate ordering, max-count enforcement, and request-local candidate normalization.
-- `src/promptcompat/message-model.ts` owns `InternalMessage`, `MessagePart`, `parseOpenAIMessages(...)`, and the single `parseMessagePart(...)` raw content-part walker.
-- `src/promptcompat/attachment-inputs.ts` owns `attachmentInputsFromMessages(...)`, `attachmentPlanFromMessages(...)`, `openAIAttachmentPlanFromRequest(...)`, and request-level `attachments`, `files`, `ref_file_ids`, `file_ids`, and Responses `input` reference-channel planning. Consumers import this concrete owner directly; `message-model.ts` does not re-export attachment planning.
+- `src/promptcompat/message-types.ts` owns `InternalMessage`, `MessagePart`, part/tool-call types, `MessageProjectionMode`, `createInternalMessage(...)`, `normalizeMessageRole(...)`, and `isTextPartType(...)`.
+- `src/promptcompat/message-parse.ts` owns `parseOpenAIMessages(...)`, `parseMessageContent(...)`, the single `parseMessagePart(...)` raw content-part walker, `parseToolCallArguments(...)`, and `flattenText(...)` used while materializing wire content.
+- `src/promptcompat/message-project.ts` owns typed-message projections: `projectMessageText(...)`, `renderMessageBody(...)`, and `latestUserInputText(...)`. It must not reintroduce a second raw content-part walker.
+- `src/promptcompat/attachment-inputs.ts` owns `attachmentInputsFromMessages(...)`, `attachmentPlanFromMessages(...)`, `openAIAttachmentPlanFromRequest(...)`, and request-level `attachments`, `files`, `ref_file_ids`, `file_ids`, and Responses `input` reference-channel planning. Consumers import this concrete owner directly; message type/parse/project modules do not re-export attachment planning.
 - `src/attachments/refs.ts` owns recognized `file_id`, `fileId`, `file_ref`, `fileRef`, `ref`, and context-sensitive `id` extraction, naming, and dedupe keys. Raw message walking remains in `promptcompat`; completion may retain an opaque-object fallback after recognized-key lookup.
 - `src/attachments/notes.ts` owns dropped-attachment records and deterministic prompt notes.
 - `CompletionProvider.resolveAttachments(plan)` resolves request-local candidates to provider file refs and prompt notes.
 - `CompletionProvider.uploadTextFile(text, filename)` uploads required large-context text files.
-- `src/gemini/uploads/execute.ts` orchestrates request-local attachment execution; `attachment-execution-state.ts` owns limits, weighted scheduling, completed/pending/inline dedupe and counters; `attachment-candidate.ts` owns materialization plus authenticated/anonymous policy; `attachment-results.ts` owns error mapping, ordered partitioning, prompt notes, usage and stage telemetry.
+- `src/gemini/uploads/execute.ts` owns request-local attachment execution end-to-end: limits, weighted scheduling, dedupe/pending maps, candidate materialization (authenticated upload vs anonymous inline), result aggregation, prompt notes, usage, and stage telemetry. Dense protocol helpers stay in `multipart.ts` and `tokens.ts`; shared content-push error factories stay in `errors.ts`. Production callers import those owners directly (no `uploads/index.ts` barrel).
 
 ### 3. Contracts
 
-- `src/attachments/**` is provider-neutral and may depend on `src/shared/**`, but must not import `src/gemini/**`, HTTP adapters, or completion modules.
+- `src/attachments/**` is a request-local media leaf for Gemini Web uploads and may depend on `src/shared/**`, but must not import `src/gemini/**`, HTTP adapters, or completion modules.
 - Implementation modules import Base64 helpers from `src/attachments/base64.ts`, MIME/filename helpers from `src/attachments/mime.ts`, and upload-input normalization from `src/attachments/input.ts`; there is no broad attachment compatibility facade.
 - `src/completion/**` must call provider ports for upload and must not import Gemini upload modules.
 - Chat/Responses image generation parses messages at the HTTP edge and passes `readonly InternalMessage[]` into completion. Completion image preparation must not accept or dispatch raw content-part arrays.
@@ -265,14 +283,14 @@ Current enforced rules include:
 
 **Context**: A former `src/toolcall/index.ts` barrel hid which parsing, policy, formatting, schema, or sieve owner a caller depended on and made refactors harder to review.
 
-**Decision**: Delete the barrel and require every production, public, harness, and test surface to import the concrete owner. The architecture guard rejects exact bare-barrel imports while allowing imports such as `../toolcall/openai-format`.
+**Decision**: Delete the barrel and require every production, public, harness, and test surface to import the concrete owner. The architecture guard rejects exact bare-barrel imports while allowing imports such as `../toolcall/parse` or `../toolcall/policy`.
 
 **Example**:
 
 ```typescript
 // Good
-import { validateRequiredToolCalls } from "../toolcall/policy-openai";
-import type { ParsedToolCall } from "../toolcall/dsml";
+import { validateRequiredToolCalls } from "../toolcall/policy";
+import type { ParsedToolCall } from "../toolcall/parse";
 
 // Bad
 import { validateRequiredToolCalls, type ParsedToolCall } from "../toolcall";
@@ -280,7 +298,7 @@ import { validateRequiredToolCalls, type ParsedToolCall } from "../toolcall";
 
 ## Generated Files
 
-Do not hand-edit `dist/worker.js`; it is generated from `src/worker-entry.ts` by `scripts/build.mjs`. The root `worker.js` is a legacy shim.
+Do not hand-edit `dist/worker.js`; it is generated from `src/index.ts` by `scripts/build.mjs`. The root `worker.js` is a legacy shim.
 
 ## Scenario: Gemini Upstream Transport Facade
 
@@ -391,11 +409,10 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
 
 ### 2. Signatures
 
-- `src/worker-entry.ts` is the production Worker entrypoint and exports only `default { fetch, assertRuntimeConfig }`.
-- `src/index.ts` is a default-only harness/test entry (`{ fetch }`) and must not re-export named helpers.
+- `src/index.ts` is the production Worker entrypoint and exports only `default { fetch, assertRuntimeConfig }`.
 - `src/harness-exports.ts` is the smoke/bench harness entrypoint. It re-exports the default fetch handler plus only the internal helpers `scripts/smoke.mjs` and `scripts/bench.mjs` consume; it is never imported by `src/index.ts`, unit tests, or production code.
 - `scripts/build.mjs` emits:
-  - `dist/worker.js` from `src/worker-entry.ts` (always)
+  - `dist/worker.js` from `src/index.ts` (always)
   - `dist/harness.js` from `src/harness-exports.ts` (only with `--harness-bundle` or `BUILD_HARNESS_BUNDLE`)
 - `pnpm check:size` builds `dist/worker.js` and gates its level-9 gzip size
   through `scripts/check-bundle-size.mjs`; the default gzip ceiling is 3 MiB and
@@ -408,7 +425,7 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
 
 - Unit tests import internal helpers straight from their owner module (e.g. `import { buildPayload } from "../../src/gemini/client/protocol"`); there is no hand-maintained internal-export barrel. `pnpm unit` is plain `vitest run` with no pre-build.
 - A helper that only smoke/bench needs is added to `src/harness-exports.ts`. Keep that list minimal — it exists only so the two Node harness scripts can load one bundle.
-- Do not add named re-exports or `export * from "./harness-exports"` (or any test/harness surface) to `src/index.ts` or `src/worker-entry.ts`.
+- Do not add named re-exports or `export * from "./harness-exports"` (or any test/harness surface) to `src/index.ts`.
 - Smoke tests import the production bundle for public exports and health checks, and the harness bundle for internal compatibility checks, and must assert that representative internal helpers are absent from the production bundle.
 - Bundle-size output reports raw bytes, gzip bytes, the configured gzip ceiling,
   and remaining headroom. Raw bundle bytes are observational and are not the
@@ -426,9 +443,9 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
 ### 5. Good/Base/Bad Cases
 
 - Good: a unit test imports the helper it needs directly from the owner module under `src/`.
-- Base: production package surface is the worker-entry default only; smoke/bench named helpers live only in harness-exports.
+- Base: production package surface is the `src/index.ts` default only; smoke/bench named helpers live only in harness-exports.
 - Bad: recreate a catch-all internal-export barrel so tests can import everything from one module.
-- Bad: import a harness/test surface from `src/index.ts` or `src/worker-entry.ts` to make a test pass.
+- Bad: import a harness/test surface from `src/index.ts` to make a test pass.
 - Bad: make smoke validate only the harness bundle; that misses production export leaks and route wiring regressions.
 - Bad: gate raw bundle bytes with the legacy `BUNDLE_SIZE_LIMIT_BYTES`; release
   size is the compressed artifact budget.
@@ -437,7 +454,7 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
 
 - Run `pnpm build` after changing build entrypoints.
 - Run `pnpm unit` after changing any file under `tests/unit/` or a helper's exports.
-- Run `pnpm smoke` after changing `src/worker-entry.ts`, `src/index.ts`, `src/harness-exports.ts`, `scripts/build.mjs`, or `scripts/smoke.mjs`.
+- Run `pnpm smoke` after changing `src/index.ts`, `src/harness-exports.ts`, `scripts/build.mjs`, or `scripts/smoke.mjs`.
 - Run `pnpm check:arch` after adding imports between source layers.
 - Run `pnpm check:size` after changing build inputs or runtime dependencies.
 
@@ -493,6 +510,73 @@ timers, or concurrency coordination into reusable test support.
   startup cost per file, and tests must still restore every mutable global or
   module owner they touch.
 
+#### Windows note: Vitest `runner.config` undefined under `threads` / `forks`
+
+This is an **environment / tool-chain** failure, not a product-code defect. It is
+intermittent and only appears when Windows loads `@vitest/runner` twice.
+
+**Symptom**
+
+- Every suite fails at the first `describe(...)` with:
+  `TypeError: Cannot read properties of undefined (reading 'config')`
+- Stack points at the test file's `describe` line; no tests run.
+- Minimal repro: a file with only `describe("x", () => { test("y", () => {}) })`
+  still fails.
+- `pool: "vmThreads"` often still works; `threads` / `forks` fail.
+
+**Root cause**
+
+- `@vitest/runner` keeps suite-collection state in **module-level** variables
+  (`runner`, `defaultSuite`, `collectorContext`).
+- `collectTests` calls `clearCollectorContext(file, runner)` on one module
+  instance; the test file's `describe()` reads `runner` from another.
+- On Windows, Node ESM treats these as distinct modules when the same path is
+  imported under different drive-letter casing, e.g.:
+  - `file:///d:/Repo/gemini/node_modules/.../@vitest/runner/...`
+  - `file:///D:/Repo/gemini/node_modules/.../@vitest/runner/...`
+- The ESM module cache is case-sensitive for `file://` URLs even though the NTFS
+  path is case-insensitive. Git Bash / some shells commonly report
+  `process.cwd()` as `d:\...` while other tools use `D:\...`.
+
+**When it does *not* fail**
+
+- Drive letter casing is consistent for the whole process tree (typical
+  PowerShell / CMD session started from `D:\...`).
+- Historical “Node 26 + Vitest worked for months” is expected under consistent
+  cwd casing; the bug is not “Node 26 broke Vitest”.
+
+**Local recovery (no repo change required)**
+
+1. Confirm cwd casing:
+   `node -e "console.log(process.cwd())"`
+2. Re-enter the repo with a consistent drive letter (prefer uppercase on
+   Windows), then rerun:
+   - PowerShell: `Set-Location D:\Repo\gemini; pnpm unit`
+   - Git Bash: `cd /d/Repo/gemini` may still yield `d:\...`; if threads fail,
+     run from PowerShell/CMD with `D:\...` instead, or open the terminal from a
+     path that already uses `D:`.
+3. Sanity check: after cwd is `D:\...`,
+   `pnpm vitest run tests/unit/shared/strings.test.ts --pool=threads` should
+   collect and pass.
+
+**What not to do by default**
+
+- Do not rewrite production code or flip the whole suite to `vmThreads` solely
+  for this symptom.
+- Do not add a permanent `scripts/run-vitest.mjs` drive-normalization wrapper
+  unless the team explicitly accepts that operational patch.
+- Do not treat this as a test-isolation failure in app code (the matrix row
+  below still applies to true shared-state bugs).
+
+**Optional durable fixes (only if the team chooses to own them later)**
+
+- Upstream: Vitest should not store collector `runner` only in module scope when
+  dual-loading is possible; sharing via `globalThis` / a single resolved id is
+  the real library fix.
+- Repo-local last resorts (document before landing): pnpm `patchedDependencies`
+  on `@vitest/runner`, or a thin unit entry that re-spawns with normalized cwd.
+  Prefer upstream or local cwd hygiene over long-lived wrappers.
+
 ### 3. Contracts
 
 - A test file has one primary observable seam and one fixture lifecycle. Mirror
@@ -526,6 +610,10 @@ timers, or concurrency coordination into reusable test support.
 - Thread-pool execution fails while fork-pool execution passes -> identify the
   process-global assumption and restore or isolate that owner; do not silently
   switch the whole suite back to forks.
+- All suites fail at `describe` with `Cannot read properties of undefined
+  (reading 'config')` on Windows under `threads`/`forks` -> first check
+  `process.cwd()` drive-letter casing (`d:\` vs `D:\`) and the Windows note
+  above; do not rewrite product tests for this toolchain dual-load.
 - A provider/socket/store double accepts an unconfigured call -> make the
   double fail at that interaction before accepting the test.
 - A test imports a compatibility projection or private mutable value instead of
@@ -676,7 +764,7 @@ Use this contract when changing test coverage commands, CI quality gates, or the
 - Coverage thresholds are regression floors, not aspirational 100% targets. No directory or aggregate threshold should be 100%; stable areas should normally retain 2–5 percentage points of measured headroom.
 - The gate ledger is intentionally small: four global gates plus critical-path gates for high-risk owners (`src/completion`, `src/gemini/accounts`, `src/gemini/completion-provider.ts`, `src/gemini/transport`, `src/http/openai`, `src/http/google`, `src/promptcompat`, `src/toolcall`). Do not reintroduce a per-file gate for every module; the global gate is the default floor.
 - Generated coverage output belongs under `coverage/` and must stay git-ignored.
-- Do not change `src/worker-entry.ts`, `src/index.ts`, or `wrangler.jsonc` to make coverage work.
+- Do not change `src/index.ts` or `wrangler.jsonc` to make coverage work.
 
 ### 4. Validation & Error Matrix
 
@@ -744,15 +832,15 @@ Use this contract when changing non-streaming tool-call parsing, streamed tool-c
 
 ### 2. Signatures
 
-- `src/toolcall/syntax-probe.ts` owns high-confidence syntax detection helpers:
+- `src/toolcall/parse.ts` owns markup/DSML parse plus high-confidence syntax detection helpers used for non-streaming gating and by the stream sieve:
   - `containsToolMarkupSyntax(text)`
   - `findToolCallSyntaxCandidateStart(text)`
   - `isPartialToolCallSyntaxPrefix(text)`
   - `hasClosedToolCallsSyntax(text)`
   - `toolCallSieveSafeTailLength(text)`
   - `normalizeToolMarkupConfusables(text)`
-- `src/toolcall/dsml.ts` imports `containsToolMarkupSyntax` / `findToolCallSyntaxCandidateStart` from the syntax-probe owner for non-streaming parse gating; it does not re-export legacy helper aliases.
-- `src/toolcall/sieve.ts` consumes `syntax-probe.ts` directly and owns stream buffer state transitions.
+  - `parseToolCalls` / `parseDSMLToolCallsDetailed` and OpenAI/Google format helpers
+- `src/toolcall/sieve.ts` imports parse helpers and owns stream buffer state transitions.
 
 ### 3. Contracts
 
@@ -814,8 +902,7 @@ Use this contract when changing OpenAI Chat, OpenAI Responses, or Google-compati
 
 ### 2. Signatures
 
-- `src/toolcall/tool-meta.ts` owns shared extraction helpers such as `extractToolMeta` and protocol conversion helpers; production consumers use `createToolBundle(...).defs`.
-- `src/toolcall/tool-bundle.ts` owns request-scoped reuse through `createToolBundle(toolsRaw)` and `filterToolBundleByPolicy(bundle, policy)`.
+- `src/toolcall/tool-bundle.ts` owns shared extraction helpers such as `extractToolMeta`, request-scoped reuse through `createToolBundle(toolsRaw)` / `filterToolBundleByPolicy(bundle, policy)`, and prompt instruction/example builders; production consumers use `createToolBundle(...).defs`.
 - Prompt builders receive compact tool definitions shaped as `{ name, description, parameters }`.
 - Google-compatible filtering may return normalized OpenAI-style function tools for downstream prompt/schema parsing.
 

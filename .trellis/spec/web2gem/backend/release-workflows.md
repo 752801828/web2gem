@@ -726,7 +726,7 @@ upgrading an existing one-click deployment.
 - Keep one artifact builder: Wrangler runs the custom command before processing
   `dist/worker.js` during dev/deploy/types, while Docker and release checks run
   the same `scripts/build.mjs` output directly.
-- The production esbuild entry is `src/worker-entry.ts` and exports only the
+- The production esbuild entry is `src/index.ts` and exports only the
   default handler. Named diagnostic helpers stay in `dist/harness.js`; workerd
   rejects non-handler named module exports such as `VERSION`.
 - Do not put D1 database IDs in Deploy Button secret templates or GitHub

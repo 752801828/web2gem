@@ -93,7 +93,7 @@ production owner contracts:
   status, refresh-attempt, and timestamp fields; optional test overrides use
   `Partial<GeminiAccountRow>`.
 - Ordered runtime scripts are a discriminated `RuntimeCall` union derived from
-  `GeminiAccountRuntimeStore`; each method keeps its production argument tuple
+  `GeminiAccountStore`; each method keeps its production argument tuple
   and awaited result type.
 - Account-pool tests pass a complete `RuntimeConfig` fixture. The neutral
   `TestRuntimeConfig` helper is intentionally partial and must not be widened
@@ -148,12 +148,32 @@ ordered runtime scripts remain in each test. Bad: a universal request/router
 fake replaces visible status, frame, or payload assertions merely to shorten a
 suite.
 
+### Behavior-contract tests
+
+New and refactored tests must pin **observable behavior**, not internal packaging:
+
+- Prefer asserting HTTP status/body/headers, SSE frames, domain outcomes, public
+  owner APIs used by production, and stable error codes/messages.
+- Do **not** add tests whose sole purpose is pinning private helper names, internal
+  file ownership, or “this logic must live in file X.”
+- When packaging collapses a microfile into an aggregate owner, rehome test imports
+  onto the new public owner. Do not restore a deleted microfile only to satisfy a
+  test path.
+- Existing high-value contract suites stay; do not mass-delete coverage merely to
+  reduce file count. Redirect is policy + rehome, not a full suite rewrite.
+- Align with the Gemini-only provider policy: tests may fake `CompletionProvider`
+  at the port boundary, but must not introduce multi-provider registries or second
+  production implementers.
+
 ### Production export surface and test-only hooks
 
-- Production barrels re-export only what production modules import. Examples:
-  `src/gemini/transport/index.ts` exports `httpFetch` + `cancelResponseBody`;
-  `src/http/openai/index.ts` exports the route handlers `app.ts` needs;
-  `src/gemini/uploads/index.ts` exports production upload APIs only.
+- Prefer concrete owner imports over pure re-export barrels. Production code
+  imports `src/gemini/transport/http.ts` (`httpFetch` + `cancelResponseBody`),
+  OpenAI route owners under `src/http/openai/*`, and `src/gemini/uploads/execute.ts`
+  / `tokens.ts` / `errors.ts` directly. Do not reintroduce deleted ceremonial
+  barrels (`http/openai/index.ts`, `completion/index.ts`, `gemini/transport/index.ts`,
+  `gemini/uploads/index.ts`, `admin-ui/components/index.ts`) without a documented
+  layer reason.
 - Do not re-export shared helpers through adapter/core barrels when consumers
   already import the owner (`http/core/json` must not re-export `shared/json`).
 - Module-private helpers used only inside their defining file stay non-exported.
@@ -170,7 +190,7 @@ suite.
   exercise the wrapper shape, not import the private helper.
 - `*ForTest` / `_set*ForTest` hooks may remain on owner modules for unit
   isolation of module-level caches or connect injection. They must not appear on
-  production barrels or the Worker default entry (`src/worker-entry.ts`). The
+  production barrels or the Worker default entry (`src/index.ts`). The
   smoke / bench harness may re-export symbols it actually calls.
 - Context attachment filenames (`message.txt`, `tools.txt`) are owner constants,
   not `CONFIG_SPEC` / Worker binding keys. Prefer constants over env knobs when
