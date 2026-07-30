@@ -1,165 +1,179 @@
-# Local SQLite Docker Storage Design
+# Docker-Only SQLite Account Pool Design
 
 ## Goal
 
-Make the `gemini-account-pool` edition fully self-hostable on one machine in one Docker container, with multiple Gemini accounts persisted locally and no Cloudflare dependency.
+Convert the `gemini-account-pool` fork into a Docker-only, single-host service with local SQLite persistence and no Cloudflare code, service, account, token, deployment path, or build dependency.
 
-The normal deployment flow remains:
+The supported deployment flow is:
 
 ```powershell
 Copy-Item .env.docker.example .env
 docker compose up -d --build
 ```
 
-Recreating or updating the container must preserve account-pool data in a Docker volume.
+The service must manage multiple Gemini accounts and retain them when its container is replaced.
 
 ## Scope
 
-This design covers the Docker runtime only. It adds a local SQLite storage driver while retaining the existing Cloudflare D1 HTTP driver as an explicitly selected compatibility option. The Cloudflare Workers deployment and its native `GEMINI_DB` binding remain unchanged.
+The target is one machine running one web2gem container. The container owns one SQLite connection and stores its database in a named Docker volume. Multiple containers sharing a database are outside scope.
 
-The deployment target is a single host running a single web2gem container. Multi-container replicas sharing one SQLite file are outside scope.
+Cloudflare compatibility is intentionally removed rather than retained behind a flag. This includes Workers deployment, Wrangler, D1 HTTP storage, Cloudflare runtime types, `cloudflare:sockets`, Deploy Button content, and upstream synchronization that would restore those surfaces.
 
-## Selected Approach
+## Selected Architecture
 
-Use Node's built-in SQLite support in the Docker runtime and adapt it to the existing `D1DatabaseLike` contract.
+The production process has four layers:
 
-This is preferred over PostgreSQL because the requested topology does not need a second service or distributed concurrency. It is preferred over running Miniflare as a D1 emulator because direct SQLite has fewer runtime layers and a clearer production persistence model.
+1. A Node HTTP adapter that converts incoming Node requests to standard Fetch API `Request` objects and streams standard `Response` objects back to clients.
+2. A bundled Node application artifact at `dist/app.js` containing the existing routing, authentication, admin UI, account-pool, and Gemini client logic.
+3. A SQLite adapter implementing the application's generic SQL storage contract.
+4. `/data/web2gem.sqlite`, persisted by the named `web2gem-data` Docker volume.
 
-## Runtime Architecture
+The application continues using standard `Request`, `Response`, `Headers`, streams, and `fetch`, all provided by Node 26. It does not use a Worker handler type or any Cloudflare module.
 
-The container contains four relevant layers:
+## Runtime Types and Naming
 
-1. The existing HTTP server and Worker bundle.
-2. The existing Gemini account-pool services and D1-shaped storage contract.
-3. A new local SQLite adapter implementing `prepare`, `bind`, `first`, `all`, `run`, and `batch`.
-4. A SQLite database at `/data/web2gem.sqlite`, backed by a named Docker volume.
+Generated `WorkerBindings` and global Cloudflare types are replaced by repository-owned types:
 
-The application continues to receive the storage object through `env.GEMINI_DB`, so account selection, cooldowns, refresh locks, capability discovery, routing priorities, and the admin API do not require separate storage implementations.
+- `AppEnv` describes supported configuration values and the SQL account database.
+- `ApplicationExecutionContext` exposes only the `waitUntil` behavior used by background account maintenance.
+- `SqlDatabaseLike`, `SqlPreparedStatementLike`, and `SqlResult` replace D1-named storage types.
 
-## Configuration
+Account-store files and public diagnostics use SQL or SQLite terminology. No runtime type depends on `@cloudflare/workers-types`.
 
-Docker uses these settings by default:
+## Storage
+
+Docker always uses SQLite. There is no `STORAGE_DRIVER` switch and no `D1_*` configuration.
+
+The supported storage settings are:
 
 ```dotenv
-STORAGE_DRIVER=sqlite
 SQLITE_PATH=/data/web2gem.sqlite
+SQLITE_BUSY_TIMEOUT_MS=5000
 ```
 
-`STORAGE_DRIVER` accepts:
+At startup the server:
 
-- `sqlite`: open the local database, initialize its schema, and inject the SQLite adapter as `GEMINI_DB`.
-- `d1-http`: retain the previous Docker behavior and require `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN`.
+1. validates and resolves `SQLITE_PATH`;
+2. creates its parent directory when needed;
+3. opens the existing database or creates a new file without replacing data;
+4. enables foreign keys, WAL mode, and the configured busy timeout;
+5. applies the idempotent account-pool schema;
+6. injects the SQL adapter into `AppEnv`;
+7. validates runtime configuration and starts listening.
 
-Unknown storage-driver values are fatal configuration errors. In `sqlite` mode, D1 HTTP variables are not required and are not read. In `d1-http` mode, partial D1 HTTP configuration remains a fatal startup error.
+Opening or migrating the database is fail-closed. A corrupt or incompatible database is preserved and the process exits non-zero.
 
-`.env.docker.example` documents SQLite as the default. `compose.yaml` passes the storage variables, mounts a named volume at `/data`, and provides a health check. The Docker image includes the migration SQL needed for local initialization.
+## SQL Adapter Contract
 
-## Startup and Shutdown
+The adapter provides immutable prepared bindings and these asynchronous application-facing methods:
 
-In SQLite mode, startup performs these steps before listening on the HTTP port:
+- `prepare(sql)`;
+- `bind(...values)`;
+- `first(columnName?)`;
+- `all()`;
+- `run()`;
+- `batch(statements)`.
 
-1. Validate and resolve `SQLITE_PATH`.
-2. Create its parent directory when necessary.
-3. Open the database without replacing an existing file.
-4. Enable foreign keys, WAL journal mode, and a busy timeout.
-5. Execute the current idempotent account-pool migration.
-6. Inject the adapter as `GEMINI_DB`.
-7. Validate the existing runtime configuration and start the HTTP server.
+It normalizes Node SQLite results to `{ results, success, meta }`. Mutation metadata includes compatible change counts. `RETURNING` rows remain available to account import logic.
 
-If opening the database or applying the migration fails, startup exits non-zero. It does not fall back to anonymous-only operation and does not delete, rename, or recreate the database.
+`batch()` accepts statements from the same database only, executes them in input order inside one transaction, and rolls back the complete batch on any failure. Error messages identify the operation class but never contain SQL bind values, cookies, API keys, or admin keys.
 
-On `SIGTERM` or `SIGINT`, the runtime stops accepting HTTP connections, waits for the server to close, then closes the SQLite connection. Repeated shutdown signals must not run cleanup twice.
+## Network Transport
 
-## SQLite Adapter Contract
+Gemini upstream traffic always uses Node's standard `fetch`. The `cloudflare:sockets` dynamic import, raw socket selection, socket configuration, and socket-only benchmarks/tests are removed.
 
-Prepared statements are immutable from the caller's perspective: `bind()` returns a statement object carrying the bound values. The adapter normalizes SQLite rows and metadata into the existing D1-shaped result:
+Removing the socket path does not change the current Docker behavior because Docker already configured it off. Retry, timeout, streaming, upload, and response parsing behavior continue through the standard HTTP transport.
 
-```text
-{ results, success, meta }
-```
+## Build and Package Changes
 
-`first(columnName)` returns the first row, the named column value, or `null`. `all()` returns all rows. `run()` returns success and change metadata without exposing SQL values.
+The build emits `dist/app.js` for Node 26 instead of `dist/worker.js` for a Worker runtime. The Docker image contains:
 
-`batch()` accepts only statements created by the same adapter. It executes them in one transaction and returns results in input order. Any statement failure rolls back the complete batch. An empty batch returns an empty array.
+- `dist/app.js`;
+- the Node HTTP server adapter;
+- the SQLite adapter;
+- the account-pool migration.
 
-The adapter records change counts in the metadata fields already accepted by the account store. Errors may identify the operation class but must not include bound values, cookies, API keys, admin keys, or D1 tokens.
+The following Cloudflare-specific surfaces are removed:
 
-## Data Durability and Concurrency
+- `wrangler.jsonc`;
+- `worker-configuration.d.ts`;
+- `.dev.vars.example` and the Worker-only secret template;
+- Wrangler deploy, D1 migration, and Worker-type scripts;
+- `wrangler` and `@cloudflare/workers-types` dependencies;
+- D1 HTTP server adapter and configuration;
+- Cloudflare Deploy Button documentation and assets;
+- Cloudflare socket transport selection;
+- the upstream sync workflow that would overwrite the Docker-only fork.
 
-SQLite runs with:
-
-- foreign keys enabled;
-- WAL journal mode;
-- a bounded busy timeout;
-- transactional batches.
-
-These settings support concurrent requests inside one Node process while keeping writes serialized safely. The named Docker volume stores the database and its SQLite companion files, so container replacement does not remove account data.
-
-The project does not claim support for multiple containers writing to the same SQLite volume. Scaling beyond one container requires a separate design using a network database.
-
-## Error Handling
-
-- An invalid or unwritable database path is a fatal startup error.
-- A corrupt database is reported and preserved for recovery; the runtime never silently creates a replacement at the same path.
-- Migration failure is fatal and preserves the database.
-- Lock contention waits up to the configured busy timeout, then returns a sanitized storage error through the existing request error boundary.
-- Batch failures roll back the transaction.
-- Logs never include SQL bind values or stored Gemini credentials.
-- Health checks fail until storage initialization and HTTP startup complete.
+The generic GitHub quality workflow remains but is updated to test the Docker-only project without origin-specific Cloudflare gates.
 
 ## Docker Deployment
 
-`compose.yaml` builds the checked-out fork locally by default for this self-hosted edition, uses `restart: unless-stopped`, maps the configured port, and mounts a named volume such as `web2gem-data` at `/data`.
+`compose.yaml`:
 
-The effective user workflow is:
+- builds the checked-out source locally;
+- uses `restart: unless-stopped`;
+- maps `${PORT:-52389}` on the host and container;
+- mounts `web2gem-data` at `/data`;
+- passes SQLite and application variables from `.env`;
+- reports healthy only after the root health route responds successfully.
 
-```powershell
-Copy-Item .env.docker.example .env
-# Set ADMIN_KEY and, for shared API access, API_KEYS.
-docker compose up -d --build
-```
+`.env.docker.example` contains no Cloudflare or D1 settings. Users set a strong `ADMIN_KEY` and optionally set `API_KEYS` for shared API access.
 
-No Cloudflare account, D1 database, or Cloudflare API token is required in SQLite mode.
+## Shutdown and Durability
+
+On `SIGTERM` or `SIGINT`, the process stops accepting requests, closes the HTTP server, and closes SQLite once. WAL companion files remain in the same Docker volume.
+
+Container replacement does not delete the named volume. Removing the volume is an explicit destructive operation and is not part of normal update instructions.
+
+## Error Handling
+
+- Invalid or unwritable SQLite paths are fatal startup errors.
+- Migration failures are fatal and preserve the database.
+- Corrupt databases are never silently replaced.
+- Lock contention waits for the configured timeout, then returns a sanitized storage error.
+- Transaction failures roll back all batch statements.
+- Runtime logs never include stored Gemini credentials or SQL parameters.
+- The health check fails until storage initialization and HTTP startup complete.
+
+## Documentation
+
+The English and Chinese READMEs describe only Docker deployment, local SQLite persistence, account import, API authentication, update commands, backups, and troubleshooting. They contain no Worker, Wrangler, D1, Deploy Button, or Cloudflare setup instructions.
+
+Internal project-structure and development sections describe the Node application artifact and Docker test workflow.
 
 ## Testing
 
 Unit tests cover:
 
-- storage-driver configuration and invalid combinations;
-- `prepare`, immutable `bind`, `first`, `all`, and `run` behavior;
-- result and change-metadata normalization;
-- batch ordering, ownership validation, atomic commit, and rollback;
-- schema initialization on a new database;
-- idempotent initialization on an existing database;
-- startup failures for invalid paths and migration errors;
-- sanitized errors that do not expose bound secrets;
-- graceful shutdown closing the database once.
+- SQLite path and timeout validation;
+- `prepare`, immutable `bind`, `first`, `all`, `run`, and `RETURNING` behavior;
+- result and mutation metadata normalization;
+- batch ordering, ownership validation, commit, and rollback;
+- initial and repeated schema application;
+- secret-safe failures;
+- runtime configuration using repository-owned types;
+- graceful shutdown closing storage once;
+- standard-fetch-only Gemini transport behavior.
 
 Integration verification covers:
 
-- production bundle construction;
+- static checks and the complete unit suite;
+- Node application bundling;
 - Docker image construction;
-- container health and the root route;
+- Compose health;
 - authenticated and unauthenticated API behavior;
-- admin account import into SQLite;
-- container removal and recreation with the same volume;
-- persistence of the imported account after recreation;
-- complete account-pool operation with all `D1_*` variables absent.
-
-Existing static checks and unit tests must continue to pass. Cloudflare D1 HTTP adapter tests remain in place to protect the optional compatibility mode.
-
-## Documentation Changes
-
-The English and Chinese READMEs describe SQLite as the default Docker storage and present Cloudflare D1 HTTP storage only as an optional compatibility mode. `.env.docker.example` explains `STORAGE_DRIVER` and `SQLITE_PATH`. Docker commands continue to use the repository's Compose definition.
+- admin import of multiple accounts;
+- container replacement using the same volume;
+- account persistence after replacement;
+- absence of Cloudflare/D1 configuration and runtime dependencies.
 
 ## Acceptance Criteria
 
-The design is complete when all of the following are true:
-
-1. A user with Docker but no Cloudflare account can build and start the service from the documented commands.
-2. `/admin` can import and manage multiple accounts.
-3. Account-backed generation paths can read the local account pool.
-4. Recreating the container while preserving the named volume retains the accounts.
-5. No `D1_*` value is required in SQLite mode.
-6. The Cloudflare Worker deployment and explicitly selected Docker D1 HTTP mode remain functional.
-7. Automated tests validate adapter semantics, initialization, rollback, persistence, and secret-safe errors.
+1. A user with Docker and no Cloudflare account can build and start the documented service.
+2. The repository contains no Cloudflare deployment configuration, D1 HTTP adapter, Cloudflare runtime dependency, or Cloudflare documentation.
+3. `/admin` imports and manages multiple accounts using SQLite.
+4. Account-backed API paths use the local account pool.
+5. Recreating the container with the same named volume retains accounts.
+6. Startup and query failures are fail-closed and secret-safe.
+7. The complete test suite, Node build, Docker build, health check, API checks, and persistence regression pass.
