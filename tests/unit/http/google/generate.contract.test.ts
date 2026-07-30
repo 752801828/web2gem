@@ -241,9 +241,9 @@ describe("Google generate handler", () => {
 			{
 				API_KEYS: "",
 				LOG_REQUESTS: "false",
-				GEMINI_DB: {
+				ACCOUNT_DB: {
 					prepare() {
-						throw new Error("invalid tool choice should not read D1");
+						throw new Error("invalid tool choice should not read SQL");
 					},
 				},
 			},

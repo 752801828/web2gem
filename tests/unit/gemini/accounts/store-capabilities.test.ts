@@ -1,17 +1,17 @@
 import { describe, test } from "vitest";
 import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/routes";
-import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
+import { SqlGeminiAccountStore } from "../../../../src/gemini/accounts/store-sql";
 import { assert } from "../../assertions.js";
 import {
 	mutationResult,
 	poolVersionExpectation,
-	RecordingD1,
-	type D1Expectation,
+	RecordingSql,
+	type SQLExpectation,
 } from "./_support/store-fixtures.js";
 
-describe("D1 Gemini account capability store", () => {
+describe("SQL Gemini account capability store", () => {
 	test("batches status, capability replacement, and version in fixed order", async () => {
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: /UPDATE gemini_accounts SET account_status_code = \?, status_checked_at_ms = \?, updated_at_ms = \? WHERE id = \?/,
 				binds: [1000, 5600, 5600, "first"],
@@ -43,7 +43,7 @@ describe("D1 Gemini account capability store", () => {
 			},
 			poolVersionExpectation(5600, "unconditional"),
 		]);
-		await new D1GeminiAccountStore(db).writeAccountProbe(
+		await new SqlGeminiAccountStore(db).writeAccountProbe(
 			"first",
 			{
 				statusCode: 1000,
@@ -68,7 +68,7 @@ describe("D1 Gemini account capability store", () => {
 	});
 
 	test("updates only account status when a probe has no complete model snapshot", async () => {
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: /UPDATE gemini_accounts SET account_status_code = \?, status_checked_at_ms = \?, updated_at_ms = \? WHERE id = \?/,
 				binds: [1016, 5650, 5650, "first"],
@@ -76,7 +76,7 @@ describe("D1 Gemini account capability store", () => {
 				result: mutationResult(),
 			},
 		]);
-		await new D1GeminiAccountStore(db).writeAccountProbe(
+		await new SqlGeminiAccountStore(db).writeAccountProbe(
 			"first",
 			{ statusCode: 1016, issue: "auth", models: [] },
 			5650,
@@ -100,7 +100,7 @@ describe("D1 Gemini account capability store", () => {
 			discovery_order: 0,
 			checked_at_ms: 5600,
 		};
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: /SELECT account_id, model_id, display_name, description, available, capacity, capacity_field, model_number, discovery_order, checked_at_ms FROM gemini_account_models WHERE account_id IN \(\?, \?\) ORDER BY account_id ASC, discovery_order ASC/,
 				binds: ["first", "second"],
@@ -114,7 +114,7 @@ describe("D1 Gemini account capability store", () => {
 				result: { results: [capability] },
 			},
 		]);
-		const store = new D1GeminiAccountStore(db);
+		const store = new SqlGeminiAccountStore(db);
 		assert.deepEqual(
 			await store.listAccountCapabilities(["first", "first", "second"]),
 			[capability],
@@ -149,7 +149,7 @@ describe("D1 Gemini account capability store", () => {
 			priority,
 			updated_at_ms: 5700,
 		}));
-		const expectations: D1Expectation[] = [
+		const expectations: SQLExpectation[] = [
 			{
 				sql: "DELETE FROM gemini_model_route_priority WHERE family = ?",
 				binds: ["pro"],
@@ -157,7 +157,7 @@ describe("D1 Gemini account capability store", () => {
 				result: mutationResult(),
 			},
 			...routes.map(
-				(route, priority): D1Expectation => ({
+				(route, priority): SQLExpectation => ({
 					sql: /INSERT INTO gemini_model_route_priority \( family, provider_model_id, capacity, capacity_field, model_number, priority, updated_at_ms \) VALUES \(\?, \?, \?, \?, \?, \?, \?\)/,
 					binds: [
 						"pro",
@@ -180,8 +180,8 @@ describe("D1 Gemini account capability store", () => {
 				result: { results: rows },
 			},
 		];
-		const db = new RecordingD1(expectations);
-		const store = new D1GeminiAccountStore(db);
+		const db = new RecordingSql(expectations);
+		const store = new SqlGeminiAccountStore(db);
 
 		await store.replaceModelRoutePriority("pro", routes, 5700);
 		assert.deepEqual(await store.listModelRoutePriorities(), rows);
@@ -189,17 +189,17 @@ describe("D1 Gemini account capability store", () => {
 		db.assertDrained();
 	});
 
-	test("rejects duplicate route tuples before D1 preparation and records reset", async () => {
+	test("rejects duplicate route tuples before SQL preparation and records reset", async () => {
 		const route = {
 			providerModelId: "e6fa609c3fa255c0",
 			capacity: 4,
 			capacityField: 12,
 			modelNumber: 3,
 		} satisfies GeminiRouteTuple;
-		const invalidDb = new RecordingD1();
+		const invalidDb = new RecordingSql();
 		await assert.rejects(
 			() =>
-				new D1GeminiAccountStore(invalidDb).replaceModelRoutePriority(
+				new SqlGeminiAccountStore(invalidDb).replaceModelRoutePriority(
 					"pro",
 					[route, route],
 					5800,
@@ -208,7 +208,7 @@ describe("D1 Gemini account capability store", () => {
 		);
 		invalidDb.assertDrained();
 
-		const resetDb = new RecordingD1([
+		const resetDb = new RecordingSql([
 			{
 				sql: "DELETE FROM gemini_model_route_priority WHERE family = ?",
 				binds: ["pro"],
@@ -217,7 +217,7 @@ describe("D1 Gemini account capability store", () => {
 			},
 			poolVersionExpectation(5900, "unconditional"),
 		]);
-		await new D1GeminiAccountStore(resetDb).clearModelRoutePriority(
+		await new SqlGeminiAccountStore(resetDb).clearModelRoutePriority(
 			"pro",
 			5900,
 		);

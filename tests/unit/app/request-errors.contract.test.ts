@@ -62,14 +62,14 @@ describe.sequential("application request error contract", () => {
 		const googleV1Body = errorBody(await googleV1.json());
 		assert.equal(googleV1Body.message, "request body must be a JSON object");
 	});
-	test("does not read D1 accounts before public auth or JSON validation succeeds", async () => {
+	test("does not read SQL accounts before public auth or JSON validation succeeds", async () => {
 		let prepareCalls = 0;
 		const env = {
 			API_KEYS: "sk-test",
-			GEMINI_DB: {
+			ACCOUNT_DB: {
 				prepare() {
 					prepareCalls += 1;
-					throw new Error("D1 should not be read before auth and validation");
+					throw new Error("SQL should not be read before auth and validation");
 				},
 			},
 		};

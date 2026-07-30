@@ -1,11 +1,11 @@
 import { describe, test } from "vitest";
 import type { ApplicationExecutionContext } from "../../../src/app";
-import type { WorkerEnv } from "../../../src/config";
+import type { AppEnv } from "../../../src/config";
 import workerHandler from "../../../src/index";
 import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import { assert } from "../assertions.js";
 
-function modelCatalogD1(includeModels = true) {
+function modelCatalogSql(includeModels = true) {
 	const nowMs = Date.now();
 	const account = {
 		id: "catalog-account",
@@ -64,7 +64,7 @@ function modelCatalogD1(includeModels = true) {
 						return { results: capabilities };
 					if (sql.includes("FROM gemini_model_route_priority"))
 						return { results: [] };
-					throw new Error(`unexpected catalog D1 query: ${sql}`);
+					throw new Error(`unexpected catalog SQL query: ${sql}`);
 				},
 			};
 		},
@@ -75,7 +75,7 @@ const executionContext: ApplicationExecutionContext = { waitUntil() {} };
 const worker = {
 	fetch(
 		request: Request,
-		env: WorkerEnv = {},
+		env: AppEnv = {},
 		_execution?: unknown,
 	): Promise<Response> {
 		return workerHandler.fetch(request, env, executionContext);
@@ -113,13 +113,13 @@ describe("application model route contract", () => {
 			),
 			["gemini-3.5-flash", "gemini-3.5-flash-extended"],
 		);
-		const emptyD1 = await worker.fetch(
+		const emptySQL = await worker.fetch(
 			new Request("https://worker.example/v1/models"),
-			{ GEMINI_DB: modelCatalogD1(false) },
+			{ ACCOUNT_DB: modelCatalogSql(false) },
 			{},
 		);
 		assert.deepEqual(
-			recordsAt(await emptyD1.json(), "data").map((model) =>
+			recordsAt(await emptySQL.json(), "data").map((model) =>
 				stringField(model, "id"),
 			),
 			["gemini-3.5-flash", "gemini-3.5-flash-extended"],
@@ -148,14 +148,14 @@ describe("application model route contract", () => {
 		assert.equal(modelBody.id, "gemini-3.5-flash");
 		assert.equal(modelBody.object, "model");
 	});
-	test("keeps health D1-free and degrades model catalogs on D1 failure", async () => {
+	test("keeps health SQL-free and degrades model catalogs on SQL failure", async () => {
 		let prepareCalls = 0;
 		const env = {
 			API_KEYS: "sk-test",
-			GEMINI_DB: {
+			ACCOUNT_DB: {
 				prepare() {
 					prepareCalls++;
-					throw new Error("model and health routes must not touch D1");
+					throw new Error("model and health routes must not touch SQL");
 				},
 			},
 		};
@@ -204,7 +204,7 @@ describe("application model route contract", () => {
 		assert.equal(prepareCalls, 2);
 	});
 	test("serves one ordered dynamic catalog through OpenAI and Google routes", async () => {
-		const env = { GEMINI_DB: modelCatalogD1() };
+		const env = { ACCOUNT_DB: modelCatalogSql() };
 		const openai = await worker.fetch(
 			new Request("https://worker.example/v1/models"),
 			env,

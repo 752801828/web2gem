@@ -5,7 +5,6 @@
 .codex
 .cursor
 .trellis
-.wrangler
 node_modules
 dist
 coverage
@@ -16,13 +15,8 @@ docs
 *.log
 .env
 .env.*
-!.env.example
 !.env.docker.example
-.dev.vars
-.dev.vars.*
-!.dev.vars.example
 README*
 LICENSE
 compose.yaml
-worker-configuration.d.ts
 AGENTS.md

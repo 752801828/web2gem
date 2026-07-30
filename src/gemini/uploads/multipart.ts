@@ -60,7 +60,6 @@ async function uploadMultipartFileWithPushId(
 		body: multipart.body,
 		bodyLength: multipart.contentLength,
 		timeoutMs: 60000,
-		socket: cfg.upstream_socket,
 		cfg,
 	});
 	if (!response.ok) {
@@ -111,22 +110,14 @@ function buildMultipartFileBody(input: UploadBytesInput): MultipartFileBody {
 	const contentLength =
 		head.byteLength + input.bytes.byteLength + tail.byteLength;
 	return {
-		body: multipartByteStream([head, input.bytes, tail], contentLength),
+		body: multipartByteStream([head, input.bytes, tail]),
 		contentType: `multipart/form-data; boundary=${boundary}`,
 		boundary,
 		contentLength,
 	};
 }
 
-function multipartByteStream(
-	chunks: readonly Uint8Array[],
-	contentLength: number,
-): BodyInit {
-	if (typeof FixedLengthStream === "function") {
-		const stream = new FixedLengthStream(contentLength);
-		void writeMultipartChunks(stream.writable, chunks);
-		return stream.readable;
-	}
+function multipartByteStream(chunks: readonly Uint8Array[]): BodyInit {
 	return new ReadableStream<Uint8Array>({
 		start(controller) {
 			for (const chunk of chunks) {
@@ -135,27 +126,6 @@ function multipartByteStream(
 			controller.close();
 		},
 	});
-}
-
-async function writeMultipartChunks(
-	writable: WritableStream<Uint8Array>,
-	chunks: readonly Uint8Array[],
-): Promise<void> {
-	const writer = writable.getWriter();
-	try {
-		for (const chunk of chunks) {
-			if (chunk.byteLength) await writer.write(chunk);
-		}
-		await writer.close();
-	} catch (e) {
-		try {
-			await writer.abort(e);
-		} catch (_) {}
-	} finally {
-		try {
-			writer.releaseLock();
-		} catch (_) {}
-	}
 }
 
 function escapeMultipartFilename(filename: string): string {

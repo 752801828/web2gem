@@ -349,9 +349,9 @@ describe("OpenAI Images endpoint", () => {
 				body: form,
 			}),
 			{
-				GEMINI_DB: {
+				ACCOUNT_DB: {
 					prepare() {
-						throw new Error("invalid multipart stream should not read D1");
+						throw new Error("invalid multipart stream should not read SQL");
 					},
 				},
 			},
@@ -516,9 +516,9 @@ describe("OpenAI Images endpoint", () => {
 				body: JSON.stringify({ prompt: "draw", stream: true }),
 			}),
 			{
-				GEMINI_DB: {
+				ACCOUNT_DB: {
 					prepare() {
-						throw new Error("invalid image stream should not read D1");
+						throw new Error("invalid image stream should not read SQL");
 					},
 				},
 			},

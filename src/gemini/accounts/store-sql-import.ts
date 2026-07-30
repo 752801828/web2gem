@@ -7,9 +7,9 @@ import {
 	sha256Hex,
 } from "./domain";
 import type {
-	D1DatabaseLike,
-	D1PreparedStatementLike,
-	D1Result,
+	SqlDatabaseLike,
+	SqlPreparedStatementLike,
+	SqlResult,
 	GeminiAccountCreateInput,
 	GeminiAccountRow,
 } from "./types";
@@ -83,7 +83,7 @@ export function valueOrCurrent<T>(next: T | undefined, current: T): T {
 	return next === undefined ? current : next;
 }
 
-export const MAX_D1_BOUND_PARAMETERS = 100;
+export const MAX_SQL_BOUND_PARAMETERS = 100;
 export const MAX_TRANSACTIONAL_ACCOUNT_IMPORTS = 40;
 
 export type AccountImportWriteFacts = {
@@ -94,12 +94,12 @@ export type AccountImportWriteFacts = {
 };
 
 export type AccountImportStore = {
-	db: D1DatabaseLike;
+	db: SqlDatabaseLike;
 	bumpPoolVersion: (nowMs: number) => Promise<void>;
 	poolVersionIncrementBeforeImports: (
 		nowMs: number,
 		rows: readonly GeminiAccountRow[],
-	) => D1PreparedStatementLike;
+	) => SqlPreparedStatementLike;
 };
 
 export async function writeAccountImports(
@@ -120,13 +120,13 @@ export async function writeAccountImports(
 			offset,
 			offset + MAX_TRANSACTIONAL_ACCOUNT_IMPORTS,
 		);
-		const statements: D1PreparedStatementLike[] = [];
+		const statements: SqlPreparedStatementLike[] = [];
 		const nowMs = chunk[0]?.updated_at_ms ?? Date.now();
 		const fallbackPreexistingIds = batched
 			? null
 			: await findImportPreexistingIds(store.db, chunk);
 		if (batched) {
-			// The leading write owns the D1 batch transaction before it reads
+			// The leading write owns the SQL batch transaction before it reads
 			// pre-upsert pairs, so concurrent imports cannot share a stale view.
 			statements.push(store.poolVersionIncrementBeforeImports(nowMs, chunk));
 		}
@@ -144,7 +144,7 @@ export async function writeAccountImports(
 			? await batch(statements)
 			: await runStatements(statements);
 		if (results.length !== statements.length)
-			throw new Error("D1 account import batch returned incomplete results");
+			throw new Error("SQL account import batch returned incomplete results");
 		const preexistingIdsForChunk = batched
 			? readImportPreexistingIds(results[0], chunk)
 			: fallbackPreexistingIds;
@@ -153,7 +153,7 @@ export async function writeAccountImports(
 		let chunkChanged = false;
 		for (const indexes of resultIndexes) {
 			const result = results[indexes.statement];
-			if (!result) throw new Error("D1 account import result was missing");
+			if (!result) throw new Error("SQL account import result was missing");
 			if (importResultChanged(result) > 0) {
 				chunkChanged = true;
 				mutatedCookieHashes.add(indexes.row.cookie_hash);
@@ -165,7 +165,7 @@ export async function writeAccountImports(
 			}
 		}
 		if (batched && chunkChanged && preexistingIdsForChunk?.size === 0)
-			throw new Error("D1 account import prestate did not report a mutation");
+			throw new Error("SQL account import prestate did not report a mutation");
 		if (!batched && chunkChanged) await store.bumpPoolVersion(nowMs);
 	}
 	return {
@@ -200,8 +200,8 @@ export function buildPoolVersionIncrementBeforeImportsSql(
 			prefixValues?: readonly unknown[];
 			returning?: string;
 		},
-	) => D1PreparedStatementLike,
-): D1PreparedStatementLike {
+	) => SqlPreparedStatementLike,
+): SqlPreparedStatementLike {
 	const uniquePairs = new Map<
 		string,
 		{ identityHash: string; cookieHash: string }
@@ -243,15 +243,15 @@ export function buildPoolVersionIncrementBeforeImportsSql(
 }
 
 async function runStatements(
-	statements: readonly D1PreparedStatementLike[],
-): Promise<D1Result[]> {
-	const results: D1Result[] = [];
+	statements: readonly SqlPreparedStatementLike[],
+): Promise<SqlResult[]> {
+	const results: SqlResult[] = [];
 	for (const statement of statements) results.push(await statement.run());
 	return results;
 }
 
 async function findImportPreexistingIds(
-	db: D1DatabaseLike,
+	db: SqlDatabaseLike,
 	rows: readonly GeminiAccountRow[],
 ): Promise<Map<string, string | null>> {
 	const identityHashes = [...new Set(rows.map((row) => row.identity_hash))];
@@ -261,11 +261,11 @@ async function findImportPreexistingIds(
 	for (
 		let offset = 0;
 		offset < identityHashes.length;
-		offset += MAX_D1_BOUND_PARAMETERS
+		offset += MAX_SQL_BOUND_PARAMETERS
 	) {
 		const chunk = identityHashes.slice(
 			offset,
-			offset + MAX_D1_BOUND_PARAMETERS,
+			offset + MAX_SQL_BOUND_PARAMETERS,
 		);
 		const placeholders = chunk.map(() => "?").join(", ");
 		const result = await db
@@ -281,37 +281,37 @@ async function findImportPreexistingIds(
 }
 
 function readImportPreexistingIds(
-	result: D1Result | undefined,
+	result: SqlResult | undefined,
 	rows: readonly GeminiAccountRow[],
 ): Map<string, string | null> {
-	if (!result) throw new Error("D1 account import version result was missing");
+	if (!result) throw new Error("SQL account import version result was missing");
 	if (importResultChanged(result) === 0) return new Map();
 	const returned = result.results?.[0];
 	if (!isRecord(returned) || typeof returned.preexisting_ids !== "string")
-		throw new Error("D1 account import prestate result was missing");
+		throw new Error("SQL account import prestate result was missing");
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(returned.preexisting_ids);
 	} catch {
-		throw new Error("D1 account import prestate result was invalid");
+		throw new Error("SQL account import prestate result was invalid");
 	}
 	if (!isRecord(parsed))
-		throw new Error("D1 account import prestate result was invalid");
+		throw new Error("SQL account import prestate result was invalid");
 	const ids = new Map<string, string | null>();
 	for (const row of rows) {
 		if (!Object.hasOwn(parsed, row.identity_hash))
-			throw new Error("D1 account import prestate identity was missing");
+			throw new Error("SQL account import prestate identity was missing");
 		const id = parsed[row.identity_hash];
 		if (id !== null && typeof id !== "string")
-			throw new Error("D1 account import prestate identity was invalid");
+			throw new Error("SQL account import prestate identity was invalid");
 		ids.set(row.identity_hash, id);
 	}
 	return ids;
 }
 
-function importResultChanged(result: D1Result): number {
+function importResultChanged(result: SqlResult): number {
 	const changed = changedRows(result.meta);
 	if (changed === null)
-		throw new Error("D1 account import result did not report changed rows");
+		throw new Error("SQL account import result did not report changed rows");
 	return changed;
 }

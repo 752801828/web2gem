@@ -13,8 +13,6 @@ export { generateStream } from "./gemini/client";
 export { createStreamTextExtractor } from "./gemini/client/parse-stream";
 export { buildPayload } from "./gemini/client/protocol";
 export { refreshGeminiBuildLabelForRetry } from "./gemini/client/retry";
-export { createByteQueue } from "./gemini/transport/byte-queue";
-export { socketHttp } from "./gemini/transport/socket";
 export { attachmentDedupeKey as attachmentDedupeKeyForTest } from "./gemini/uploads/execute";
 export { uploadMultipartFile } from "./gemini/uploads/multipart";
 export {

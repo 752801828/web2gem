@@ -1,18 +1,18 @@
 import { describe, test } from "vitest";
 import { sha256Hex } from "../../../../src/gemini/accounts/domain";
-import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
+import { SqlGeminiAccountStore } from "../../../../src/gemini/accounts/store-sql";
 import { assert } from "../../assertions.js";
 import {
 	accountSqlRow,
 	durableIssues,
 	mutationResult,
 	poolVersionExpectation,
-	RecordingD1,
+	RecordingSql,
 } from "./_support/store-fixtures.js";
 
-describe("D1 Gemini account runtime store", () => {
+describe("SQL Gemini account runtime store", () => {
 	test("reads refresh credentials through the exact secret projection", async () => {
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: "SELECT id, cookie_header, cookie_hash, identity_hash, last_refresh_success_at_ms FROM gemini_accounts WHERE id = ? LIMIT 1",
 				binds: ["first"],
@@ -27,7 +27,7 @@ describe("D1 Gemini account runtime store", () => {
 			},
 		]);
 		assert.deepEqual(
-			await new D1GeminiAccountStore(db).getAccountForRefresh("first"),
+			await new SqlGeminiAccountStore(db).getAccountForRefresh("first"),
 			{
 				id: "first",
 				cookie_header: "cookie",
@@ -51,7 +51,7 @@ describe("D1 Gemini account runtime store", () => {
 			status_checked_at_ms: 800,
 			last_refresh_success_at_ms: 700,
 		};
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: /SELECT id, enabled, cookie_header, cookie_hash, issue, .* FROM gemini_accounts .*issue NOT IN \(\?, \?, \?\).*LIMIT \?/,
 				binds: [1000, ...durableIssues, 200],
@@ -61,7 +61,7 @@ describe("D1 Gemini account runtime store", () => {
 		]);
 
 		assert.deepEqual(
-			await new D1GeminiAccountStore(db).listSelectableAccounts(1000, 999),
+			await new SqlGeminiAccountStore(db).listSelectableAccounts(1000, 999),
 			[snapshot],
 		);
 		db.assertDrained();
@@ -70,7 +70,7 @@ describe("D1 Gemini account runtime store", () => {
 	test("maps refresh-lock changed-row results and records owner-scoped release", async () => {
 		const lockSql =
 			/INSERT INTO gemini_account_locks .*ON CONFLICT\(account_id\) DO UPDATE SET .*WHERE gemini_account_locks.expires_at_ms <= \?/;
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: lockSql,
 				binds: ["first", "owner", 5000, 1000, 1000],
@@ -90,7 +90,7 @@ describe("D1 Gemini account runtime store", () => {
 				result: mutationResult(),
 			},
 		]);
-		const store = new D1GeminiAccountStore(db);
+		const store = new SqlGeminiAccountStore(db);
 
 		assert.equal(
 			await store.tryAcquireRefreshLock("first", "owner", 5000, 1000),
@@ -110,7 +110,7 @@ describe("D1 Gemini account runtime store", () => {
 			cookie_header: cookieHeader,
 			cookie_hash: await sha256Hex(cookieHeader),
 		});
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: "SELECT * FROM gemini_accounts WHERE id = ? LIMIT 1",
 				binds: ["first"],
@@ -127,7 +127,7 @@ describe("D1 Gemini account runtime store", () => {
 		]);
 
 		assert.deepEqual(
-			await new D1GeminiAccountStore(db).writeRefreshedCookie("first", {
+			await new SqlGeminiAccountStore(db).writeRefreshedCookie("first", {
 				cookieHeader,
 				refreshedAtMs: 2000,
 				nowMs: 2000,
@@ -141,7 +141,7 @@ describe("D1 Gemini account runtime store", () => {
 	test("binds a changed refreshed cookie after an explicit duplicate lookup", async () => {
 		const nextCookie = "__Secure-1PSID=p1; __Secure-1PSIDTS=t1-next";
 		const nextHash = await sha256Hex(nextCookie);
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: "SELECT * FROM gemini_accounts WHERE id = ? LIMIT 1",
 				binds: ["first"],
@@ -165,7 +165,7 @@ describe("D1 Gemini account runtime store", () => {
 		]);
 
 		assert.deepEqual(
-			await new D1GeminiAccountStore(db).writeRefreshedCookie("first", {
+			await new SqlGeminiAccountStore(db).writeRefreshedCookie("first", {
 				cookieHeader: nextCookie,
 				refreshedAtMs: 3000,
 				nowMs: 3000,
@@ -177,7 +177,7 @@ describe("D1 Gemini account runtime store", () => {
 	});
 
 	test("binds a health-affecting failure and a conditional version increment", async () => {
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: /UPDATE gemini_accounts SET issue = \?, cooldown_until_ms = \?, last_issue_at_ms = \?, last_used_at_ms = \?, updated_at_ms = \? WHERE id = \?/,
 				binds: ["transient", 9000, 4000, 4000, 4000, "first"],
@@ -186,7 +186,7 @@ describe("D1 Gemini account runtime store", () => {
 			},
 			poolVersionExpectation(4000),
 		]);
-		await new D1GeminiAccountStore(db).writeAccountOutcome("first", {
+		await new SqlGeminiAccountStore(db).writeAccountOutcome("first", {
 			kind: "failure",
 			issue: "transient",
 			cooldownUntilMs: 9000,
@@ -197,7 +197,7 @@ describe("D1 Gemini account runtime store", () => {
 	});
 
 	test("records use without changing health for a failure without an issue", async () => {
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: /UPDATE gemini_accounts SET last_used_at_ms = \?, updated_at_ms = \? WHERE id = \?/,
 				binds: [4500, 4500, "first"],
@@ -205,7 +205,7 @@ describe("D1 Gemini account runtime store", () => {
 				result: mutationResult(),
 			},
 		]);
-		await new D1GeminiAccountStore(db).writeAccountOutcome("first", {
+		await new SqlGeminiAccountStore(db).writeAccountOutcome("first", {
 			kind: "failure",
 			nowMs: 4500,
 		});
@@ -213,7 +213,7 @@ describe("D1 Gemini account runtime store", () => {
 	});
 
 	test("batches success health clearing before version and last-use recording", async () => {
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: /UPDATE gemini_accounts SET issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, updated_at_ms = \? WHERE id = \? AND \(issue IS NOT NULL/,
 				binds: [5000, "first"],
@@ -228,7 +228,7 @@ describe("D1 Gemini account runtime store", () => {
 			},
 			poolVersionExpectation(5000),
 		]);
-		await new D1GeminiAccountStore(db).writeAccountOutcome("first", {
+		await new SqlGeminiAccountStore(db).writeAccountOutcome("first", {
 			kind: "success",
 			nowMs: 5000,
 		});

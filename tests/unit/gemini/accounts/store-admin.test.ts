@@ -1,13 +1,13 @@
 import { describe, test } from "vitest";
-import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
+import { SqlGeminiAccountStore } from "../../../../src/gemini/accounts/store-sql";
 import { assert } from "../../assertions.js";
 import {
 	adminSqlRow,
 	durableIssues,
-	RecordingD1,
+	RecordingSql,
 } from "./_support/store-fixtures.js";
 
-describe("D1 Gemini account store admin projections", () => {
+describe("SQL Gemini account store admin projections", () => {
 	test("maps a filtered admin overview without selecting credential columns", async () => {
 		const row = adminSqlRow("account-a", {
 			label: "Alpha",
@@ -21,7 +21,7 @@ describe("D1 Gemini account store admin projections", () => {
 			attention: 0,
 			disabled: 0,
 		};
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: /SELECT id, label, enabled, issue, cooldown_until_ms, .* FROM gemini_accounts WHERE enabled = 1 AND cooldown_until_ms > \? ORDER BY id ASC LIMIT \?/,
 				binds: [1000, 11],
@@ -36,7 +36,7 @@ describe("D1 Gemini account store admin projections", () => {
 			},
 		]);
 
-		const overview = await new D1GeminiAccountStore(db).getAdminOverview(
+		const overview = await new SqlGeminiAccountStore(db).getAdminOverview(
 			{ limit: 10, state: "cooling" },
 			1000,
 		);

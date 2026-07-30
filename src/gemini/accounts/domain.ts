@@ -29,7 +29,7 @@ export type GeminiAccountOutcome = {
 	nowMs: number;
 };
 
-type D1ResultLike = {
+type SqlResultLike = {
 	meta?: unknown;
 	success?: boolean;
 };
@@ -148,12 +148,12 @@ export function changedRows(meta: unknown): number | null {
 	return null;
 }
 
-export function resultChanged(result: D1ResultLike): number {
+export function resultChanged(result: SqlResultLike): number {
 	const rows = changedRows(result.meta);
 	return rows == null ? 1 : rows;
 }
 
-export function isD1UniqueConstraintError(error: unknown): boolean {
+export function isSqlUniqueConstraintError(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error ?? "");
 	return /unique constraint failed|constraint.*unique|SQLITE_CONSTRAINT/i.test(
 		message,

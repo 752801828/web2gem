@@ -311,9 +311,9 @@ describe("OpenAI request validation", () => {
 				API_KEYS: "",
 				CURRENT_INPUT_FILE_ENABLED: "false",
 				CURRENT_INPUT_FILE_MIN_BYTES: "10",
-				GEMINI_DB: {
+				ACCOUNT_DB: {
 					prepare() {
-						throw new Error("oversized inline rejection should not read D1");
+						throw new Error("oversized inline rejection should not read SQL");
 					},
 				},
 				LOG_REQUESTS: "false",

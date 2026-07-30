@@ -1,12 +1,12 @@
-const prod = await import("../dist/worker.js");
+const prod = await import("../dist/app.js");
 const testMod = await import("../dist/harness.js");
 const { readFile } = await import("node:fs/promises");
 const { errorLine, outputLine } = await import("../server/io.mjs");
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 
-if (testMod.VERSION !== `${packageJson.version}-worker`) {
+if (testMod.VERSION !== `${packageJson.version}-docker`) {
 	errorLine(
-		`Smoke check failed: package version ${packageJson.version} does not match Worker version ${testMod.VERSION}`,
+		`Smoke check failed: package version ${packageJson.version} does not match application version ${testMod.VERSION}`,
 	);
 	process.exit(1);
 }
@@ -139,7 +139,7 @@ if (
 	process.exit(1);
 }
 
-const missingD1ForPro = await prod.default.fetch(
+const missingAccountDbForPro = await prod.default.fetch(
 	new Request("https://worker.example/v1/chat/completions", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -153,24 +153,25 @@ const missingD1ForPro = await prod.default.fetch(
 	},
 	{},
 );
-if (missingD1ForPro.status !== 422) {
+if (missingAccountDbForPro.status !== 422) {
 	errorLine(
-		`Smoke check failed: missing D1 Pro status ${missingD1ForPro.status}`,
+		`Smoke check failed: missing account database Pro status ${missingAccountDbForPro.status}`,
 	);
 	process.exit(1);
 }
-const missingD1Body = await missingD1ForPro.json();
+const missingAccountDbBody = await missingAccountDbForPro.json();
 if (
-	missingD1Body.error?.code !== "gemini_authenticated_session_required" ||
-	missingD1Body.error?.reason !== "pro_model"
+	missingAccountDbBody.error?.code !==
+		"gemini_authenticated_session_required" ||
+	missingAccountDbBody.error?.reason !== "pro_model"
 ) {
 	errorLine(
-		"Smoke check failed: missing D1 Pro did not return the authenticated-session error",
+		"Smoke check failed: missing account database Pro did not return the authenticated-session error",
 	);
 	process.exit(1);
 }
 
-const emptyCatalogD1 = {
+const emptyCatalogSql = {
 	prepare(sql) {
 		return {
 			bind() {
@@ -188,7 +189,7 @@ const emptyCatalogD1 = {
 					sql.includes("FROM gemini_model_route_priority")
 				)
 					return { results: [] };
-				throw new Error("unexpected smoke D1 query");
+				throw new Error("unexpected smoke SQL query");
 			},
 		};
 	},
@@ -206,7 +207,7 @@ const openAIReject = await prod.default.fetch(
 	{
 		API_KEYS: "",
 		CURRENT_INPUT_FILE_ENABLED: "false",
-		GEMINI_DB: emptyCatalogD1,
+		ACCOUNT_DB: emptyCatalogSql,
 	},
 	{},
 );
@@ -235,7 +236,7 @@ const googleReject = await prod.default.fetch(
 	{
 		API_KEYS: "",
 		CURRENT_INPUT_FILE_ENABLED: "false",
-		GEMINI_DB: emptyCatalogD1,
+		ACCOUNT_DB: emptyCatalogSql,
 	},
 	{},
 );

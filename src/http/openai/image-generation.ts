@@ -51,7 +51,7 @@ export async function runImageGenerationCompletion(args: {
 	const { req, cfg, provider } = args;
 	if (req.stream)
 		return openAIErrorResponse(
-			"streaming image generation is not supported by this worker",
+			"streaming image generation is not supported by this service",
 			400,
 			"unsupported_image_generation_stream",
 		);

@@ -3,19 +3,19 @@ import {
 	identityHashFromCookie,
 	sha256Hex,
 } from "../../../../src/gemini/accounts/domain";
-import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
+import { SqlGeminiAccountStore } from "../../../../src/gemini/accounts/store-sql";
 import { assert } from "../../assertions.js";
 import {
 	adminSqlRow,
 	mutationResult,
-	RecordingD1,
-	type D1Expectation,
+	RecordingSql,
+	type SQLExpectation,
 } from "./_support/store-fixtures.js";
 
 function importVersionExpectation(
 	nowMs: number,
 	pairs: readonly (readonly [string, string])[],
-): D1Expectation {
+): SQLExpectation {
 	return {
 		sql: /WITH requested\(identity_hash, cookie_hash\) AS \( SELECT json_extract\(value, '\$\[0\]'\), json_extract\(value, '\$\[1\]'\) FROM json_each\(\?\) \) INSERT INTO gemini_pool_meta .* WHERE EXISTS .* RETURNING .* AS preexisting_ids/,
 		binds: [JSON.stringify(pairs), "pool_version", nowMs],
@@ -35,13 +35,13 @@ function importVersionExpectation(
 	};
 }
 
-describe("D1 Gemini account store codec", () => {
+describe("SQL Gemini account store codec", () => {
 	test("binds the positional account codec and maps the canonical identity reread", async () => {
 		const cookieHeader = "__Secure-1PSID=p1; __Secure-1PSIDTS=t1";
 		const cookieHash = await sha256Hex(cookieHeader);
 		const identityHash = await identityHashFromCookie(cookieHeader);
 		const stored = adminSqlRow("first", { label: "First" });
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			importVersionExpectation(1000, [[identityHash, cookieHash]]),
 			{
 				sql: /INSERT INTO gemini_accounts \(id, label, enabled, cookie_header, cookie_hash, identity_hash, issue, cooldown_until_ms, last_issue_at_ms, last_used_at_ms, last_refresh_at_ms, account_status_code, status_checked_at_ms, last_refresh_attempt_at_ms, last_refresh_success_at_ms, created_at_ms, updated_at_ms\) VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?\) ON CONFLICT\(identity_hash\) DO UPDATE SET/,
@@ -75,7 +75,7 @@ describe("D1 Gemini account store codec", () => {
 			},
 		]);
 
-		const item = await new D1GeminiAccountStore(db).createAccount({
+		const item = await new SqlGeminiAccountStore(db).createAccount({
 			id: "first",
 			label: "First",
 			cookieHeader,
@@ -104,7 +104,7 @@ describe("D1 Gemini account store codec", () => {
 				};
 			}),
 		);
-		const insertExpectations: D1Expectation[] = inputs.map((entry) => ({
+		const insertExpectations: SQLExpectation[] = inputs.map((entry) => ({
 			sql: /INSERT INTO gemini_accounts .*ON CONFLICT\(identity_hash\) DO UPDATE SET/,
 			binds: [
 				entry.input.id,
@@ -132,7 +132,7 @@ describe("D1 Gemini account store codec", () => {
 			identity_hash: entry.input.identityHash,
 			...adminSqlRow(entry.input.id),
 		}));
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			importVersionExpectation(
 				6000,
 				inputs.map((entry) => [entry.input.identityHash, entry.cookieHash]),
@@ -151,7 +151,7 @@ describe("D1 Gemini account store codec", () => {
 			},
 		]);
 
-		const result = await new D1GeminiAccountStore(db).createAccountsBulk(
+		const result = await new SqlGeminiAccountStore(db).createAccountsBulk(
 			inputs,
 		);
 		assert.deepEqual([...result.createdAccountIds], ["second", "third"]);

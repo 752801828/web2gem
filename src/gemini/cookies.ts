@@ -29,8 +29,6 @@ export function fetchGoogleCookieRotation(
 			Math.max(Number(cfg.request_timeout_sec) || 30, 1) * 1000,
 			30000,
 		),
-		socket: cfg.upstream_socket,
-		socketFallback: "never",
 		cfg,
 	});
 }

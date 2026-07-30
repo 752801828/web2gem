@@ -114,7 +114,6 @@ async function fetchGeneratedImageBytesFromUrl(
 			method: "GET",
 			headers,
 			timeoutMs: cfg.request_timeout_sec * 1000,
-			socket: false,
 			cfg,
 		});
 		const bytes = await responseBytes(resp, maxBytes);

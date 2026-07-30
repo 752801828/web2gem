@@ -1,25 +1,25 @@
-import type { WorkerEnv } from "../../config";
+import type { AppEnv } from "../../config";
 import { fetchGoogleCookieRotation } from "../cookies";
 import { AccountPoolService } from "./pool";
 import { verifyGeminiAccount } from "./probe";
 import type { GeminiAccountPoolOptions } from "./pool";
-import type { D1DatabaseLike } from "./types";
-import { D1GeminiAccountStore } from "./store-d1";
+import type { SqlDatabaseLike } from "./types";
+import { SqlGeminiAccountStore } from "./store-sql";
 
-const DEFAULT_POOL_BY_DB = new WeakMap<D1DatabaseLike, AccountPoolService>();
+const DEFAULT_POOL_BY_DB = new WeakMap<SqlDatabaseLike, AccountPoolService>();
 
 function createGeminiAccountPoolFromEnv(
-	env: WorkerEnv | null | undefined,
+	env: AppEnv | null | undefined,
 	options: GeminiAccountPoolOptions = {},
 ): AccountPoolService | null {
-	const db = d1BindingFromEnv(env);
+	const db = sqlBindingFromEnv(env);
 	if (!db) return null;
 	const rotateCookie =
 		options.rotateCookie ||
 		((input) =>
 			fetchGoogleCookieRotation(input.config, input.account.cookie_header));
 	const verifyAccount = options.verifyAccount || verifyGeminiAccount;
-	return new AccountPoolService(new D1GeminiAccountStore(db), {
+	return new AccountPoolService(new SqlGeminiAccountStore(db), {
 		...options,
 		rotateCookie,
 		verifyAccount,
@@ -27,9 +27,9 @@ function createGeminiAccountPoolFromEnv(
 }
 
 export function getGeminiAccountPoolFromEnv(
-	env: WorkerEnv | null | undefined,
+	env: AppEnv | null | undefined,
 ): AccountPoolService | null {
-	const db = d1BindingFromEnv(env);
+	const db = sqlBindingFromEnv(env);
 	if (!db) return null;
 	const existing = DEFAULT_POOL_BY_DB.get(db);
 	if (existing) return existing;
@@ -39,15 +39,15 @@ export function getGeminiAccountPoolFromEnv(
 	return pool;
 }
 
-export function d1BindingFromEnv(
-	env: WorkerEnv | null | undefined,
-): D1DatabaseLike | null {
-	const binding = env?.GEMINI_DB;
-	if (!isD1DatabaseLike(binding)) return null;
+export function sqlBindingFromEnv(
+	env: AppEnv | null | undefined,
+): SqlDatabaseLike | null {
+	const binding = env?.ACCOUNT_DB;
+	if (!isSqlDatabaseLike(binding)) return null;
 	return binding;
 }
 
-function isD1DatabaseLike(value: unknown): value is D1DatabaseLike {
+function isSqlDatabaseLike(value: unknown): value is SqlDatabaseLike {
 	if (!value || typeof value !== "object") return false;
-	return typeof (value as Partial<D1DatabaseLike>).prepare === "function";
+	return typeof (value as Partial<SqlDatabaseLike>).prepare === "function";
 }

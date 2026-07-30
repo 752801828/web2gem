@@ -4,7 +4,7 @@ import type { GeminiModelRoutingOverview } from "../../../../src/gemini/accounts
 import type { GeminiAccountLease } from "../../../../src/gemini/accounts/lease";
 import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/routes";
 import {
-	d1BindingFromEnv,
+	sqlBindingFromEnv,
 	getGeminiAccountPoolFromEnv,
 } from "../../../../src/gemini/accounts/runtime";
 import type { GeminiAccountAcquireOptions } from "../../../../src/gemini/accounts/types";
@@ -139,26 +139,26 @@ describe("gemini account pool bootstrap", () => {
 		]);
 	});
 
-	test("reuses one pool per D1 binding while isolating distinct bindings", () => {
+	test("reuses one pool per SQL storage while isolating distinct bindings", () => {
 		const firstDb = {
 			prepare() {
-				throw new Error("Unexpected D1 access");
+				throw new Error("Unexpected SQL access");
 			},
 		};
 		const secondDb = {
 			prepare() {
-				throw new Error("Unexpected D1 access");
+				throw new Error("Unexpected SQL access");
 			},
 		};
-		const first = getGeminiAccountPoolFromEnv({ GEMINI_DB: firstDb });
-		assert.equal(getGeminiAccountPoolFromEnv({ GEMINI_DB: firstDb }), first);
+		const first = getGeminiAccountPoolFromEnv({ ACCOUNT_DB: firstDb });
+		assert.equal(getGeminiAccountPoolFromEnv({ ACCOUNT_DB: firstDb }), first);
 		assert.equal(
-			getGeminiAccountPoolFromEnv({ GEMINI_DB: secondDb }) === first,
+			getGeminiAccountPoolFromEnv({ ACCOUNT_DB: secondDb }) === first,
 			false,
 		);
-		assert.equal(d1BindingFromEnv({ GEMINI_DB: firstDb }), firstDb);
-		for (const env of [undefined, null, {}, { GEMINI_DB: {} }]) {
-			assert.equal(d1BindingFromEnv(env), null);
+		assert.equal(sqlBindingFromEnv({ ACCOUNT_DB: firstDb }), firstDb);
+		for (const env of [undefined, null, {}, { ACCOUNT_DB: {} }]) {
+			assert.equal(sqlBindingFromEnv(env), null);
 			assert.equal(getGeminiAccountPoolFromEnv(env), null);
 		}
 	});

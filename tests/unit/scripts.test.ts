@@ -28,16 +28,11 @@ type ScriptResult = {
 type AsyncPathCallback = (path: string) => Promise<void>;
 type AsyncDirCallback = (path: string) => Promise<void>;
 
-const DEPLOY_SECRET_TEMPLATE_KEYS = ["ADMIN_KEY", "API_KEYS"];
-const DEPLOY_SECRET_KEYS = new Set(DEPLOY_SECRET_TEMPLATE_KEYS);
-const DEPLOY_BUTTON_REPOSITORY =
-	"https://github.com/Guardinary/web2gem/tree/gemini-account-pool";
 const DOCKER_ONLY_ENV_KEYS = [
 	"PORT",
 	"WEB2GEM_IMAGE",
-	"D1_ACCOUNT_ID",
-	"D1_DATABASE_ID",
-	"D1_API_TOKEN",
+	"SQLITE_PATH",
+	"SQLITE_BUSY_TIMEOUT_MS",
 ];
 function coverageEntry(linePct = 100, branchPct = 100): CoverageEntry {
 	return {
@@ -174,82 +169,6 @@ function parseComposeVariableReferences(source: string): Set<string> {
 	}
 	return keys;
 }
-function parseJsoncObject(source: string): UnknownRecord {
-	const parsed: unknown = JSON.parse(
-		removeTrailingJsoncCommas(stripJsoncComments(source)),
-	);
-	return requiredRecord(parsed, "JSONC object");
-}
-function stripJsoncComments(source: string): string {
-	let out = "";
-	let inString = false;
-	let escaped = false;
-	for (let i = 0; i < source.length; i++) {
-		const char = source[i];
-		const next = source[i + 1];
-		if (inString) {
-			out += char;
-			if (escaped) {
-				escaped = false;
-			} else if (char === "\\") {
-				escaped = true;
-			} else if (char === '"') {
-				inString = false;
-			}
-			continue;
-		}
-		if (char === '"') {
-			inString = true;
-			out += char;
-			continue;
-		}
-		if (char === "/" && next === "/") {
-			while (i < source.length && !/\r|\n/.test(source[i] ?? "")) i++;
-			out += source[i] || "";
-			continue;
-		}
-		if (char === "/" && next === "*") {
-			i += 2;
-			while (i < source.length && !(source[i] === "*" && source[i + 1] === "/"))
-				i++;
-			i++;
-			continue;
-		}
-		out += char;
-	}
-	return out;
-}
-function removeTrailingJsoncCommas(source: string): string {
-	let out = "";
-	let inString = false;
-	let escaped = false;
-	for (let i = 0; i < source.length; i++) {
-		const char = source[i];
-		if (inString) {
-			out += char;
-			if (escaped) {
-				escaped = false;
-			} else if (char === "\\") {
-				escaped = true;
-			} else if (char === '"') {
-				inString = false;
-			}
-			continue;
-		}
-		if (char === '"') {
-			inString = true;
-			out += char;
-			continue;
-		}
-		if (char === ",") {
-			let nextIndex = i + 1;
-			while (/\s/.test(source[nextIndex] || "")) nextIndex++;
-			if (source[nextIndex] === "}" || source[nextIndex] === "]") continue;
-		}
-		out += char;
-	}
-	return out;
-}
 function missingKeys(
 	expected: readonly string[],
 	actual: ReadonlySet<string>,
@@ -262,23 +181,9 @@ function requiredRecord(value: unknown, label: string): UnknownRecord {
 	return value;
 }
 
-function requiredRecordArray(value: unknown, label: string): UnknownRecord[] {
-	if (!Array.isArray(value) || !value.every(isRecord))
-		throw new Error(`${label} must be an object array`);
-	return value;
-}
-
 function requiredString(value: unknown, label: string): string {
 	if (typeof value !== "string") throw new Error(`${label} must be a string`);
 	return value;
-}
-
-async function readPackageScripts(): Promise<UnknownRecord> {
-	const packageJson = requiredRecord(
-		JSON.parse(await readFile("package.json", "utf8")),
-		"package.json",
-	);
-	return requiredRecord(packageJson.scripts, "package scripts");
 }
 
 function parseIgnorePatterns(source: string): string[] {
@@ -552,10 +457,16 @@ describe("quality scripts", () => {
 		const dockerEnv = await readFile(".env.docker.example", "utf8");
 		assert.match(compose, /\$\{PORT:-52389\}:\$\{PORT:-52389\}/);
 		assert.doesNotMatch(compose, /\$\{PORT:-52389\}:52389/);
-		for (const source of [compose, dockerEnv]) {
-			assert.match(source, /ghcr\.io\/guardinary\/web2gem-account-pool:latest/);
-			assert.doesNotMatch(source, /ghcr\.io\/guardinary\/web2gem:latest/);
-		}
+		for (const source of [compose, dockerEnv])
+			assert.match(source, /web2gem-account-pool:local/);
+		assert.match(compose, /build:\s*\./);
+		assert.match(compose, /pull_policy:\s*never/);
+		assert.match(compose, /web2gem-data:\/data/);
+		assert.match(
+			compose,
+			/SQLITE_PATH:\s*"\$\{SQLITE_PATH:-\/data\/web2gem\.sqlite\}"/,
+		);
+		assert.match(compose, /healthcheck:/);
 		assert.match(
 			compose,
 			/REQUEST_BODY_MAX_BYTES:\s*"\$\{REQUEST_BODY_MAX_BYTES:-67108864\}"/,
@@ -567,7 +478,7 @@ describe("quality scripts", () => {
 			server.matchAll(/from\s+["']\.\/(.+?\.mjs)["']/g),
 			(match) => requiredString(match[1], "runtime import"),
 		);
-		assert.deepEqual(runtimeImports.sort(), ["d1-http-binding.mjs", "io.mjs"]);
+		assert.deepEqual(runtimeImports.sort(), ["io.mjs", "sqlite-binding.mjs"]);
 		for (const filename of runtimeImports) {
 			assert.match(
 				dockerfile,
@@ -576,6 +487,10 @@ describe("quality scripts", () => {
 				),
 			);
 		}
+		assert.match(
+			dockerfile,
+			/COPY --from=build \/app\/migrations\/0001_gemini_accounts\.sql/,
+		);
 	});
 	test("keeps env secret templates trackable in docker and git ignore files", async () => {
 		const dockerPatterns = parseIgnorePatterns(
@@ -587,7 +502,7 @@ describe("quality scripts", () => {
 		const dockerExcluded = new Set(
 			dockerPatterns.filter((line) => !line.startsWith("!")),
 		);
-		for (const pattern of [".env", ".env.*", ".dev.vars", ".dev.vars.*"]) {
+		for (const pattern of [".env", ".env.*"]) {
 			assert.equal(
 				gitPatterns.includes(pattern),
 				true,
@@ -606,11 +521,7 @@ describe("quality scripts", () => {
 				`dockerignore missing ${pattern}`,
 			);
 		}
-		for (const example of [
-			"!.env.example",
-			"!.env.docker.example",
-			"!.dev.vars.example",
-		]) {
+		for (const example of ["!.env.docker.example"]) {
 			assert.equal(
 				gitPatterns.includes(example),
 				true,
@@ -625,15 +536,6 @@ describe("quality scripts", () => {
 		assert.equal(
 			dockerPatterns.indexOf("!.env.docker.example") >
 				dockerPatterns.indexOf(".env.*"),
-			true,
-		);
-		assert.equal(
-			gitPatterns.indexOf("!.env.example") > gitPatterns.indexOf(".env.*"),
-			true,
-		);
-		assert.equal(
-			gitPatterns.indexOf("!.dev.vars.example") >
-				gitPatterns.indexOf(".dev.vars.*"),
 			true,
 		);
 		for (const dockerInput of [
@@ -661,164 +563,6 @@ describe("quality scripts", () => {
 		assert.deepEqual(missingKeys(DOCKER_ONLY_ENV_KEYS, dockerEnvExample), []);
 		assert.deepEqual(missingKeys(DOCKER_ONLY_ENV_KEYS, composeVariables), []);
 	});
-	test("keeps Deploy Button secrets separate from visible Worker vars", async () => {
-		const deploySecretTemplates = [".env.example", ".dev.vars.example"];
-		const deploySecretsByTemplate = new Map();
-		for (const path of deploySecretTemplates) {
-			deploySecretsByTemplate.set(
-				path,
-				parseEnvExampleKeys(await readFile(path, "utf8")),
-			);
-		}
-		const wrangler = parseJsoncObject(await readFile("wrangler.jsonc", "utf8"));
-		const workerVars = new Set(
-			Object.keys(requiredRecord(wrangler.vars, "wrangler vars")),
-		);
-		const expectedVisibleVars = CONFIG_ENV_KEYS.filter(
-			(key) => !DEPLOY_SECRET_KEYS.has(key),
-		);
-
-		assert.deepEqual(missingKeys(expectedVisibleVars, workerVars), []);
-		assert.deepEqual(
-			[...DEPLOY_SECRET_KEYS].filter((key) => workerVars.has(key)),
-			[],
-		);
-		for (const [path, deploySecrets] of deploySecretsByTemplate) {
-			assert.deepEqual(
-				[...deploySecrets].sort(),
-				DEPLOY_SECRET_TEMPLATE_KEYS,
-				path,
-			);
-			assert.deepEqual(
-				expectedVisibleVars.filter((key) => deploySecrets.has(key)),
-				[],
-				path,
-			);
-			assert.deepEqual(
-				DOCKER_ONLY_ENV_KEYS.filter((key) => deploySecrets.has(key)),
-				[],
-				path,
-			);
-		}
-	});
-	test("keeps Deploy Buttons pinned to the account-pool branch", async () => {
-		for (const path of ["README.md", "README.zh.md"]) {
-			const readme = await readFile(path, "utf8");
-			const repositoryUrls = [
-				...readme.matchAll(
-					/https:\/\/deploy\.workers\.cloudflare\.com\/\?url=([^\s)]+)/g,
-				),
-			].map((match) => match[1]);
-			assert.deepEqual(
-				repositoryUrls,
-				[DEPLOY_BUTTON_REPOSITORY, DEPLOY_BUTTON_REPOSITORY],
-				path,
-			);
-		}
-	});
-	test("keeps the Deploy Button config portable across fresh clones", async () => {
-		const wrangler = parseJsoncObject(await readFile("wrangler.jsonc", "utf8"));
-		const packageJson = requiredRecord(
-			JSON.parse(await readFile("package.json", "utf8")),
-			"package.json",
-		);
-		const packageScripts = requiredRecord(
-			packageJson.scripts,
-			"package scripts",
-		);
-		const build = requiredRecord(wrangler.build, "wrangler build");
-		assert.equal(packageJson.main, "dist/worker.js");
-		assert.equal(wrangler.main, packageJson.main);
-		assert.equal(build.command, "pnpm build");
-		assert.deepEqual(build.watch_dir, ["src", "scripts"]);
-		assert.equal(packageScripts.dev, "wrangler dev");
-		assert.equal(
-			packageScripts.deploy,
-			"pnpm db:migrations:apply && wrangler deploy",
-		);
-		const d1Bindings = requiredRecordArray(
-			wrangler.d1_databases,
-			"wrangler D1 bindings",
-		);
-		const geminiDb = d1Bindings.find(
-			(binding) => binding.binding === "GEMINI_DB",
-		);
-
-		assert.equal(geminiDb?.database_name, "web2gem-gemini-accounts");
-		assert.equal(Object.hasOwn(geminiDb || {}, "database_id"), false);
-
-		assert.equal(
-			packageScripts["db:migrations:apply"],
-			"wrangler d1 migrations apply GEMINI_DB --remote",
-		);
-	});
-	test("keeps true forks synchronized and Cloudflare-driven", async () => {
-		const workflow = await readFile(
-			".github/workflows/sync-upstream.yml",
-			"utf8",
-		);
-
-		assert.match(workflow, /schedule:[\s\S]*cron: ["']0 0 \* \* 1["']/);
-		assert.match(workflow, /workflow_dispatch:/);
-		assert.match(workflow, /permissions:\s*\n\s+contents: write/);
-		assert.match(workflow, /if: \$\{\{ github\.event\.repository\.fork \}\}/);
-		assert.doesNotMatch(
-			workflow,
-			/reset --hard|push --force|-X theirs|CLOUDFLARE_API_TOKEN|database_id/,
-		);
-		assert.match(
-			workflow,
-			/uses: aormsby\/Fork-Sync-With-Upstream-action@v3\.4/,
-		);
-		assert.match(workflow, /upstream_sync_repo: Guardinary\/web2gem/);
-		assert.match(workflow, /upstream_sync_branch: gemini-account-pool/);
-		assert.match(workflow, /target_sync_branch: gemini-account-pool/);
-		assert.match(
-			workflow,
-			/target_repo_token: \$\{\{ secrets\.GITHUB_TOKEN \}\}/,
-		);
-		assert.match(workflow, /upstream_pull_args: ["']--ff-only["']/);
-		assert.doesNotMatch(workflow, /\t/);
-	});
-	test("documents first deployment and automatic fork updates", async () => {
-		const [english, chinese] = await readBothReadmes();
-
-		const readmeCases: ReadonlyArray<
-			readonly [string, string, readonly RegExp[]]
-		> = [
-			[
-				"README.md",
-				english,
-				[
-					/first deployment only/i,
-					/Recommended: automatic updates/,
-					/Copy the main branch only/,
-					/Upstream Sync/,
-					/Workflow permissions/,
-					/checks for updates every week/i,
-					/Updating an existing Deploy Button clone/,
-					/git merge --no-edit upstream\/gemini-account-pool/,
-				],
-			],
-			[
-				"README.zh.md",
-				chinese,
-				[
-					/仅用于首次部署/,
-					/推荐：自动更新部署/,
-					/Copy the main branch only/,
-					/Upstream Sync/,
-					/Workflow permissions/,
-					/每周会自动检查更新/,
-					/更新已有的 Deploy Button clone/,
-					/git merge --no-edit upstream\/gemini-account-pool/,
-				],
-			],
-		];
-		for (const [path, readme, patterns] of readmeCases) {
-			for (const pattern of patterns) assert.match(readme, pattern, path);
-		}
-	});
 	test("keeps README quality-command docs aligned with config", async () => {
 		const [[english, chinese], vitestConfig] = await Promise.all([
 			readBothReadmes(),
@@ -828,7 +572,6 @@ describe("quality scripts", () => {
 		for (const readme of [english, chinese]) {
 			for (const command of [
 				"pnpm check:static",
-				"pnpm check:worker-types",
 				"pnpm typecheck",
 				"pnpm typecheck:tests",
 				"pnpm check:arch",
@@ -853,45 +596,6 @@ describe("quality scripts", () => {
 		assert.match(vitestConfig, /fileParallelism:\s*true/);
 		assert.match(vitestConfig, /pool:\s*"threads"/);
 		assert.doesNotMatch(vitestConfig, /isolate:\s*false/);
-	});
-	test("keeps the account-pool release control plane on main", async () => {
-		const packageScripts = await readPackageScripts();
-		const runner = await readFile("scripts/check-release.mjs", "utf8");
-		assert.equal(
-			packageScripts["check:release"],
-			"node scripts/check-release.mjs",
-		);
-		for (const check of [
-			"check:static",
-			"check:test-types",
-			"check:worker-types",
-			"typecheck",
-			"typecheck:tests",
-			"check:arch",
-			"coverage:ci",
-			"smoke",
-			"check:size",
-		]) {
-			assert.match(runner, new RegExp(`"${check.replace(":", "\\:")}"`));
-		}
-
-		for (const workflow of [
-			".github/workflows/release.yml",
-			".github/workflows/reusable-versioned-release.yml",
-			".github/workflows/release-artifacts.yml",
-			".github/workflows/release-main.yml",
-			".github/workflows/release-account-pool.yml",
-		]) {
-			await assert.rejects(readFile(workflow, "utf8"), /ENOENT/, workflow);
-		}
-
-		const [english, chinese] = await readBothReadmes();
-		for (const readme of [english, chinese]) {
-			assert.match(readme, /Release Account Pool Edition/);
-			assert.match(readme, /pool-v\*/);
-			assert.match(readme, /web2gem-account-pool-worker\.js/);
-			assert.match(readme, /ghcr\.io\/guardinary\/web2gem-account-pool:latest/);
-		}
 	});
 	test("keeps command runners centralized across quality scripts", async () => {
 		const processHelper = await readFile("scripts/process.mjs", "utf8");
@@ -938,70 +642,14 @@ describe("quality scripts", () => {
 			"scripts/build-admin-ui.mjs",
 		);
 	});
-	test("keeps generated Worker binding types aligned with runtime config", async () => {
-		const packageScripts = await readPackageScripts();
-		const generatedTypes = await readFile("worker-configuration.d.ts", "utf8");
-		assert.match(packageScripts["worker:types"], /^wrangler types/);
-		assert.match(packageScripts["check:worker-types"], /^wrangler types/);
-		assert.match(generatedTypes, /interface WorkerBindings/);
-		assert.match(generatedTypes, /GEMINI_DB:\s*D1Database/);
-		for (const key of CONFIG_ENV_KEYS) {
-			assert.match(generatedTypes, new RegExp(`\\b${key}:`), key);
-		}
-	});
-	test("keeps quality-gates origin-scoped, static-blocking, and branch-gated", async () => {
-		const packageScripts = await readPackageScripts();
+	test("keeps Docker-only quality gates complete", async () => {
 		const workflow = await readFile(
 			".github/workflows/quality-gates.yml",
 			"utf8",
 		);
-		assert.match(
-			workflow,
-			/classify:[\s\S]*if: \$\{\{ github\.repository == 'Guardinary\/web2gem' \}\}/,
-		);
-		assert.match(
-			workflow,
-			/docker-smoke:[\s\S]*if: \$\{\{ github\.repository == 'Guardinary\/web2gem'/,
-		);
-		assert.match(
-			packageScripts["check:static"],
-			/--diagnostic-level=warn.*--error-on-warnings/,
-		);
-		assert.match(
-			workflow,
-			/branches:\s*\n\s+- dev\s*\n\s+- main\s*\n\s+- gemini-account-pool/,
-		);
-		assert.match(workflow, /github\.ref == 'refs\/heads\/gemini-account-pool'/);
-		assert.match(workflow, /name: Classify Change Risk/);
-		assert.match(
-			workflow,
-			/git diff --name-only -z[\s\S]*node scripts\/classify-ci-changes\.mjs/,
-		);
-		assert.match(
-			workflow,
-			/name: Required Gates - Ubuntu[\s\S]*needs: classify/,
-		);
-		assert.match(
-			workflow,
-			/name: Required - Documentation Validation[\s\S]*git diff --check/,
-		);
-		assert.match(
-			workflow,
-			/name: Required Gates - Node Unit[\s\S]*if: \$\{\{ needs\.classify\.outputs\.runtime == 'true' \}\}/,
-		);
-	});
-	test("parses JSONC config syntax without treating URL-like strings as comments", () => {
-		const wrangler = parseJsoncObject(`{
-      // JSONC line comment
-      "vars": {
-        "GEMINI_ORIGIN": "https://gemini.google.com",
-        "COMMENT_TEXT": "keep /* this */ and // this",
-      },
-    }`);
-
-		assert.deepEqual(wrangler.vars, {
-			GEMINI_ORIGIN: "https://gemini.google.com",
-			COMMENT_TEXT: "keep /* this */ and // this",
-		});
+		assert.match(workflow, /pnpm check:static/);
+		assert.match(workflow, /pnpm typecheck/);
+		assert.match(workflow, /pnpm unit/);
+		assert.match(workflow, /Docker smoke/);
 	});
 });

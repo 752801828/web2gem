@@ -104,7 +104,7 @@ export function oversizedInlineContextFailure(
 			"context-file attachments are unavailable",
 	);
 	const err: ErrorWithMetadata = new Error(
-		`context is too long to send inline (${formatPromptByteComparison(check)}) and ${unavailable}; configure the Gemini account pool with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`,
+		`context is too long to send inline (${formatPromptByteComparison(check)}) and ${unavailable}; configure the Gemini account pool with CURRENT_INPUT_FILE_ENABLED=true so this service can use text attachments, or reduce the request size`,
 	);
 	err.code = "large_context_inline_unsupported";
 	err.status = 422;

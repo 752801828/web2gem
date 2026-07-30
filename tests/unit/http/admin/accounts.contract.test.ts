@@ -2,7 +2,7 @@ import { describe, test } from "vitest";
 import {
 	createRuntimeConfig,
 	getConfig,
-	type WorkerEnv,
+	type AppEnv,
 } from "../../../../src/config";
 import { handleGeminiAccountAdminRequest } from "../../../../src/http/admin/gemini-accounts";
 import { isRecord } from "../../../../src/shared/types";
@@ -10,15 +10,15 @@ import { assert } from "../../assertions.js";
 
 const cfg = createRuntimeConfig(getConfig({ ADMIN_KEY: "admin-secret" }));
 
-function failOnD1() {
+function failOnSql() {
 	return {
 		prepare(sql: string) {
-			throw new Error(`unexpected D1 access: ${sql}`);
+			throw new Error(`unexpected SQL access: ${sql}`);
 		},
 	};
 }
 
-function request(path: string, init: RequestInit = {}, env: WorkerEnv = {}) {
+function request(path: string, init: RequestInit = {}, env: AppEnv = {}) {
 	const url = new URL(`https://worker.example${path}`);
 	return handleGeminiAccountAdminRequest(
 		new Request(url, {
@@ -41,11 +41,11 @@ function errorCode(value: unknown): unknown {
 }
 
 describe("Gemini account admin HTTP contract", () => {
-	test("rejects an unauthorized request before D1 access", async () => {
+	test("rejects an unauthorized request before SQL access", async () => {
 		const url = new URL("https://worker.example/admin/accounts");
 		const response = await handleGeminiAccountAdminRequest(
 			new Request(url),
-			{ GEMINI_DB: failOnD1() },
+			{ ACCOUNT_DB: failOnSql() },
 			cfg,
 			url,
 		);
@@ -53,19 +53,19 @@ describe("Gemini account admin HTTP contract", () => {
 		assert.equal(errorCode(await response.json()), "invalid_admin_key");
 	});
 
-	test("returns 404 for retired stats and account-check routes without D1 access", async () => {
+	test("returns 404 for retired stats and account-check routes without SQL access", async () => {
 		for (const path of ["/admin/accounts/stats", "/admin/accounts/a/check"]) {
-			const response = await request(path, {}, { GEMINI_DB: failOnD1() });
+			const response = await request(path, {}, { ACCOUNT_DB: failOnSql() });
 			assert.equal(response.status, 404);
 			assert.equal(errorCode(await response.json()), "admin_route_not_found");
 		}
 	});
 
-	test("returns a sanitized legacy-query error before D1 access", async () => {
+	test("returns a sanitized legacy-query error before SQL access", async () => {
 		const response = await request(
 			"/admin/accounts?status=active",
 			{},
-			{ GEMINI_DB: failOnD1() },
+			{ ACCOUNT_DB: failOnSql() },
 		);
 		assert.equal(response.status, 400);
 		assert.deepEqual(await response.json(), {
@@ -135,7 +135,7 @@ describe("Gemini account admin HTTP contract", () => {
 		}
 	});
 
-	test("rejects malformed JSON before D1 access", async () => {
+	test("rejects malformed JSON before SQL access", async () => {
 		const response = await request(
 			"/admin/accounts",
 			{
@@ -143,17 +143,17 @@ describe("Gemini account admin HTTP contract", () => {
 				headers: { "content-type": "application/json" },
 				body: "{",
 			},
-			{ GEMINI_DB: failOnD1() },
+			{ ACCOUNT_DB: failOnSql() },
 		);
 		assert.equal(response.status, 400);
 		assert.equal(errorCode(await response.json()), "invalid_admin_json");
 	});
 
-	test("rejects a delete body and an unknown resource action before D1 access", async () => {
+	test("rejects a delete body and an unknown resource action before SQL access", async () => {
 		const deleteBody = await request(
 			"/admin/accounts/a",
 			{ method: "DELETE", body: "unexpected" },
-			{ GEMINI_DB: failOnD1() },
+			{ ACCOUNT_DB: failOnSql() },
 		);
 		assert.equal(deleteBody.status, 400);
 		assert.equal(
@@ -164,7 +164,7 @@ describe("Gemini account admin HTTP contract", () => {
 		const unknown = await request(
 			"/admin/accounts/a/unknown",
 			{ method: "POST" },
-			{ GEMINI_DB: failOnD1() },
+			{ ACCOUNT_DB: failOnSql() },
 		);
 		assert.equal(unknown.status, 404);
 		assert.equal(errorCode(await unknown.json()), "admin_route_not_found");

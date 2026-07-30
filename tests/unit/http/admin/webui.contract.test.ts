@@ -6,14 +6,14 @@ import { assert } from "../../assertions.js";
 const execution: ApplicationExecutionContext = { waitUntil() {} };
 
 describe("admin WebUI HTTP contract", () => {
-	test("serves the simplified admin UI without D1 reads or removed controls", async () => {
+	test("serves the simplified admin UI without SQL reads or removed controls", async () => {
 		let prepareCalls = 0;
 		const env = {
 			ADMIN_KEY: "admin-secret",
-			GEMINI_DB: {
+			ACCOUNT_DB: {
 				prepare() {
 					prepareCalls++;
-					throw new Error("admin UI must not prepare D1 statements");
+					throw new Error("admin UI must not prepare SQL statements");
 				},
 			},
 		};
@@ -54,16 +54,16 @@ describe("admin WebUI HTTP contract", () => {
 		assert.doesNotMatch(html, /admin-secret/);
 	});
 
-	test("rejects non-GET admin UI requests without D1 access", async () => {
+	test("rejects non-GET admin UI requests without SQL access", async () => {
 		let prepareCalls = 0;
 		const response = await worker.fetch(
 			new Request("https://worker.example/admin", { method: "POST" }),
 			{
 				ADMIN_KEY: "admin-secret",
-				GEMINI_DB: {
+				ACCOUNT_DB: {
 					prepare() {
 						prepareCalls++;
-						throw new Error("admin UI must not prepare D1 statements");
+						throw new Error("admin UI must not prepare SQL statements");
 					},
 				},
 			},

@@ -3,29 +3,29 @@ import type { GeminiAccountSummary } from "../../../../../src/gemini/accounts/ty
 import type { GeminiAccountIssue } from "../../../../../src/gemini/accounts/domain";
 import type { GeminiAccountStore } from "../../../../../src/gemini/accounts/types";
 import type {
-	D1DatabaseLike,
-	D1PreparedStatementLike,
-	D1Result,
+	SqlDatabaseLike,
+	SqlPreparedStatementLike,
+	SqlResult,
 	GeminiAccountRow,
 } from "../../../../../src/gemini/accounts/types";
-import type { GeminiAccountSummarySqlRow } from "../../../../../src/gemini/accounts/store-d1";
+import type { GeminiAccountSummarySqlRow } from "../../../../../src/gemini/accounts/store-sql";
 
 type SqlExpectation = string | RegExp;
-type D1Operation = "first" | "all" | "run" | "batch";
+type SQLOperation = "first" | "all" | "run" | "batch";
 
-export type D1Expectation = {
+export type SQLExpectation = {
 	sql: SqlExpectation;
 	binds: readonly unknown[];
-	operation: D1Operation;
+	operation: SQLOperation;
 	result?: unknown;
 	error?: unknown;
 	columnName?: string;
 };
 
-type RecordingD1Record = {
+type RecordingSqlRecord = {
 	sql: string;
 	binds: unknown[] | null;
-	operation: D1Operation | null;
+	operation: SQLOperation | null;
 };
 
 export function accountSqlRow(
@@ -116,7 +116,7 @@ export function poolVersionExpectation(
 	nowMs: number,
 	mode: keyof typeof poolVersionSql = "changes",
 	extraBinds: readonly unknown[] = [],
-): D1Expectation {
+): SQLExpectation {
 	return {
 		sql: poolVersionSql[mode],
 		binds: ["pool_version", nowMs, ...extraBinds],
@@ -125,23 +125,23 @@ export function poolVersionExpectation(
 	};
 }
 
-export function mutationResult(changes = 1): D1Result {
+export function mutationResult(changes = 1): SqlResult {
 	return { meta: { changes } };
 }
 
-export class RecordingD1 implements D1DatabaseLike {
-	readonly pending: D1Expectation[];
-	readonly records: RecordingD1Record[] = [];
-	readonly batches: RecordingD1Record[][] = [];
+export class RecordingSql implements SqlDatabaseLike {
+	readonly pending: SQLExpectation[];
+	readonly records: RecordingSqlRecord[] = [];
+	readonly batches: RecordingSqlRecord[][] = [];
 
-	constructor(expectations: readonly D1Expectation[] = []) {
+	constructor(expectations: readonly SQLExpectation[] = []) {
 		this.pending = [...expectations];
 	}
 
-	prepare(sql: string): D1PreparedStatementLike {
+	prepare(sql: string): SqlPreparedStatementLike {
 		const expectation = this.pending.shift();
 		if (!expectation)
-			throw new Error(`unexpected D1 prepare: ${normalizeSql(sql)}`);
+			throw new Error(`unexpected SQL prepare: ${normalizeSql(sql)}`);
 		const normalized = normalizeSql(sql);
 		assertSql(expectation.sql, normalized);
 		const record = { sql: normalized, binds: null, operation: null };
@@ -150,21 +150,21 @@ export class RecordingD1 implements D1DatabaseLike {
 	}
 
 	async batch<T = unknown>(
-		statements: D1PreparedStatementLike[],
-	): Promise<D1Result<T>[]> {
+		statements: SqlPreparedStatementLike[],
+	): Promise<SqlResult<T>[]> {
 		if (!Array.isArray(statements))
-			throw new Error("D1 batch must be an array");
+			throw new Error("SQL batch must be an array");
 		this.batches.push(
 			statements.map((statement) => {
 				if (!(statement instanceof RecordingStatement) || statement.db !== this)
-					throw new Error("D1 batch received an unrecorded statement");
+					throw new Error("SQL batch received an unrecorded statement");
 				return statement.record;
 			}),
 		);
 		return statements.map((statement) => {
 			if (!(statement instanceof RecordingStatement) || statement.db !== this)
-				throw new Error("D1 batch received an unrecorded statement");
-			return statement.execute<D1Result<T>>("batch");
+				throw new Error("SQL batch received an unrecorded statement");
+			return statement.execute<SqlResult<T>>("batch");
 		});
 	}
 
@@ -172,13 +172,17 @@ export class RecordingD1 implements D1DatabaseLike {
 		const actualRecordIndexes = this.batches.map((batch) =>
 			batch.map((record) => this.records.indexOf(record)),
 		);
-		assertValues(expectedRecordIndexes, actualRecordIndexes, "D1 batch groups");
+		assertValues(
+			expectedRecordIndexes,
+			actualRecordIndexes,
+			"SQL batch groups",
+		);
 	}
 
 	assertDrained(): void {
 		if (this.pending.length) {
 			throw new Error(
-				`unconsumed D1 expectations: ${this.pending
+				`unconsumed SQL expectations: ${this.pending
 					.map((item) => String(item.sql))
 					.join(", ")}`,
 			);
@@ -186,25 +190,25 @@ export class RecordingD1 implements D1DatabaseLike {
 		const incomplete = this.records.find((record) => record.operation === null);
 		if (incomplete)
 			throw new Error(
-				`prepared D1 statement was not executed: ${incomplete.sql}`,
+				`prepared SQL statement was not executed: ${incomplete.sql}`,
 			);
 	}
 
-	get lastStatement(): RecordingD1Record | undefined {
+	get lastStatement(): RecordingSqlRecord | undefined {
 		return this.records.at(-1);
 	}
 }
 
-class RecordingStatement implements D1PreparedStatementLike {
+class RecordingStatement implements SqlPreparedStatementLike {
 	constructor(
-		readonly db: RecordingD1,
-		private readonly expectation: D1Expectation,
-		readonly record: RecordingD1Record,
+		readonly db: RecordingSql,
+		private readonly expectation: SQLExpectation,
+		readonly record: RecordingSqlRecord,
 	) {}
 
-	bind(...values: unknown[]): D1PreparedStatementLike {
+	bind(...values: unknown[]): SqlPreparedStatementLike {
 		if (this.record.binds !== null)
-			throw new Error(`D1 statement was bound twice: ${this.record.sql}`);
+			throw new Error(`SQL statement was bound twice: ${this.record.sql}`);
 		assertValues(this.expectation.binds, values, this.record.sql);
 		this.record.binds = values;
 		return this;
@@ -220,24 +224,24 @@ class RecordingStatement implements D1PreparedStatementLike {
 		return this.execute<T | null>("first");
 	}
 
-	async all<T = unknown>(): Promise<D1Result<T>> {
-		return this.execute<D1Result<T>>("all");
+	async all<T = unknown>(): Promise<SqlResult<T>> {
+		return this.execute<SqlResult<T>>("all");
 	}
 
-	async run<T = unknown>(): Promise<D1Result<T>> {
-		return this.execute<D1Result<T>>("run");
+	async run<T = unknown>(): Promise<SqlResult<T>> {
+		return this.execute<SqlResult<T>>("run");
 	}
 
-	execute<T>(operation: D1Operation): T {
+	execute<T>(operation: SQLOperation): T {
 		if (this.record.operation !== null)
-			throw new Error(`D1 statement executed twice: ${this.record.sql}`);
+			throw new Error(`SQL statement executed twice: ${this.record.sql}`);
 		if (this.record.binds === null) {
 			assertValues(this.expectation.binds, [], this.record.sql);
 			this.record.binds = [];
 		}
 		if (this.expectation.operation !== operation) {
 			throw new Error(
-				`unexpected D1 operation for ${this.record.sql}: expected ${this.expectation.operation}, received ${operation}`,
+				`unexpected SQL operation for ${this.record.sql}: expected ${this.expectation.operation}, received ${operation}`,
 			);
 		}
 		this.record.operation = operation;
@@ -411,7 +415,7 @@ function assertSql(expected: SqlExpectation, actual: string): void {
 		if (expected.test(actual)) return;
 	} else if (normalizeSql(expected) === actual) return;
 	throw new Error(
-		`unexpected D1 SQL: expected ${String(expected)}, received ${actual}`,
+		`unexpected SQL SQL: expected ${String(expected)}, received ${actual}`,
 	);
 }
 

@@ -17,7 +17,6 @@ export function baseGeminiClientConfig(
 		retry_attempts: 1,
 		retry_delay_sec: 0,
 		current_input_file_min_bytes: 1000000,
-		upstream_socket: false,
 		log_requests: false,
 		...overrides,
 	};

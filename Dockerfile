@@ -13,6 +13,7 @@ COPY tsconfig.json ./
 COPY scripts ./scripts
 COPY server ./server
 COPY src ./src
+COPY migrations ./migrations
 RUN pnpm build
 
 FROM node:26-alpine AS runtime
@@ -20,13 +21,13 @@ FROM node:26-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=52389 \
-    UPSTREAM_SOCKET=false
+    PORT=52389
 
-COPY --from=build /app/dist/worker.js ./dist/worker.js
+COPY --from=build /app/dist/app.js ./dist/app.js
 COPY --from=build /app/server/docker-server.mjs ./server/docker-server.mjs
-COPY --from=build /app/server/d1-http-binding.mjs ./server/d1-http-binding.mjs
+COPY --from=build /app/server/sqlite-binding.mjs ./server/sqlite-binding.mjs
 COPY --from=build /app/server/io.mjs ./server/io.mjs
+COPY --from=build /app/migrations/0001_gemini_accounts.sql ./migrations/0001_gemini_accounts.sql
 
 EXPOSE 52389
 CMD ["node", "server/docker-server.mjs"]

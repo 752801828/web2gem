@@ -36,7 +36,6 @@ export function baseUploadConfig(
 		cookie: "",
 		sapisid: "",
 		request_timeout_sec: 180,
-		upstream_socket: false,
 		log_requests: false,
 		generic_file_upload_max_bytes: 1024,
 		...overrides,

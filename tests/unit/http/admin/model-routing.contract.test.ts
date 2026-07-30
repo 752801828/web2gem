@@ -3,7 +3,7 @@ import {
 	createRuntimeConfig,
 	getConfig,
 	type RuntimeConfig,
-	type WorkerEnv,
+	type AppEnv,
 } from "../../../../src/config";
 import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/routes";
 import { handleGeminiModelRoutingAdminRequest } from "../../../../src/http/admin/gemini-model-routing";
@@ -11,8 +11,8 @@ import type { GeminiPublicFamily } from "../../../../src/models";
 import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import {
-	type D1Expectation,
-	RecordingD1,
+	type SQLExpectation,
+	RecordingSql,
 } from "../../gemini/accounts/_support/store-fixtures.js";
 
 const nowMs = 10_000;
@@ -22,7 +22,7 @@ const cfg: RuntimeConfig = createRuntimeConfig(
 		ADMIN_KEY: "admin-secret",
 		GEMINI_ACCOUNT_CAPABILITY_TTL_SEC: "3600",
 	}),
-	{ runtime_profile: "worker" },
+	{},
 );
 const discoveredCapabilities = [
 	{
@@ -114,7 +114,7 @@ afterEach(() => {
 function overviewExpectations(
 	version: string,
 	priorities: readonly UnknownRecord[] = [],
-): D1Expectation[] {
+): SQLExpectation[] {
 	return [
 		{
 			sql: "SELECT value FROM gemini_pool_meta WHERE key = ?",
@@ -147,7 +147,7 @@ function overviewExpectations(
 function priorityMutationExpectations(
 	family: GeminiPublicFamily,
 	routes: readonly GeminiRouteTuple[],
-): D1Expectation[] {
+): SQLExpectation[] {
 	return [
 		{
 			sql: "DELETE FROM gemini_model_route_priority WHERE family = ?",
@@ -155,7 +155,7 @@ function priorityMutationExpectations(
 			operation: "batch",
 			result: { meta: { changes: 1 } },
 		},
-		...routes.map<D1Expectation>((route, priority) => ({
+		...routes.map<SQLExpectation>((route, priority) => ({
 			sql: /INSERT INTO gemini_model_route_priority \( family, provider_model_id, capacity, capacity_field, model_number, priority, updated_at_ms \) VALUES \(\?, \?, \?, \?, \?, \?, \?\)/,
 			binds: [
 				family,
@@ -193,7 +193,7 @@ function priorityRows(
 	}));
 }
 
-function request(db: RecordingD1, path: string, init: RequestInit = {}) {
+function request(db: RecordingSql, path: string, init: RequestInit = {}) {
 	const url = new URL(`https://worker.example${path}`);
 	return handleGeminiModelRoutingAdminRequest(
 		new Request(url, {
@@ -203,7 +203,7 @@ function request(db: RecordingD1, path: string, init: RequestInit = {}) {
 				...(init.headers || {}),
 			},
 		}),
-		{ GEMINI_DB: db },
+		{ ACCOUNT_DB: db },
 		cfg,
 		url,
 	);
@@ -244,7 +244,7 @@ function errorCode(value: unknown): unknown {
 	return error.code;
 }
 
-async function expectRejectedBeforeD1(input: {
+async function expectRejectedBeforeSQL(input: {
 	path: string;
 	body: UnknownRecord;
 	status: number;
@@ -252,10 +252,10 @@ async function expectRejectedBeforeD1(input: {
 	message: string;
 }): Promise<void> {
 	const { path, body, status, code, message } = input;
-	const db = new RecordingD1();
+	const db = new RecordingSql();
 	let accessed = false;
-	const env: WorkerEnv = {};
-	Object.defineProperty(env, "GEMINI_DB", {
+	const env: AppEnv = {};
+	Object.defineProperty(env, "ACCOUNT_DB", {
 		get() {
 			accessed = true;
 			return db;
@@ -286,12 +286,12 @@ async function expectRejectedBeforeD1(input: {
 }
 
 describe("Gemini model-routing admin HTTP contract", () => {
-	test("rejects unauthorized access before D1 preparation", async () => {
-		const db = new RecordingD1();
+	test("rejects unauthorized access before SQL preparation", async () => {
+		const db = new RecordingSql();
 		const url = new URL("https://worker.example/admin/model-routing");
 		const response = await handleGeminiModelRoutingAdminRequest(
 			new Request(url),
-			{ GEMINI_DB: db },
+			{ ACCOUNT_DB: db },
 			cfg,
 			url,
 		);
@@ -301,13 +301,13 @@ describe("Gemini model-routing admin HTTP contract", () => {
 		db.assertDrained();
 	});
 
-	test("does not read the D1 binding for an authenticated unknown route", async () => {
+	test("does not read the SQL storage for an authenticated unknown route", async () => {
 		let accessed = false;
 		const env = {};
-		Object.defineProperty(env, "GEMINI_DB", {
+		Object.defineProperty(env, "ACCOUNT_DB", {
 			get() {
 				accessed = true;
-				throw new Error("D1 must not be accessed");
+				throw new Error("SQL must not be accessed");
 			},
 		});
 		const url = new URL("https://worker.example/admin/model-routing/pro/extra");
@@ -334,7 +334,7 @@ describe("Gemini model-routing admin HTTP contract", () => {
 		assert.equal(accessed, false);
 	});
 
-	test("rejects invalid families and route payloads before D1 preparation", async () => {
+	test("rejects invalid families and route payloads before SQL preparation", async () => {
 		const route = routesByFamily.pro[0];
 		for (const invalid of [
 			{
@@ -373,12 +373,12 @@ describe("Gemini model-routing admin HTTP contract", () => {
 				message: "model routing policy exceeds the limit of 128 routes",
 			},
 		])
-			await expectRejectedBeforeD1(invalid);
+			await expectRejectedBeforeSQL(invalid);
 	});
 
 	test("maps discovered exact routes into an unconfigured overview", async () => {
 		vi.spyOn(Date, "now").mockReturnValue(nowMs);
-		const db = new RecordingD1(overviewExpectations("7"));
+		const db = new RecordingSql(overviewExpectations("7"));
 		const response = await request(db, "/admin/model-routing");
 		assert.equal(response.status, 200);
 		const pro = proFamily(await response.json());
@@ -400,7 +400,7 @@ describe("Gemini model-routing admin HTTP contract", () => {
 
 	test("rejects an undiscovered route without preparing a policy mutation", async () => {
 		vi.spyOn(Date, "now").mockReturnValue(nowMs);
-		const db = new RecordingD1(overviewExpectations("7"));
+		const db = new RecordingSql(overviewExpectations("7"));
 		const response = await request(db, "/admin/model-routing/pro", {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
@@ -430,7 +430,7 @@ describe("Gemini model-routing admin HTTP contract", () => {
 	test("records a policy replacement and returns the configured route order", async () => {
 		vi.spyOn(Date, "now").mockReturnValue(nowMs);
 		const routes = routesByFamily.pro;
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			...overviewExpectations("7"),
 			...priorityMutationExpectations("pro", routes),
 			...overviewExpectations("8", priorityRows("pro", routes)),
@@ -459,7 +459,7 @@ describe("Gemini model-routing admin HTTP contract", () => {
 			"flash_lite",
 		] as const satisfies readonly GeminiPublicFamily[]) {
 			const routes = routesByFamily[family];
-			const db = new RecordingD1([
+			const db = new RecordingSql([
 				...overviewExpectations("7"),
 				...priorityMutationExpectations(family, routes),
 				...overviewExpectations("8", priorityRows(family, routes)),
@@ -486,7 +486,7 @@ describe("Gemini model-routing admin HTTP contract", () => {
 
 	test("records a family reset and returns an unconfigured overview", async () => {
 		vi.spyOn(Date, "now").mockReturnValue(nowMs);
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			...priorityMutationExpectations("pro", []),
 			...overviewExpectations("9"),
 		]);

@@ -2,7 +2,7 @@ import type { GeminiPublicFamily } from "../../models";
 import {
 	boundedGeminiAccountPageLimit,
 	GEMINI_DURABLE_ACCOUNT_ISSUES,
-	isD1UniqueConstraintError,
+	isSqlUniqueConstraintError,
 	normalizeGeminiCookieHeader,
 	resultChanged,
 	sha256Hex,
@@ -15,9 +15,9 @@ import type {
 } from "./routes";
 import { validateGeminiModelRoutePolicy } from "./routes";
 import type {
-	D1DatabaseLike,
-	D1PreparedStatementLike,
-	D1Result,
+	SqlDatabaseLike,
+	SqlPreparedStatementLike,
+	SqlResult,
 	GeminiAccountOutcome,
 	GeminiAccountRow,
 	GeminiAccountSecretRow,
@@ -27,7 +27,7 @@ import type {
 } from "./types";
 
 export const POOL_VERSION_KEY = "pool_version";
-export const MAX_D1_BOUND_PARAMETERS = 100;
+export const MAX_SQL_BOUND_PARAMETERS = 100;
 export const ACCOUNT_CAPABILITY_SELECT = `
   account_id, model_id, display_name, description, available,
   capacity, capacity_field, model_number, discovery_order, checked_at_ms
@@ -37,10 +37,10 @@ export const ACCOUNT_SECRET_SELECT =
 
 /**
  * Runtime SQL methods for the Gemini account store.
- * Admin CRUD lives on D1GeminiAccountStore which extends this class.
+ * Admin CRUD lives on SqlGeminiAccountStore which extends this class.
  */
-export class D1GeminiAccountStoreBase {
-	constructor(protected readonly db: D1DatabaseLike) {}
+export class SqlGeminiAccountStoreBase {
+	constructor(protected readonly db: SqlDatabaseLike) {}
 
 	protected async getAccountRow(
 		accountId: string,
@@ -72,9 +72,9 @@ export class D1GeminiAccountStoreBase {
 	}
 
 	protected async runMutationWithPoolVersion(
-		mutation: D1PreparedStatementLike,
+		mutation: SqlPreparedStatementLike,
 		nowMs: number,
-	): Promise<D1Result> {
+	): Promise<SqlResult> {
 		if (!this.db.batch) {
 			const result = await mutation.run();
 			if (resultChanged(result) > 0) await this.bumpPoolVersion(nowMs);
@@ -85,7 +85,7 @@ export class D1GeminiAccountStoreBase {
 			this.poolVersionIncrementStatement(nowMs, "WHERE changes() > 0"),
 		]);
 		if (!result)
-			throw new Error("D1 account mutation batch returned no result");
+			throw new Error("SQL account mutation batch returned no result");
 		return result;
 	}
 
@@ -102,7 +102,7 @@ export class D1GeminiAccountStoreBase {
 			prefixValues?: readonly unknown[];
 			returning?: string;
 		} = {},
-	): D1PreparedStatementLike {
+	): SqlPreparedStatementLike {
 		return this.db
 			.prepare(`
 				${options.prefix || ""}
@@ -325,7 +325,7 @@ export class D1GeminiAccountStoreBase {
 				update.nowMs,
 			);
 		} catch (error) {
-			if (!isD1UniqueConstraintError(error)) throw error;
+			if (!isSqlUniqueConstraintError(error)) throw error;
 			const duplicate = await this.findAccountIdByCookieHash(cookieHash);
 			if (!duplicate || duplicate === accountId) throw error;
 			return { changed: false, reason: "duplicate_cookie" };
@@ -394,7 +394,7 @@ export class D1GeminiAccountStoreBase {
 		if (!accountIds.length) return [];
 		const uniqueIds = [...new Set(accountIds)].slice(
 			0,
-			MAX_D1_BOUND_PARAMETERS,
+			MAX_SQL_BOUND_PARAMETERS,
 		);
 		const placeholders = uniqueIds.map(() => "?").join(", ");
 		const result = await this.db

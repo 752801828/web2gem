@@ -1,17 +1,17 @@
 import { describe, test } from "vitest";
-import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
+import { SqlGeminiAccountStore } from "../../../../src/gemini/accounts/store-sql";
 import { assert } from "../../assertions.js";
 import {
 	accountSqlRow,
 	mutationResult,
 	poolVersionExpectation,
-	RecordingD1,
+	RecordingSql,
 } from "./_support/store-fixtures.js";
 
-describe("D1 Gemini account store mutations", () => {
+describe("SQL Gemini account store mutations", () => {
 	test("returns an unchanged update without preparing a mutation", async () => {
 		const current = accountSqlRow("first", { label: "First" });
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: "SELECT * FROM gemini_accounts WHERE id = ? LIMIT 1",
 				binds: ["first"],
@@ -20,7 +20,7 @@ describe("D1 Gemini account store mutations", () => {
 			},
 		]);
 
-		const result = await new D1GeminiAccountStore(db).updateAccount("first", {
+		const result = await new SqlGeminiAccountStore(db).updateAccount("first", {
 			label: "First",
 			nowMs: 1100,
 		});
@@ -32,7 +32,7 @@ describe("D1 Gemini account store mutations", () => {
 
 	test("records an enabled-state update and its conditional pool-version batch", async () => {
 		const current = accountSqlRow("first", { label: "First" });
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: "SELECT * FROM gemini_accounts WHERE id = ? LIMIT 1",
 				binds: ["first"],
@@ -48,7 +48,7 @@ describe("D1 Gemini account store mutations", () => {
 			poolVersionExpectation(1200),
 		]);
 
-		const result = await new D1GeminiAccountStore(db).updateAccount("first", {
+		const result = await new SqlGeminiAccountStore(db).updateAccount("first", {
 			enabled: false,
 			nowMs: 1200,
 		});
@@ -60,7 +60,7 @@ describe("D1 Gemini account store mutations", () => {
 	});
 
 	test("binds only changed IDs for bulk enablement and returns requested order", async () => {
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: "SELECT * FROM gemini_accounts WHERE id IN (?, ?, ?)",
 				binds: ["first", "second", "third"],
@@ -83,7 +83,7 @@ describe("D1 Gemini account store mutations", () => {
 		]);
 
 		assert.deepEqual(
-			await new D1GeminiAccountStore(db).setAccountsEnabledBulk(
+			await new SqlGeminiAccountStore(db).setAccountsEnabledBulk(
 				["first", "second", "third"],
 				false,
 				7000,
@@ -95,7 +95,7 @@ describe("D1 Gemini account store mutations", () => {
 	});
 
 	test("binds only existing IDs for bulk deletion and maps single-delete changes", async () => {
-		const db = new RecordingD1([
+		const db = new RecordingSql([
 			{
 				sql: "SELECT * FROM gemini_accounts WHERE id IN (?, ?)",
 				binds: ["second", "missing"],
@@ -124,7 +124,7 @@ describe("D1 Gemini account store mutations", () => {
 			},
 			poolVersionExpectation(9000),
 		]);
-		const store = new D1GeminiAccountStore(db);
+		const store = new SqlGeminiAccountStore(db);
 
 		assert.deepEqual(
 			await store.deleteAccountsBulk(["second", "missing"], 8000),

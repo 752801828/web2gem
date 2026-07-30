@@ -1,10 +1,6 @@
+import { type RuntimeConfig, RuntimeConfigError, type AppEnv } from "./config";
 import {
-	type RuntimeConfig,
-	RuntimeConfigError,
-	type WorkerEnv,
-} from "./config";
-import {
-	d1BindingFromEnv,
+	sqlBindingFromEnv,
 	getGeminiAccountPoolFromEnv,
 } from "./gemini/accounts/runtime";
 import { capabilityFreshAfterMs } from "./gemini/accounts/pool-snapshot";
@@ -23,7 +19,7 @@ import {
 import { log } from "./shared/logging";
 
 export async function applicationModelCatalog(context: {
-	env: WorkerEnv;
+	env: AppEnv;
 	cfg: RuntimeConfig;
 }): Promise<GeminiModelCatalog> {
 	const fallback = buildGeminiModelCatalog([], Date.now());
@@ -44,9 +40,9 @@ export async function applicationModelCatalog(context: {
 
 export function withAccountPoolAvailability(
 	cfg: RuntimeConfig,
-	env: WorkerEnv,
+	env: AppEnv,
 ): RuntimeConfig {
-	if (!d1BindingFromEnv(env)) return cfg;
+	if (!sqlBindingFromEnv(env)) return cfg;
 	return { ...cfg, supports_authenticated_session: true };
 }
 

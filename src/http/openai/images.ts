@@ -127,7 +127,7 @@ function parseImageEndpointOptions(
 	if (stream.value === true) {
 		return {
 			response: openAIErrorResponse(
-				"streaming image generation is not supported by this worker",
+				"streaming image generation is not supported by this service",
 				400,
 				"unsupported_image_generation_stream",
 			),
@@ -161,7 +161,7 @@ function validateImageCount(value: unknown): Response | null {
 	else if (typeof value === "string" && value.trim()) count = Number(value);
 	if (!Number.isInteger(count) || count !== 1) {
 		return openAIErrorResponse(
-			"this worker supports only n=1 for image endpoint requests",
+			"this service supports only n=1 for image endpoint requests",
 			400,
 			"unsupported_image_count",
 		);

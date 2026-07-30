@@ -46,7 +46,7 @@ try {
 	});
 	assert(models.status === 200, `authenticated models status ${models.status}`);
 
-	const missingD1 = await fetch(`${base}/v1/chat/completions`, {
+	const emptyAccountPool = await fetch(`${base}/v1/chat/completions`, {
 		method: "POST",
 		headers: {
 			Authorization: "Bearer smoke-key",
@@ -57,12 +57,14 @@ try {
 			messages: [{ role: "user", content: "hello" }],
 		}),
 	});
-	assert(missingD1.status === 422, `missing D1 status ${missingD1.status}`);
-	const missingD1Body = await missingD1.json();
 	assert(
-		missingD1Body.error?.code === "gemini_authenticated_session_required" &&
-			missingD1Body.error?.reason === "pro_model",
-		"missing D1 did not return the authenticated-session error",
+		emptyAccountPool.status === 503,
+		`empty account pool status ${emptyAccountPool.status}`,
+	);
+	const emptyAccountPoolBody = await emptyAccountPool.json();
+	assert(
+		emptyAccountPoolBody.error?.code === "no_available_gemini_account",
+		"empty account pool did not return the availability error",
 	);
 
 	outputLine("Docker smoke check passed");

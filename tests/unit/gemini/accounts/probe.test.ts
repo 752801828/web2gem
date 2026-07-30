@@ -51,7 +51,6 @@ async function verifyWithProbeResponse(
 	const cfg = baseGeminiClientConfig({
 		cookie: "__Secure-1PSID=psid; SAPISID=sapi",
 		gemini_origin: "https://gemini.example",
-		upstream_socket: false,
 	});
 	return withFetch(
 		async (url: RequestInfo | URL) => {

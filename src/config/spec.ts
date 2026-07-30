@@ -9,14 +9,14 @@ import {
 	parseString,
 	parseZeroOrBoundedInteger,
 } from "./parse";
-import type { StaticRuntimeConfig, WorkerEnv } from "./types";
+import type { StaticRuntimeConfig, AppEnv } from "./types";
 
 type MutableStaticRuntimeConfig = {
 	-readonly [K in keyof StaticRuntimeConfig]: StaticRuntimeConfig[K];
 };
 
 type ConfigSpecEntry<K extends keyof StaticRuntimeConfig> = {
-	key: keyof WorkerBindings;
+	key: string;
 	field: K;
 	defaultValue: StaticRuntimeConfig[K];
 	parse: (setting: string, value: unknown) => StaticRuntimeConfig[K];
@@ -27,7 +27,7 @@ type AnyConfigSpecEntry = {
 }[keyof StaticRuntimeConfig];
 
 function configEntry<K extends keyof StaticRuntimeConfig>(
-	key: keyof WorkerBindings,
+	key: string,
 	field: K,
 	defaultValue: StaticRuntimeConfig[K],
 	parse: ConfigSpecEntry<K>["parse"],
@@ -48,7 +48,6 @@ const CONFIG_SPEC = [
 		"https://gemini.google.com",
 		parseHttpOrigin,
 	),
-	configEntry("UPSTREAM_SOCKET", "upstream_socket", true, parseStrictBoolean),
 	configEntry(
 		"DEFAULT_MODEL",
 		"default_model",
@@ -136,7 +135,7 @@ export const CONFIG_ENV_KEYS = Object.freeze(
 
 export type ConfigCacheSnapshot = readonly unknown[];
 
-export function parseStaticRuntimeConfig(env: WorkerEnv): StaticRuntimeConfig {
+export function parseStaticRuntimeConfig(env: AppEnv): StaticRuntimeConfig {
 	const out: Partial<MutableStaticRuntimeConfig> = {};
 	for (const entry of CONFIG_SPEC) assignConfigValue(out, entry, env);
 	return Object.freeze(out as StaticRuntimeConfig);
@@ -145,7 +144,7 @@ export function parseStaticRuntimeConfig(env: WorkerEnv): StaticRuntimeConfig {
 function assignConfigValue<K extends keyof StaticRuntimeConfig>(
 	out: Partial<MutableStaticRuntimeConfig>,
 	entry: ConfigSpecEntry<K>,
-	env: WorkerEnv,
+	env: AppEnv,
 ): void {
 	out[entry.field] = entry.parse(
 		entry.key,
@@ -153,13 +152,13 @@ function assignConfigValue<K extends keyof StaticRuntimeConfig>(
 	);
 }
 
-export function captureConfigSnapshot(env: WorkerEnv): ConfigCacheSnapshot {
+export function captureConfigSnapshot(env: AppEnv): ConfigCacheSnapshot {
 	return CONFIG_SPEC.map((entry) => snapshotValue(entry.key, env[entry.key]));
 }
 
 export function configSnapshotMatches(
 	snapshot: ConfigCacheSnapshot,
-	env: WorkerEnv,
+	env: AppEnv,
 ): boolean {
 	if (snapshot.length !== CONFIG_SPEC.length) return false;
 	for (let index = 0; index < CONFIG_SPEC.length; index++) {
@@ -170,7 +169,7 @@ export function configSnapshotMatches(
 	return true;
 }
 
-function snapshotValue(key: keyof WorkerBindings, value: unknown): unknown {
+function snapshotValue(key: string, value: unknown): unknown {
 	return key === "API_KEYS" && Array.isArray(value)
 		? Object.freeze([...value])
 		: value;

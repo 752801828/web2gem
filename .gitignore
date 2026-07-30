@@ -1,16 +1,11 @@
 node_modules/
 dist/
 coverage/
-.wrangler/
 *.log
 AGENTS.md
 .env
 .env.*
-!.env.example
 !.env.docker.example
-.dev.vars
-.dev.vars.*
-!.dev.vars.example
 
 # Local agent integration state
 .claude/

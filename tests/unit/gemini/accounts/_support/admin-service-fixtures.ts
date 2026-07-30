@@ -25,7 +25,6 @@ function serviceConfig(
 	return {
 		gemini_bl: "",
 		gemini_origin: "https://gemini.google.com",
-		upstream_socket: false,
 		retry_attempts: 1,
 		gemini_account_max_attempts: 10,
 		gemini_account_refresh_interval_sec: 600,

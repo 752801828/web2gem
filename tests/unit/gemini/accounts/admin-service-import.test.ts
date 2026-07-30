@@ -112,96 +112,6 @@ describe("Gemini account admin service imports", () => {
 		store.assertDrained();
 	});
 
-	test("registers a new import probe with Worker waitUntil and skips an unchanged identity", async () => {
-		const cookieHeader = "__Secure-1PSID=worker; __Secure-1PSIDTS=t";
-		const cookieHash = await sha256Hex(cookieHeader);
-		const account = accountSqlRow("worker-account", {
-			cookie_header: cookieHeader,
-			cookie_hash: cookieHash,
-		});
-		const pending: Promise<unknown>[] = [];
-		let verifyCalls = 0;
-		const store = createAccountStoreDouble({
-			createAccountsBulk: [
-				{
-					result: {
-						createdAccountIds: new Set(["worker-account"]),
-						changedCredentialCount: 0,
-					},
-				},
-				{
-					result: {
-						createdAccountIds: new Set(),
-						changedCredentialCount: 0,
-					},
-				},
-			],
-			getAccountForRefresh: [
-				{ args: ["worker-account"], result: account },
-				{ args: ["worker-account"], result: account },
-			],
-			tryAcquireRefreshLock: { result: true },
-			writeRefreshedCookie: { result: { changed: true } },
-			writeAccountProbe: {
-				check(args: readonly unknown[]) {
-					const id = argumentAt(args, 0);
-					const probe = argumentAt(args, 1);
-					const checkedAtMs = argumentAt(args, 2);
-					assert.equal(id, "worker-account");
-					if (!isRecord(probe)) throw new Error("invalid probe fixture");
-					assert.equal(probe.statusCode, 1000);
-					assert.equal(checkedAtMs, 1000);
-				},
-			},
-			writeAccountOutcome: {
-				args: ["worker-account", { kind: "success", nowMs: 1000 }],
-			},
-			releaseRefreshLock: {},
-		});
-		const service = createService(store, {
-			cfg: baseConfig({
-				runtime_profile: "worker",
-				execution_ctx: {
-					waitUntil(promise: Promise<unknown>) {
-						pending.push(promise);
-					},
-				},
-			}),
-			rotateCookie: async () =>
-				new Response(null, {
-					status: 200,
-					headers: { "set-cookie": "__Secure-1PSIDTS=rotated" },
-				}),
-			verifyAccount: async () => {
-				verifyCalls += 1;
-				return {
-					ok: true,
-					at: "fresh-at",
-					probe: {
-						statusCode: 1000,
-						issue: null,
-						models: [],
-					},
-				};
-			},
-		});
-		const body = {
-			provider: "gemini",
-			accounts: [{ "__Secure-1PSID": "worker", "__Secure-1PSIDTS": "t" }],
-		};
-
-		await service.create(body);
-		assert.equal(pending.length, 1);
-		const firstProbe = pending[0];
-		if (!firstProbe) throw new Error("missing scheduled import probe");
-		await firstProbe;
-		assert.equal(verifyCalls, 1);
-		await service.create(body);
-		assert.equal(pending.length, 1);
-		assert.equal(verifyCalls, 1);
-		store.assertDrained();
-	});
-
 	test("awaits Docker import probes with concurrency bounded to four", async () => {
 		const firstFourStarted = deferred();
 		const allStarted = deferred();
@@ -246,7 +156,7 @@ describe("Gemini account admin service imports", () => {
 			releaseRefreshLock: Array.from({ length: 6 }, () => ({})),
 		});
 		const service = createService(store, {
-			cfg: baseConfig({ runtime_profile: "docker" }),
+			cfg: baseConfig(),
 			rotateCookie: async ({ account }) => {
 				active += 1;
 				maxActive = Math.max(maxActive, active);

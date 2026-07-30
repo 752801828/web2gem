@@ -9,7 +9,6 @@ const DEFAULT_WARMUP = "10";
 const DEFAULT_BUDGETS = Object.freeze({
 	stream_sieve_held_tool: 8,
 	stream_text_cumulative_deltas: 12,
-	socket_chunked_long_split_line: 8,
 	structured_unique_items: 4,
 	account_admin_overview: 0.1,
 	account_admin_bulk_action: 0.5,

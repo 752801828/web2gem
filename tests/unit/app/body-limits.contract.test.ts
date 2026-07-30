@@ -46,10 +46,10 @@ describe("application body-limit contract", () => {
 					{
 						API_KEYS: "",
 						REQUEST_BODY_MAX_BYTES: "10",
-						GEMINI_DB: {
+						ACCOUNT_DB: {
 							prepare() {
 								d1Reads += 1;
-								throw new Error("oversized JSON should not read D1");
+								throw new Error("oversized JSON should not read SQL");
 							},
 						},
 					},

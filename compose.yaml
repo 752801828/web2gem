@@ -1,19 +1,18 @@
 services:
   web2gem:
-    image: "${WEB2GEM_IMAGE:-ghcr.io/guardinary/web2gem-account-pool:latest}"
-    pull_policy: always
+    build: .
+    image: "${WEB2GEM_IMAGE:-web2gem-account-pool:local}"
+    pull_policy: never
     restart: unless-stopped
     ports:
       - "${PORT:-52389}:${PORT:-52389}"
     environment:
       HOST: "0.0.0.0"
       PORT: "${PORT:-52389}"
-      UPSTREAM_SOCKET: "${UPSTREAM_SOCKET:-false}"
+      SQLITE_PATH: "${SQLITE_PATH:-/data/web2gem.sqlite}"
+      SQLITE_BUSY_TIMEOUT_MS: "${SQLITE_BUSY_TIMEOUT_MS:-5000}"
       API_KEYS: "${API_KEYS:-}"
       ADMIN_KEY: "${ADMIN_KEY:-}"
-      D1_ACCOUNT_ID: "${D1_ACCOUNT_ID:-}"
-      D1_DATABASE_ID: "${D1_DATABASE_ID:-}"
-      D1_API_TOKEN: "${D1_API_TOKEN:-}"
       GEMINI_BL: "${GEMINI_BL:-}"
       GEMINI_ORIGIN: "${GEMINI_ORIGIN:-}"
       DEFAULT_MODEL: "${DEFAULT_MODEL:-gemini-3.5-flash}"
@@ -29,3 +28,18 @@ services:
       CURRENT_INPUT_FILE_ENABLED: "${CURRENT_INPUT_FILE_ENABLED:-}"
       CURRENT_INPUT_FILE_MIN_BYTES: "${CURRENT_INPUT_FILE_MIN_BYTES:-}"
       GENERIC_FILE_UPLOAD_MAX_BYTES: "${GENERIC_FILE_UPLOAD_MAX_BYTES:-}"
+    volumes:
+      - web2gem-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:' + (process.env.PORT || '52389') + '/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  web2gem-data:

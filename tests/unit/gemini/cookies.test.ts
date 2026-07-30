@@ -94,7 +94,6 @@ describe("Gemini cookies", () => {
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old; SAPISID=sapi",
 			sapisid: "",
 			request_timeout_sec: 180,
-			upstream_socket: false,
 			log_requests: false,
 		});
 		await withFetch(
@@ -129,7 +128,6 @@ describe("Gemini cookies", () => {
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old",
 			sapisid: "",
 			request_timeout_sec: 180,
-			upstream_socket: false,
 			log_requests: false,
 		});
 		await withFetch(
@@ -154,7 +152,6 @@ describe("Gemini cookies", () => {
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old",
 			sapisid: "",
 			request_timeout_sec: 180,
-			upstream_socket: false,
 			log_requests: false,
 		});
 		await withFetch(
@@ -178,7 +175,6 @@ describe("Gemini cookies", () => {
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old",
 			sapisid: "",
 			request_timeout_sec: 180,
-			upstream_socket: false,
 			log_requests: false,
 		});
 		await withFetch(
@@ -217,7 +213,6 @@ describe("Gemini cookies", () => {
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old",
 			sapisid: "",
 			request_timeout_sec: 180,
-			upstream_socket: false,
 			log_requests: false,
 		});
 		await withFetch(
@@ -242,7 +237,6 @@ describe("Gemini cookies", () => {
 				cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old; SAPISID=sapi",
 				sapisid: "",
 				request_timeout_sec: 180,
-				upstream_socket: false,
 				log_requests: false,
 			});
 			const pageCookies: string[] = [];

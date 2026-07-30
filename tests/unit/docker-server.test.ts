@@ -1,16 +1,12 @@
 import type { Server } from "node:http";
 import { describe, test } from "vitest";
 import { assertRuntimeConfig } from "../../src/config";
-import worker from "../../src/index";
+import app from "../../src/index";
 import { isRecord, type UnknownRecord } from "../../src/shared/types";
 import { assert } from "./assertions.js";
 
-type FetchInput = Parameters<typeof fetch>[0];
-type FetchInit = Parameters<typeof fetch>[1];
 type DockerExecutionContext = {
-	runtimeProfile: "docker";
 	waitUntil(promise: Promise<unknown>): void;
-	passThroughOnException(): void;
 };
 type DockerRequest = {
 	headers: Record<string, string | readonly string[] | undefined>;
@@ -22,42 +18,15 @@ type DockerServerOptions = {
 	env?: Record<string, unknown>;
 	processEnv?: NodeJS.ProcessEnv;
 	fetch?: typeof fetch;
-	worker?: DockerWorker;
+	app?: DockerApp;
 };
-type DockerWorker = {
+type DockerApp = {
 	fetch(
 		request: Request,
 		env: Record<string, unknown>,
 		context: DockerExecutionContext,
 	): Response | Promise<Response>;
 	assertRuntimeConfig?: (env: Record<string, unknown>) => void;
-};
-type D1HttpResult = {
-	results: UnknownRecord[];
-	success: boolean;
-	meta: UnknownRecord;
-};
-type D1HttpStatement = {
-	bind(...values: unknown[]): D1HttpStatement;
-	first(columnName?: string): Promise<unknown>;
-	all(): Promise<D1HttpResult>;
-	run(): Promise<Omit<D1HttpResult, "results">>;
-};
-type D1HttpBinding = {
-	prepare(sql: string): D1HttpStatement;
-	batch(statements: D1HttpStatement[]): Promise<D1HttpResult[]>;
-};
-type D1HttpConfig = {
-	accountId: string;
-	databaseId: string;
-	apiToken: string;
-};
-type RecordedRequest = {
-	url: string;
-	init: {
-		headers: Record<string, string>;
-		body: string;
-	};
 };
 type Callable = (...args: never[]) => unknown;
 
@@ -75,16 +44,6 @@ function moduleFunction<T extends Callable>(
 	return moduleValue[name] as T;
 }
 
-const d1HttpModule = await importUnknown(
-	new URL("../../server/d1-http-binding.mjs", import.meta.url).href,
-);
-const createD1HttpBinding = moduleFunction<
-	(config: D1HttpConfig, options?: { fetch?: typeof fetch }) => D1HttpBinding
->(d1HttpModule, "createD1HttpBinding");
-const resolveD1HttpConfig = moduleFunction<
-	(env?: Record<string, unknown>) => D1HttpConfig | null
->(d1HttpModule, "resolveD1HttpConfig");
-
 const dockerServerModule = await importUnknown(
 	new URL("../../server/docker-server.mjs", import.meta.url).href,
 );
@@ -101,11 +60,19 @@ const requestHeaders = moduleFunction<
 const requestUrl = moduleFunction<
 	(request: DockerRequest, fallbackPort?: number) => string
 >(dockerServerModule, "requestUrl");
+const closeDockerStorage = moduleFunction<
+	(sourceEnv?: Record<string, unknown>) => void
+>(dockerServerModule, "closeDockerStorage");
 const resolveDockerEnv = moduleFunction<
 	(
 		sourceEnv?: Record<string, unknown>,
-		options?: { fetch?: typeof fetch },
-	) => Record<string, unknown> & { GEMINI_DB?: D1HttpBinding }
+		options?: {
+			fetch?: typeof fetch;
+			sqlite?: { migrationSql?: string; migrationPath?: string };
+		},
+	) => Record<string, unknown> & {
+		ACCOUNT_DB?: { prepare(sql: string): unknown; close?: () => void };
+	}
 >(dockerServerModule, "resolveDockerEnv");
 const startDockerServer = moduleFunction<
 	(options?: DockerServerOptions) => Promise<Server>
@@ -153,27 +120,9 @@ async function responseJsonRecord(response: Response): Promise<UnknownRecord> {
 	return value;
 }
 
-function recordedRequest(input: FetchInput, init?: FetchInit): RecordedRequest {
-	if (!init || typeof init.body !== "string" || !isRecord(init.headers)) {
-		throw new TypeError("expected D1 request headers and body");
-	}
-	const headers: Record<string, string> = {};
-	for (const [name, value] of Object.entries(init.headers)) {
-		if (typeof value !== "string") {
-			throw new TypeError(`expected string header ${name}`);
-		}
-		headers[name] = value;
-	}
-	return { url: String(input), init: { headers, body: init.body } };
-}
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
 describe("docker server", () => {
-	test("marks adapter execution contexts as Docker runtime", () => {
-		assert.equal(executionContext().runtimeProfile, "docker");
+	test("provides background task tracking to the application", () => {
+		assert.equal(typeof executionContext().waitUntil, "function");
 	});
 	test("normalizes raw Node headers and forwarded request URLs", async () => {
 		const headers = requestHeaders([
@@ -182,10 +131,10 @@ describe("docker server", () => {
 			"x-test",
 			"two",
 			"Host",
-			"worker.example",
+			"app.example",
 		]);
 		assert.equal(headers.get("x-test"), "one, two");
-		assert.equal(headers.get("host"), "worker.example");
+		assert.equal(headers.get("host"), "app.example");
 
 		const url = requestUrl(
 			{
@@ -212,7 +161,7 @@ describe("docker server", () => {
 		);
 		assert.equal(fallbackUrl, "https://internal.example/v1/models");
 	});
-	test("adapts Node HTTP requests to Worker fetch with streamed bodies", async () => {
+	test("adapts Node HTTP requests to Application fetch with streamed bodies", async () => {
 		const seen: {
 			url?: string;
 			method?: string;
@@ -222,7 +171,7 @@ describe("docker server", () => {
 		const server = createDockerServer({
 			port: 0,
 			env: { API_KEYS: "", CUSTOM_ENV: "ok" },
-			worker: {
+			app: {
 				async fetch(request, env, ctx) {
 					seen.url = request.url;
 					seen.method = request.method;
@@ -255,7 +204,7 @@ describe("docker server", () => {
 				headers: {
 					"content-type": "text/plain",
 					"x-forwarded-proto": "https",
-					host: "worker.example",
+					host: "app.example",
 				},
 				body: "hello",
 			});
@@ -274,7 +223,8 @@ describe("docker server", () => {
 	test("does not stream response bodies for HEAD requests", async () => {
 		const seen: { method?: string } = {};
 		const server = createDockerServer({
-			worker: {
+			env: {},
+			app: {
 				async fetch(request) {
 					seen.method = request.method;
 					return new Response("body should not be sent", {
@@ -300,14 +250,14 @@ describe("docker server", () => {
 			await close(server);
 		}
 	});
-	test("keeps representative Docker responses aligned with the Worker entrypoint", async () => {
+	test("keeps representative Docker responses aligned with the Application entrypoint", async () => {
 		const env = { API_KEYS: "required" };
-		const server = createDockerServer({ env, worker: worker });
+		const server = createDockerServer({ env, app: app });
 		await listen(server);
 		try {
 			const port = serverPort(server);
 			for (const path of ["/", "/v1/models", "/missing"]) {
-				const direct = await worker.fetch(
+				const direct = await app.fetch(
 					new Request(`http://127.0.0.1:${port}${path}`),
 					env,
 					{ waitUntil() {} },
@@ -330,7 +280,7 @@ describe("docker server", () => {
 			await close(server);
 		}
 	});
-	test("propagates Docker client disconnects to the Worker request signal", async () => {
+	test("propagates Docker client disconnects to the Application request signal", async () => {
 		let markStarted: () => void = () => {};
 		const started = new Promise<void>((resolve) => {
 			markStarted = resolve;
@@ -340,7 +290,8 @@ describe("docker server", () => {
 			markAborted = resolve;
 		});
 		const server = createDockerServer({
-			worker: {
+			env: {},
+			app: {
 				async fetch(request) {
 					markStarted();
 					request.signal.addEventListener(
@@ -371,7 +322,8 @@ describe("docker server", () => {
 	});
 	test("returns generic JSON errors for adapter failures", async () => {
 		const server = createDockerServer({
-			worker: {
+			env: {},
+			app: {
 				async fetch() {
 					throw new Error("boom");
 				},
@@ -404,38 +356,18 @@ describe("docker server", () => {
 		assert.equal(loggedErrors.length, 1);
 		assert.match(loggedErrors[0], /boom/);
 	});
-	test("injects Docker D1 binding only for complete HTTP config", async () => {
-		assert.equal(resolveD1HttpConfig({}), null);
-		try {
-			resolveDockerEnv({
-				D1_ACCOUNT_ID: "account",
-				D1_API_TOKEN: "token-secret-fragment",
-			});
-			throw new Error("expected partial D1 config to throw");
-		} catch (err) {
-			const message = errorMessage(err);
-			assert.match(message, /partial D1 HTTP configuration/);
-			assert.doesNotMatch(message, /token-secret-fragment/);
-		}
-
-		const env = resolveDockerEnv(
+	test("always injects local SQLite storage", async () => {
+		const sqliteEnv = resolveDockerEnv(
+			{ SQLITE_PATH: ":memory:" },
 			{
-				D1_ACCOUNT_ID: "account",
-				D1_DATABASE_ID: "database",
-				D1_API_TOKEN: "token-secret-fragment",
-			},
-			{
-				async fetch() {
-					return new Response(
-						JSON.stringify({
-							success: true,
-							result: [{ results: [], meta: {} }],
-						}),
-					);
+				sqlite: {
+					migrationSql:
+						"CREATE TABLE IF NOT EXISTS local_test (id INTEGER PRIMARY KEY);",
 				},
 			},
 		);
-		assert.equal(typeof env.GEMINI_DB?.prepare, "function");
+		assert.equal(typeof sqliteEnv.ACCOUNT_DB?.prepare, "function");
+		closeDockerStorage(sqliteEnv);
 	});
 	test("rejects invalid runtime config before the Docker server listens", async () => {
 		await assert.rejects(
@@ -443,7 +375,7 @@ describe("docker server", () => {
 				startDockerServer({
 					port: 0,
 					env: { LOG_REQUESTS: "yes" },
-					worker: { ...worker, assertRuntimeConfig },
+					app: { ...app, assertRuntimeConfig },
 				}),
 			/LOG_REQUESTS must be true or false/,
 		);
@@ -451,7 +383,7 @@ describe("docker server", () => {
 			host: "127.0.0.1",
 			port: 0,
 			env: {},
-			worker: {
+			app: {
 				async fetch() {
 					return new Response("ok");
 				},
@@ -465,231 +397,6 @@ describe("docker server", () => {
 			assert.equal(server.listening, true);
 		} finally {
 			await close(server);
-		}
-	});
-	test("maps D1 HTTP first all and run without leaking params or tokens in errors", async () => {
-		const requests: RecordedRequest[] = [];
-		const responses = [
-			{
-				success: true,
-				result: [{ results: [{ value: "first-row" }], meta: { changes: 0 } }],
-			},
-			{
-				success: true,
-				result: [{ results: [{ id: 1 }, { id: 2 }], meta: { changes: 0 } }],
-			},
-			{ success: true, result: [{ results: [], meta: { changes: 3 } }] },
-		];
-		const binding = createD1HttpBinding(
-			{
-				accountId: "account",
-				databaseId: "database",
-				apiToken: "d1-token-secret",
-			},
-			{
-				async fetch(url: FetchInput, init?: FetchInit) {
-					requests.push(recordedRequest(url, init));
-					return new Response(JSON.stringify(responses.shift()), {
-						status: 200,
-						headers: { "content-type": "application/json" },
-					});
-				},
-			},
-		);
-
-		assert.equal(
-			await binding
-				.prepare("SELECT ? AS value")
-				.bind("__Secure-1PSID=secret-cookie")
-				.first("value"),
-			"first-row",
-		);
-		assert.deepEqual((await binding.prepare("SELECT * FROM t").all()).results, [
-			{ id: 1 },
-			{ id: 2 },
-		]);
-		assert.deepEqual(
-			await binding
-				.prepare("UPDATE t SET a = ?")
-				.bind("session-token-secret")
-				.run(),
-			{
-				success: true,
-				meta: { changes: 3 },
-			},
-		);
-		const firstRequest = requests[0];
-		if (!firstRequest) throw new Error("expected a D1 HTTP request");
-		assert.match(
-			firstRequest.url,
-			/\/accounts\/account\/d1\/database\/database\/query$/,
-		);
-		assert.equal(
-			firstRequest.init.headers.authorization,
-			"Bearer d1-token-secret",
-		);
-		assert.match(firstRequest.init.body, /secret-cookie/);
-
-		const failing = createD1HttpBinding(
-			{
-				accountId: "account",
-				databaseId: "database",
-				apiToken: "d1-token-secret",
-			},
-			{
-				async fetch() {
-					return new Response(
-						JSON.stringify({
-							success: false,
-							errors: [
-								{
-									code: "7500",
-									message:
-										"bad __Secure-1PSID=secret-cookie session-token-secret d1-token-secret",
-								},
-							],
-						}),
-						{ status: 200 },
-					);
-				},
-			},
-		);
-		await assert.rejects(
-			() =>
-				failing
-					.prepare("SELECT ?")
-					.bind("__Secure-1PSID=secret-cookie", "session-token-secret")
-					.all(),
-			/D1 HTTP query failed code=7500/,
-		);
-		try {
-			await failing
-				.prepare("SELECT ?")
-				.bind("__Secure-1PSID=secret-cookie", "session-token-secret")
-				.all();
-		} catch (err) {
-			const message = errorMessage(err);
-			assert.doesNotMatch(
-				message,
-				/secret-cookie|session-token-secret|d1-token-secret/,
-			);
-		}
-
-		const fetchThrows = createD1HttpBinding(
-			{
-				accountId: "account",
-				databaseId: "database",
-				apiToken: "d1-token-secret",
-			},
-			{
-				async fetch() {
-					throw new Error(
-						"network body __Secure-1PSID=secret-cookie session-token-secret d1-token-secret",
-					);
-				},
-			},
-		);
-		try {
-			await fetchThrows
-				.prepare("SELECT ?")
-				.bind("__Secure-1PSID=secret-cookie", "session-token-secret")
-				.all();
-			throw new Error("expected D1 fetch failure to throw");
-		} catch (err) {
-			const message = errorMessage(err);
-			assert.match(message, /D1 HTTP query failed before response/);
-			assert.doesNotMatch(
-				message,
-				/secret-cookie|session-token-secret|d1-token-secret/,
-			);
-		}
-	});
-	test("maps ordered D1 HTTP batches and rejects unsafe or malformed batches", async () => {
-		const requests: RecordedRequest[] = [];
-		const responses = [
-			{
-				success: true,
-				result: [
-					{ success: true, results: [{ id: 1 }], meta: { changes: 0 } },
-					{ success: true, results: [], meta: { changes: 2 } },
-				],
-			},
-			{ success: true, result: [] },
-			{
-				success: true,
-				result: [
-					{ success: true, results: [], meta: { changes: 0 } },
-					{ success: false, results: [], meta: { changes: 0 } },
-				],
-			},
-		];
-		const fetchImpl = async (url: FetchInput, init?: FetchInit) => {
-			requests.push(recordedRequest(url, init));
-			return new Response(JSON.stringify(responses.shift()), {
-				status: 200,
-				headers: { "content-type": "application/json" },
-			});
-		};
-		const binding = createD1HttpBinding(
-			{
-				accountId: "account",
-				databaseId: "database",
-				apiToken: "d1-token-secret",
-			},
-			{ fetch: fetchImpl },
-		);
-		const statements = [
-			binding.prepare("SELECT ? AS id").bind(1),
-			binding.prepare("UPDATE t SET value = ?").bind("session-token-secret"),
-		];
-		assert.deepEqual(await binding.batch(statements), [
-			{ success: true, results: [{ id: 1 }], meta: { changes: 0 } },
-			{ success: true, results: [], meta: { changes: 2 } },
-		]);
-		const firstRequest = requests[0];
-		if (!firstRequest) throw new Error("expected a D1 batch request");
-		assert.deepEqual(JSON.parse(firstRequest.init.body), {
-			batch: [
-				{ sql: "SELECT ? AS id", params: [1] },
-				{
-					sql: "UPDATE t SET value = ?",
-					params: ["session-token-secret"],
-				},
-			],
-		});
-		assert.deepEqual(await binding.batch([]), []);
-		assert.equal(requests.length, 1);
-
-		const otherBinding = createD1HttpBinding(
-			{
-				accountId: "account",
-				databaseId: "other-database",
-				apiToken: "other-token-secret",
-			},
-			{ fetch: fetchImpl },
-		);
-		await assert.rejects(
-			() => binding.batch([otherBinding.prepare("SELECT 1")]),
-			/belongs to another binding/,
-		);
-		assert.equal(requests.length, 1);
-
-		const failureCases: ReadonlyArray<readonly [string, RegExp]> = [
-			["unexpected result count", /unexpected result count/],
-			["failed member", /D1 HTTP batch query failed index=1/],
-		];
-		for (const [message, pattern] of failureCases) {
-			try {
-				await binding.batch(statements);
-				throw new Error(`expected ${message} failure`);
-			} catch (error) {
-				const messageText = errorMessage(error);
-				assert.match(messageText, pattern);
-				assert.doesNotMatch(
-					messageText,
-					/secret-cookie|session-token-secret|d1-token-secret/,
-				);
-			}
 		}
 	});
 });

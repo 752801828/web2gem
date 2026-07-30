@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 import { errorLine, outputLine } from "../server/io.mjs";
 
-const bundlePath = process.argv[2] || "dist/worker.js";
+const bundlePath = process.argv[2] || "dist/app.js";
 const defaultLimitBytes = 3 * 1024 * 1024;
 const limitBytes = parseLimit(
 	process.env.BUNDLE_GZIP_SIZE_LIMIT_BYTES,

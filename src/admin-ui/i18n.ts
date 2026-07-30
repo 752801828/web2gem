@@ -7,7 +7,7 @@ const LANGUAGE_STORAGE_KEY = "web2gem_admin_language";
 const zh = {
 	"Gemini Account Pool": "Gemini 账号池",
 	"Account operations console": "账号运维控制台",
-	"D1-backed session management": "基于 D1 的会话管理",
+	"SQLite-backed session management": "基于 SQLite 的会话管理",
 	Connected: "已连接",
 	Disconnected: "未连接",
 	"Skip to accounts": "跳到账号列表",

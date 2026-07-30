@@ -9,19 +9,18 @@ import type {
 	RuntimeConfig,
 	RuntimeExecutionContext,
 	StaticRuntimeConfig,
-	WorkerEnv,
+	AppEnv,
 } from "./types";
 
-export const VERSION = "2.0.0-worker";
+export const VERSION = "2.0.0-docker";
 
 export type {
 	GeminiAccountLeaseContext,
 	GeminiAccountSessionContext,
 	RuntimeConfig,
 	RuntimeExecutionContext,
-	RuntimeProfile,
 	StaticRuntimeConfig,
-	WorkerEnv,
+	AppEnv,
 } from "./types";
 export { RuntimeConfigError } from "./parse";
 
@@ -39,14 +38,14 @@ export function createRuntimeConfig(
 	};
 }
 
-const DEFAULT_ENV: WorkerEnv = {};
+const DEFAULT_ENV: AppEnv = {};
 type ConfigCacheEntry = {
 	snapshot: ConfigCacheSnapshot;
 	value: StaticRuntimeConfig;
 };
-const CONFIG_CACHE = new WeakMap<WorkerEnv, ConfigCacheEntry>();
+const CONFIG_CACHE = new WeakMap<AppEnv, ConfigCacheEntry>();
 
-export function getConfig(env: WorkerEnv = DEFAULT_ENV): StaticRuntimeConfig {
+export function getConfig(env: AppEnv = DEFAULT_ENV): StaticRuntimeConfig {
 	const activeEnv = env || DEFAULT_ENV;
 	const cached = CONFIG_CACHE.get(activeEnv);
 	if (cached && configSnapshotMatches(cached.snapshot, activeEnv))
@@ -59,6 +58,6 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): StaticRuntimeConfig {
 	return value;
 }
 
-export function assertRuntimeConfig(env: WorkerEnv = DEFAULT_ENV): void {
+export function assertRuntimeConfig(env: AppEnv = DEFAULT_ENV): void {
 	void getConfig(env);
 }

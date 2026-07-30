@@ -46,7 +46,6 @@ async function fetchFreshGeminiBuildLabel(cfg: RuntimeConfig): Promise<string> {
 		const resp = await httpFetch(`${geminiOrigin(cfg)}/app`, {
 			headers,
 			timeoutMs: 30000,
-			socket: cfg.upstream_socket,
 			cfg,
 		});
 		return await extractGeminiBuildLabel(resp);

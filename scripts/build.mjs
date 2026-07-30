@@ -12,7 +12,7 @@ const outDir = process.env.BUILD_DIR || "dist";
 await mkdir(outDir, { recursive: true });
 
 await Promise.all([
-	rm(`${outDir}/worker.js.map`, { force: true }),
+	rm(`${outDir}/app.js.map`, { force: true }),
 	rm(`${outDir}/harness.js`, { force: true }),
 	rm(`${outDir}/harness.js.map`, { force: true }),
 ]);
@@ -21,10 +21,9 @@ const common = {
 	bundle: true,
 	format: "esm",
 	target: "es2025",
-	platform: "browser",
+	platform: "node",
 	sourcemap: false,
 	legalComments: "none",
-	external: ["cloudflare:sockets"],
 	define: {
 		__WEB2GEM_ADMIN_UI_HTML__: JSON.stringify(adminUiHtml),
 	},
@@ -34,7 +33,7 @@ const common = {
 await esbuild.build({
 	...common,
 	entryPoints: ["src/index.ts"],
-	outfile: `${outDir}/worker.js`,
+	outfile: `${outDir}/app.js`,
 });
 
 if (includeHarnessBundle) {

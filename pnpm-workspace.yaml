@@ -2,9 +2,7 @@ packageImportMethod: copy
 allowBuilds:
   esbuild: true
   sharp: true
-  workerd: true
 minimumReleaseAgeExclude:
-  - '@cloudflare/workers-types@5.20260712.1'
   - '@biomejs/biome@2.5.3'
   - '@biomejs/cli-darwin-arm64@2.5.3'
   - '@biomejs/cli-darwin-x64@2.5.3'
@@ -35,6 +33,3 @@ minimumReleaseAgeExclude:
   - '@typescript/typescript-win32-arm64@7.0.2'
   - '@typescript/typescript-win32-x64@7.0.2'
   - typescript@7.0.2
-peerDependencyRules:
-  allowedVersions:
-    '@cloudflare/workers-types': '>=4.20260702.1 <6'

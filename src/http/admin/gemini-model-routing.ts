@@ -1,4 +1,4 @@
-import type { RuntimeConfig, WorkerEnv } from "../../config";
+import type { RuntimeConfig, AppEnv } from "../../config";
 import {
 	createGeminiAccountAdminServiceFromEnv,
 	GeminiAccountAdminError,
@@ -28,7 +28,7 @@ export function isGeminiModelRoutingAdminPath(path: string): boolean {
 
 export async function handleGeminiModelRoutingAdminRequest(
 	request: Request,
-	env: WorkerEnv,
+	env: AppEnv,
 	cfg: RuntimeConfig,
 	url: URL,
 ): Promise<Response> {

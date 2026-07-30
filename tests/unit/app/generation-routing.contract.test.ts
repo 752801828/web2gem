@@ -23,7 +23,7 @@ function geminiTextResponse(text: string): Response {
 }
 
 describe.sequential("application generation routing contract", () => {
-	test("uses anonymous upstream for eligible public generation without D1", async () => {
+	test("uses anonymous upstream for eligible public generation without SQL", async () => {
 		let fetchCalls = 0;
 		const run = () =>
 			worker.fetch(
@@ -110,7 +110,7 @@ describe.sequential("application generation routing contract", () => {
 		assert.equal(proBody.reason, "pro_model");
 		assert.equal(fetchCalls, 1);
 	});
-	test("returns authenticated-session errors for oversized context without D1", async () => {
+	test("returns authenticated-session errors for oversized context without SQL", async () => {
 		const resp = await worker.fetch(
 			new Request("https://worker.example/v1/chat/completions", {
 				method: "POST",

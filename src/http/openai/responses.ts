@@ -117,7 +117,7 @@ async function runResponsesGeneration(
 
 	if (req.stream && structured) {
 		return openAIErrorResponse(
-			"response_format with stream is not supported by this worker because final JSON cannot be validated while streaming",
+			"response_format with stream is not supported by this service because final JSON cannot be validated while streaming",
 			400,
 			"unsupported_response_format_stream",
 		);

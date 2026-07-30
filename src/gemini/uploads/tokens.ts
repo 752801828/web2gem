@@ -103,7 +103,6 @@ export async function getFreshPageTokensForConfig(
 	const resp = await httpFetch(`${geminiOrigin(activeCfg)}/app`, {
 		headers,
 		timeoutMs: 30000,
-		socket: activeCfg.upstream_socket,
 		cfg: activeCfg,
 	});
 	observeGeminiAccountResponseCookies(activeCfg, resp);
@@ -184,7 +183,6 @@ async function fetchFreshGeminiPushId(cfg: RuntimeConfig): Promise<string> {
 		const resp = await httpFetch(`${geminiOrigin(activeCfg)}/app`, {
 			headers,
 			timeoutMs: 30000,
-			socket: activeCfg.upstream_socket,
 			cfg: activeCfg,
 		});
 		observeGeminiAccountResponseCookies(activeCfg, resp);

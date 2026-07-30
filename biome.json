@@ -21,7 +21,7 @@
 		]
 	},
 	"javascript": {
-		"globals": ["FixedLengthStream"]
+		"globals": []
 	},
 	"formatter": {
 		"enabled": true,

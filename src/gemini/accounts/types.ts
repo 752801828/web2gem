@@ -14,7 +14,7 @@ import type {
 	GeminiRouteTuple,
 } from "./routes";
 
-type D1ResultMeta = {
+type SqlResultMeta = {
 	changes?: number;
 	changedRows?: number;
 	rows_written?: number;
@@ -22,24 +22,24 @@ type D1ResultMeta = {
 	last_row_id?: number;
 };
 
-export type D1Result<T = unknown> = {
+export type SqlResult<T = unknown> = {
 	results?: T[];
 	success?: boolean;
-	meta?: D1ResultMeta;
+	meta?: SqlResultMeta;
 };
 
-export type D1DatabaseLike = {
-	prepare(sql: string): D1PreparedStatementLike;
+export type SqlDatabaseLike = {
+	prepare(sql: string): SqlPreparedStatementLike;
 	batch?<T = unknown>(
-		statements: D1PreparedStatementLike[],
-	): Promise<D1Result<T>[]>;
+		statements: SqlPreparedStatementLike[],
+	): Promise<SqlResult<T>[]>;
 };
 
-export type D1PreparedStatementLike = {
-	bind(...values: unknown[]): D1PreparedStatementLike;
+export type SqlPreparedStatementLike = {
+	bind(...values: unknown[]): SqlPreparedStatementLike;
 	first<T = unknown>(columnName?: string): Promise<T | null>;
-	all<T = unknown>(): Promise<D1Result<T>>;
-	run<T = unknown>(): Promise<D1Result<T>>;
+	all<T = unknown>(): Promise<SqlResult<T>>;
+	run<T = unknown>(): Promise<SqlResult<T>>;
 };
 
 export type GeminiAccountRow = {

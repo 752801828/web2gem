@@ -1,9 +1,9 @@
 import { handleApplicationRequest } from "./app";
 import { assertRuntimeConfig } from "./config";
 
-export default {
+const app = {
 	fetch: handleApplicationRequest,
 	assertRuntimeConfig,
-} satisfies ExportedHandler<WorkerBindings> & {
-	assertRuntimeConfig: typeof assertRuntimeConfig;
 };
+
+export default app;

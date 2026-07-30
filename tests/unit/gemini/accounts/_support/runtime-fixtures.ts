@@ -244,7 +244,6 @@ export function runtimeConfig(
 	return {
 		gemini_bl: "boq_assistant-bard-web-server_20260701.00_p0",
 		gemini_origin: "https://gemini.google.com",
-		upstream_socket: false,
 		default_model: "gemini-3.5-flash",
 		retry_attempts: 2,
 		gemini_account_max_attempts: 10,

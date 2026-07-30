@@ -117,7 +117,7 @@ export function largePromptEmptyResponseError(
 	const err: ErrorWithMetadata = new Error(
 		`Context is too long and triggered Gemini Web risk controls, so Gemini returned an empty response ` +
 			`(${bytes} UTF-8 bytes > ${threshold}). This is unrelated to GEMINI_BL; ` +
-			"configure a Gemini account pool so this worker can route long context through txt attachments, or reduce the latest inline request size.",
+			"configure a Gemini account pool so this service can route long context through txt attachments, or reduce the latest inline request size.",
 	);
 	err.code = LARGE_PROMPT_EMPTY_RESPONSE_CODE;
 	err.promptBytes = bytes;
@@ -143,7 +143,7 @@ export function dataAnalysisEmptyResponseError(
 		return null;
 	const err: ErrorWithMetadata = new Error(
 		"Gemini accepted the uploaded context file but routed it into the internal data_analysis_tool and returned no final text. " +
-			"This Worker does not implement Gemini Web's follow-up data-analysis tool loop. Try the markdown context-file defaults, lower CURRENT_INPUT_FILE_MIN_BYTES, or disable CURRENT_INPUT_FILE_ENABLED for this request.",
+			"This service does not implement Gemini Web's follow-up data-analysis tool loop. Try the markdown context-file defaults, lower CURRENT_INPUT_FILE_MIN_BYTES, or disable CURRENT_INPUT_FILE_ENABLED for this request.",
 	);
 	err.code = DATA_ANALYSIS_EMPTY_RESPONSE_CODE;
 	return err;
@@ -166,7 +166,7 @@ export function upstreamEmptyResponseError(
 	const err: ErrorWithMetadata = new Error(
 		`Gemini upstream HTTP ${Number.isFinite(httpStatus) ? httpStatus : String(status)} returned no parseable text` +
 			(context ? ` (${context})` : "") +
-			". The upstream request completed but the Worker could not extract a final model response.",
+			". The upstream request completed but the service could not extract a final model response.",
 	);
 	err.code = UPSTREAM_EMPTY_RESPONSE_CODE;
 	err.status = 502;
@@ -184,7 +184,7 @@ export function upstreamImageGenerationEmptyError(
 	const err: ErrorWithMetadata = new Error(
 		`Gemini upstream HTTP ${Number.isFinite(httpStatus) ? httpStatus : String(status)} returned no usable generated image` +
 			(context ? ` (${context})` : "") +
-			". The upstream request completed but the Worker could not extract generated image output.",
+			". The upstream request completed but the service could not extract generated image output.",
 	);
 	err.code = UPSTREAM_IMAGE_GENERATION_EMPTY_CODE;
 	err.status = 502;

@@ -1,4 +1,4 @@
-import type { RuntimeConfig, WorkerEnv } from "../../config";
+import type { RuntimeConfig, AppEnv } from "../../config";
 import { timingSafeStringEqual } from "../../shared/crypto";
 import {
 	createGeminiAccountAdminServiceFromEnv,
@@ -23,7 +23,7 @@ export function isGeminiAccountAdminPath(path: string): boolean {
 
 export async function handleGeminiAccountAdminRequest(
 	request: Request,
-	env: WorkerEnv,
+	env: AppEnv,
 	cfg: RuntimeConfig,
 	url: URL,
 ): Promise<Response> {

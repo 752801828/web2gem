@@ -50,7 +50,7 @@ import { getGeminiAccountPoolFromEnv } from "./gemini/accounts/runtime";
 import { elapsedMs, log, logStage, nowMs } from "./shared/logging";
 import { errorLogSummary } from "./shared/errors";
 import { uuid } from "./shared/crypto";
-import type { RuntimeConfig, WorkerEnv } from "./config";
+import type { RuntimeConfig, AppEnv } from "./config";
 import type { AccountPoolService } from "./gemini/accounts/pool";
 import type { UnknownRecord } from "./shared/types";
 import { MODELS } from "./models";
@@ -63,16 +63,13 @@ const HEALTH_JSON = JSON.stringify({
 });
 const NOT_FOUND_JSON = JSON.stringify({ error: "not found" });
 
-export type ApplicationExecutionContext = Pick<
-	ExecutionContext,
-	"waitUntil"
-> & {
-	runtimeProfile?: "docker";
+export type ApplicationExecutionContext = {
+	waitUntil(promise: Promise<unknown>): void;
 };
 
 type ApplicationRequestContext = {
 	request: Request;
-	env: WorkerEnv;
+	env: AppEnv;
 	cfg: RuntimeConfig;
 	url: URL;
 	path: string;
@@ -264,7 +261,7 @@ const APP_ROUTES: readonly AppRoute<unknown>[] = [
 
 export async function handleApplicationRequest(
 	request: Request,
-	env: WorkerEnv,
+	env: AppEnv,
 	executionContext: ApplicationExecutionContext,
 ): Promise<Response> {
 	const method = request.method.toUpperCase();
@@ -300,8 +297,6 @@ export async function handleApplicationRequest(
 		cfg = withAccountPoolAvailability(
 			createRuntimeConfig(getConfig(env), {
 				execution_ctx: executionContext,
-				runtime_profile:
-					executionContext.runtimeProfile === "docker" ? "docker" : "worker",
 			}),
 			env,
 		);

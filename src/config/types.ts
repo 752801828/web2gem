@@ -1,6 +1,4 @@
-export type WorkerEnv = Partial<Record<keyof WorkerBindings, unknown>>;
-
-export type RuntimeProfile = "worker" | "docker";
+export type AppEnv = Record<string, unknown>;
 
 export type GeminiAccountLeaseContext = {
 	accountId: string;
@@ -11,7 +9,6 @@ export type GeminiAccountLeaseContext = {
 export type StaticRuntimeConfig = Readonly<{
 	gemini_bl: string;
 	gemini_origin: string;
-	upstream_socket: boolean;
 	default_model: string;
 	retry_attempts: number;
 	gemini_account_max_attempts: number;
@@ -31,8 +28,7 @@ export type StaticRuntimeConfig = Readonly<{
 
 export type RuntimeExecutionContext = {
 	supports_authenticated_session?: boolean;
-	execution_ctx?: Pick<ExecutionContext, "waitUntil">;
-	runtime_profile?: RuntimeProfile;
+	execution_ctx?: { waitUntil(promise: Promise<unknown>): void };
 };
 
 export type GeminiAccountSessionContext = {

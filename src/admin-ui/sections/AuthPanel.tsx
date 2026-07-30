@@ -20,7 +20,7 @@ export function AuthPanel(): JSX.Element {
 			<div class="auth-copy">
 				<span class="eyebrow">
 					<Icon name="key" />
-					{tr("D1-backed session management")}
+					{tr("SQLite-backed session management")}
 				</span>
 				<h2>
 					{tr(

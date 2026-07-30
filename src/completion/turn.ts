@@ -10,8 +10,8 @@ import type { ToolBundle } from "../toolcall/tool-bundle";
 
 export const EMPTY_UPSTREAM_MSG =
 	"⚠️ Upstream Gemini returned an empty response. " +
-	"The Worker could not extract any final text from the upstream response. " +
-	"Check `wrangler tail` for upstream status, retry/fallback logs, and whether the request is being blocked or returned in an unsupported shape.";
+	"The service could not extract any final text from the upstream response. " +
+	"Check the Docker logs for upstream status, retry logs, and whether the request is being blocked or returned in an unsupported shape.";
 
 export type OpenAICompletionTurnOptions = {
 	tools?: unknown;

@@ -1,4 +1,4 @@
-import type { WorkerEnv } from "./types";
+import type { AppEnv } from "./types";
 
 export class RuntimeConfigError extends Error {
 	readonly code = "invalid_runtime_config";
@@ -13,8 +13,8 @@ export class RuntimeConfigError extends Error {
 }
 
 export function configValue(
-	env: WorkerEnv,
-	key: keyof WorkerBindings,
+	env: AppEnv,
+	key: string,
 	fallback: unknown,
 ): unknown {
 	const value = env[key];

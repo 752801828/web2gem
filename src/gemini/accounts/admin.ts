@@ -1,4 +1,4 @@
-import type { RuntimeConfig, WorkerEnv } from "../../config";
+import type { RuntimeConfig, AppEnv } from "../../config";
 import type { GeminiPublicFamily } from "../../models";
 import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
@@ -15,7 +15,6 @@ import {
 	normalizeModelRoutePriority,
 	type GeminiAccountAdminFilterInput,
 	updateFromBody,
-	WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
 } from "./admin-input";
 import type {
 	GeminiAccountAdminOverview,
@@ -39,10 +38,10 @@ import { verifyGeminiAccount } from "./probe";
 import type { GeminiAccountVerifier } from "./probe";
 import type { GeminiRouteTuple } from "./routes";
 import { geminiRouteKey } from "./routes";
-import { d1BindingFromEnv } from "./runtime";
+import { sqlBindingFromEnv } from "./runtime";
 import type { GeminiAccountStore } from "./types";
-import type { D1DatabaseLike } from "./types";
-import { D1GeminiAccountStore } from "./store-d1";
+import type { SqlDatabaseLike } from "./types";
+import { SqlGeminiAccountStore } from "./store-sql";
 
 export { GeminiAccountAdminError } from "./admin-input";
 
@@ -74,12 +73,7 @@ export class GeminiAccountAdminService {
 		this.store = options.store;
 		this.cfg = options.cfg;
 		this.nowMs = options.nowMs || Date.now;
-		this.maxCreateAccounts =
-			options.maxCreateAccounts === undefined
-				? options.cfg.runtime_profile === "docker"
-					? null
-					: WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS
-				: options.maxCreateAccounts;
+		this.maxCreateAccounts = options.maxCreateAccounts ?? null;
 		this.pool = new AccountPoolService(this.store, {
 			nowMs: this.nowMs,
 			snapshotTtlMs: 1,
@@ -269,18 +263,7 @@ export class GeminiAccountAdminService {
 				);
 			}
 		});
-		if (!this.cfg.execution_ctx || this.cfg.runtime_profile === "docker") {
-			await probes;
-			return;
-		}
-		try {
-			this.cfg.execution_ctx.waitUntil(probes);
-		} catch (error) {
-			log(
-				this.cfg,
-				`post-import account probe waitUntil registration failed ${errorLogSummary(error)}`,
-			);
-		}
+		await probes;
 	}
 
 	private async assertKnownModelRoutes(
@@ -302,26 +285,26 @@ export class GeminiAccountAdminService {
 }
 
 export function createGeminiAccountAdminServiceFromEnv(
-	env: WorkerEnv | null | undefined,
+	env: AppEnv | null | undefined,
 	cfg: RuntimeConfig,
 	options: GeminiAccountAdminFactoryOptions = {},
 ): GeminiAccountAdminService {
-	const db = d1BindingFromEnv(env);
+	const db = sqlBindingFromEnv(env);
 	if (!db)
 		throw new GeminiAccountAdminError(
 			503,
 			"gemini_account_store_unavailable",
-			"Gemini account D1 binding is not configured",
+			"Gemini account SQL storage is not configured",
 		);
-	return createGeminiAccountAdminServiceFromD1(db, cfg, options);
+	return createGeminiAccountAdminServiceFromSql(db, cfg, options);
 }
 
-function createGeminiAccountAdminServiceFromD1(
-	db: D1DatabaseLike,
+function createGeminiAccountAdminServiceFromSql(
+	db: SqlDatabaseLike,
 	cfg: RuntimeConfig,
 	options: GeminiAccountAdminFactoryOptions = {},
 ): GeminiAccountAdminService {
-	const store = new D1GeminiAccountStore(db);
+	const store = new SqlGeminiAccountStore(db);
 	return new GeminiAccountAdminService({
 		...options,
 		store,

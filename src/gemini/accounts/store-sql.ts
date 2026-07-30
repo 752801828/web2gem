@@ -7,8 +7,8 @@ import {
 	visibleGeminiAccountIssue,
 } from "./domain";
 import type {
-	D1DatabaseLike,
-	D1PreparedStatementLike,
+	SqlDatabaseLike,
+	SqlPreparedStatementLike,
 	GeminiAccountAdminFilter,
 	GeminiAccountAdminOverview,
 	GeminiAccountAdminStats,
@@ -27,11 +27,11 @@ import {
 	buildAccountInsertRow,
 	buildPoolVersionIncrementBeforeImportsSql,
 	importWasCreated,
-	MAX_D1_BOUND_PARAMETERS,
+	MAX_SQL_BOUND_PARAMETERS,
 	valueOrCurrent,
 	writeAccountImports,
-} from "./store-d1-import";
-import { D1GeminiAccountStoreBase } from "./store-d1-runtime";
+} from "./store-sql-import";
+import { SqlGeminiAccountStoreBase } from "./store-sql-runtime";
 
 export const ADMIN_ACCOUNT_SELECT = `
   id, label, enabled, issue, cooldown_until_ms, last_issue_at_ms,
@@ -147,11 +147,11 @@ function escapeSqlLike(value: string): string {
 	return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
-export class D1GeminiAccountStore
-	extends D1GeminiAccountStoreBase
+export class SqlGeminiAccountStore
+	extends SqlGeminiAccountStoreBase
 	implements GeminiAccountStore
 {
-	constructor(db: D1DatabaseLike) {
+	constructor(db: SqlDatabaseLike) {
 		super(db);
 	}
 
@@ -171,7 +171,7 @@ export class D1GeminiAccountStore
 			this.adminStatsStatement(nowMs),
 		]);
 		if (!pageResult || !statsResult)
-			throw new Error("D1 account overview batch returned incomplete results");
+			throw new Error("SQL account overview batch returned incomplete results");
 		return {
 			...adminPageFromRows(
 				(pageResult.results || []) as GeminiAccountSummarySqlRow[],
@@ -226,7 +226,7 @@ export class D1GeminiAccountStore
 			await this.findAccountsByIdentityHashes([row.identity_hash], input.nowMs)
 		).get(row.identity_hash);
 		if (!canonical)
-			throw new Error("D1 account import did not return a canonical identity");
+			throw new Error("SQL account import did not return a canonical identity");
 		return canonical;
 	}
 
@@ -242,7 +242,7 @@ export class D1GeminiAccountStore
 			)
 		).get(row.identity_hash);
 		if (!canonical)
-			throw new Error("D1 account import did not return a canonical identity");
+			throw new Error("SQL account import did not return a canonical identity");
 		if (!facts.mutatedCookieHashes.has(row.cookie_hash))
 			return { item: canonical, outcome: "unchanged" };
 		const created = importWasCreated(facts, row, canonical.id);
@@ -268,7 +268,7 @@ export class D1GeminiAccountStore
 	private poolVersionIncrementBeforeImports(
 		nowMs: number,
 		rows: readonly GeminiAccountRow[],
-	): D1PreparedStatementLike {
+	): SqlPreparedStatementLike {
 		return buildPoolVersionIncrementBeforeImportsSql(
 			nowMs,
 			rows,
@@ -305,7 +305,7 @@ export class D1GeminiAccountStore
 			const canonicalId = canonicalIdByIdentity.get(row.identity_hash);
 			if (!canonicalId)
 				throw new Error(
-					"D1 account import did not return a canonical identity",
+					"SQL account import did not return a canonical identity",
 				);
 			if (!facts.mutatedCookieHashes.has(row.cookie_hash)) continue;
 			const created = importWasCreated(facts, row, canonicalId);
@@ -425,7 +425,7 @@ export class D1GeminiAccountStore
 	private adminPageStatement(
 		filter: GeminiAccountAdminFilter,
 		nowMs: number,
-	): D1PreparedStatementLike {
+	): SqlPreparedStatementLike {
 		const limit = boundedGeminiAccountPageLimit(filter.limit);
 		const { where, args } = adminWhere(filter, nowMs);
 		return this.db
@@ -439,7 +439,7 @@ export class D1GeminiAccountStore
 			.bind(...args, limit + 1);
 	}
 
-	private adminStatsStatement(nowMs: number): D1PreparedStatementLike {
+	private adminStatsStatement(nowMs: number): SqlPreparedStatementLike {
 		const durable = GEMINI_DURABLE_ACCOUNT_ISSUES.map(() => "?").join(", ");
 		return this.db
 			.prepare(`
@@ -473,9 +473,9 @@ export class D1GeminiAccountStore
 		for (
 			let offset = 0;
 			offset < unique.length;
-			offset += MAX_D1_BOUND_PARAMETERS
+			offset += MAX_SQL_BOUND_PARAMETERS
 		) {
-			const chunk = unique.slice(offset, offset + MAX_D1_BOUND_PARAMETERS);
+			const chunk = unique.slice(offset, offset + MAX_SQL_BOUND_PARAMETERS);
 			if (!chunk.length) continue;
 			const placeholders = chunk.map(() => "?").join(", ");
 			const result = await this.db
@@ -500,9 +500,9 @@ export class D1GeminiAccountStore
 		for (
 			let offset = 0;
 			offset < unique.length;
-			offset += MAX_D1_BOUND_PARAMETERS
+			offset += MAX_SQL_BOUND_PARAMETERS
 		) {
-			const chunk = unique.slice(offset, offset + MAX_D1_BOUND_PARAMETERS);
+			const chunk = unique.slice(offset, offset + MAX_SQL_BOUND_PARAMETERS);
 			if (!chunk.length) continue;
 			const placeholders = chunk.map(() => "?").join(", ");
 			const result = await this.db

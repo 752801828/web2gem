@@ -28,14 +28,6 @@ const WARMUP = positiveInt(
 const SSE_CHUNKS = positiveInt(process.env.BENCH_SSE_CHUNKS, 512);
 const SSE_SLOW_CHUNKS = positiveInt(process.env.BENCH_SSE_SLOW_CHUNKS, 128);
 const SSE_SLOW_DELAY_MS = positiveInt(process.env.BENCH_SSE_SLOW_DELAY_MS, 1);
-const SOCKET_BODY_BYTES = positiveInt(
-	process.env.BENCH_SOCKET_BODY_BYTES,
-	64 * 1024,
-);
-const SOCKET_CHUNK_BYTES = positiveInt(
-	process.env.BENCH_SOCKET_CHUNK_BYTES,
-	1024,
-);
 const UNIQUE_ITEMS_COUNT = positiveInt(
 	process.env.BENCH_UNIQUE_ITEMS_COUNT,
 	240,
@@ -72,10 +64,6 @@ const STREAM_LONG_LINE_BYTES = positiveInt(
 const STREAM_LONG_LINE_CHUNK_BYTES = positiveInt(
 	process.env.BENCH_STREAM_LONG_LINE_CHUNK_BYTES,
 	128,
-);
-const SOCKET_LONG_CHUNK_LINE_BYTES = positiveInt(
-	process.env.BENCH_SOCKET_LONG_CHUNK_LINE_BYTES,
-	4096,
 );
 const CONFIG_CACHE_BENCH_ENVS = {
 	empty: {},
@@ -114,7 +102,6 @@ const TOOL = {
 const CFG = {
 	gemini_bl: "bench",
 	gemini_origin: "https://gemini.google.com",
-	upstream_socket: false,
 	default_model: "gemini-3.5-flash",
 	retry_attempts: 1,
 	retry_delay_sec: 0,
@@ -154,16 +141,6 @@ const messages = [
 const tools = [TOOL];
 const toolBundle = mod.createToolBundle(tools);
 const internalMessages = mod.parseOpenAIMessages(messages);
-const socketSingleBody = makeBytes(SOCKET_BODY_BYTES);
-const socketChunks = makeSocketChunks(SOCKET_BODY_BYTES, SOCKET_CHUNK_BYTES);
-const socketTextSingleResponse = makeHttpResponseChunks(
-	socketSingleBody,
-	SOCKET_BODY_BYTES,
-);
-const socketTextMultiResponse = makeHttpResponseChunks(
-	socketChunks,
-	SOCKET_BODY_BYTES,
-);
 const uniqueItemsValue = makeUniqueCompositeValues(UNIQUE_ITEMS_COUNT);
 const uniqueItemsRequirement = {
 	type: "json_schema",
@@ -216,9 +193,6 @@ const cumulativeWrbLines = makeCumulativeWrbLines(
 const longLineResponseChunks = makeLongLineStreamResponseChunks(
 	STREAM_LONG_LINE_BYTES,
 	STREAM_LONG_LINE_CHUNK_BYTES,
-);
-const socketLongChunkedLineResponse = makeSocketLongChunkedLineResponse(
-	SOCKET_LONG_CHUNK_LINE_BYTES,
 );
 const smallDeltaProvider = {
 	async generateText() {
@@ -293,7 +267,7 @@ const accountAdminStore = {
 const accountAdminService = new mod.GeminiAccountAdminService({
 	adminStore: accountAdminStore,
 	runtimeStore: accountAdminStore,
-	cfg: { ...CFG, runtime_profile: "worker" },
+	cfg: { ...CFG },
 	nowMs: () => 1,
 });
 
@@ -466,36 +440,6 @@ const cases = [
 			runSseChunks({ chunks: SSE_SLOW_CHUNKS, delayMs: SSE_SLOW_DELAY_MS }),
 		iterations: Math.min(ITERATIONS, 30),
 		warmup: Math.min(WARMUP, 5),
-	},
-	{
-		name: "socket_single_chunk_body",
-		fn: () => runSocketSingleChunkBody(),
-		iterations: Math.min(ITERATIONS, 1000),
-		warmup: Math.min(WARMUP, 200),
-	},
-	{
-		name: "socket_multi_chunk_body",
-		fn: () => runSocketMultiChunkBody(),
-		iterations: Math.min(ITERATIONS, 1000),
-		warmup: Math.min(WARMUP, 200),
-	},
-	{
-		name: "socket_text_single_chunk",
-		fn: () => runSocketText(socketTextSingleResponse),
-		iterations: Math.min(ITERATIONS, 400),
-		warmup: Math.min(WARMUP, 100),
-	},
-	{
-		name: "socket_text_multi_chunk",
-		fn: () => runSocketText(socketTextMultiResponse),
-		iterations: Math.min(ITERATIONS, 400),
-		warmup: Math.min(WARMUP, 100),
-	},
-	{
-		name: "socket_chunked_long_split_line",
-		fn: () => runSocketText(socketLongChunkedLineResponse),
-		iterations: Math.min(ITERATIONS, 80),
-		warmup: Math.min(WARMUP, 10),
 	},
 	{
 		name: "structured_unique_items",
@@ -886,35 +830,6 @@ function delay(ms) {
 	return new Promise((done) => setTimeout(done, ms));
 }
 
-function runSocketSingleChunkBody() {
-	const queue = mod.createByteQueue(socketSingleBody);
-	const out = queue.read(socketSingleBody.length);
-	return {
-		__benchDetails: {
-			totalBytes: out.length,
-			sameBuffer:
-				out.buffer === socketSingleBody.buffer &&
-				out.byteOffset === socketSingleBody.byteOffset
-					? 1
-					: 0,
-		},
-	};
-}
-
-function runSocketMultiChunkBody() {
-	const queue = mod.createByteQueue();
-	for (const chunk of socketChunks) queue.push(chunk);
-	const out = queue.read(SOCKET_BODY_BYTES);
-	return {
-		__benchDetails: {
-			totalBytes: out.length,
-			sameBuffer: socketChunks.some((chunk) => out.buffer === chunk.buffer)
-				? 1
-				: 0,
-		},
-	};
-}
-
 function makeBytes(length) {
 	const out = new Uint8Array(length);
 	for (let i = 0; i < out.length; i++) out[i] = i & 255;
@@ -931,80 +846,6 @@ function bytesToBase64(bytes) {
 		binary += String.fromCharCode(...chunk);
 	}
 	return btoa(binary);
-}
-
-function makeSocketChunks(totalBytes, chunkBytes) {
-	const chunks = [];
-	let remaining = totalBytes;
-	let seed = 0;
-	while (remaining > 0) {
-		const size = Math.min(chunkBytes, remaining);
-		const chunk = new Uint8Array(size);
-		for (let i = 0; i < chunk.length; i++) chunk[i] = (seed + i) & 255;
-		chunks.push(chunk);
-		seed += size;
-		remaining -= size;
-	}
-	return chunks;
-}
-
-async function runSocketText(responseChunks) {
-	const resp = await mod.socketHttp(
-		fakeSocketConnect(responseChunks),
-		"https://example.test/text",
-		{ timeoutMs: 0 },
-	);
-	const text = await resp.text();
-	return {
-		__benchDetails: {
-			totalChars: text.length,
-			chunks: responseChunks.length,
-		},
-	};
-}
-
-function makeHttpResponseChunks(bodyOrChunks, totalBytes) {
-	const head = new TextEncoder().encode(
-		`HTTP/1.1 200 OK\r\nContent-Length: ${totalBytes}\r\n\r\n`,
-	);
-	if (bodyOrChunks instanceof Uint8Array)
-		return [concatBytes(head, bodyOrChunks)];
-	return [head, ...bodyOrChunks];
-}
-
-function makeSocketLongChunkedLineResponse(lineBytes) {
-	const encoder = new TextEncoder();
-	const head = encoder.encode(
-		"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
-	);
-	const line = encoder.encode(`1;${"x".repeat(lineBytes)}\r\n`);
-	const tail = encoder.encode("a\r\n0\r\n\r\n");
-	const chunks = [head];
-	for (let i = 0; i < line.length; i++) chunks.push(line.subarray(i, i + 1));
-	chunks.push(tail);
-	return chunks;
-}
-
-function fakeSocketConnect(responseChunks) {
-	return () => ({
-		readable: new ReadableStream({
-			start(controller) {
-				for (const chunk of responseChunks) controller.enqueue(chunk);
-				controller.close();
-			},
-		}),
-		writable: new WritableStream({
-			write() {},
-		}),
-		close() {},
-	});
-}
-
-function concatBytes(a, b) {
-	const out = new Uint8Array(a.length + b.length);
-	out.set(a, 0);
-	out.set(b, a.length);
-	return out;
 }
 
 function runUniqueItemsValidation() {
@@ -1065,7 +906,6 @@ async function runMultipartBodyLarge() {
 	const cfg = {
 		...CFG,
 		cookie: "__Secure-1PSID=bench",
-		upstream_socket: false,
 	};
 	const originalFetch = globalThis.fetch;
 	let contentLength = 0;

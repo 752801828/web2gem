@@ -3,7 +3,6 @@ import { runPnpm } from "./process.mjs";
 export const RELEASE_CHECKS = [
 	"check:static",
 	"check:test-types",
-	"check:worker-types",
 	"typecheck",
 	"typecheck:tests",
 	"check:arch",
