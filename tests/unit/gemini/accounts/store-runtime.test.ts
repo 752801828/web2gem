@@ -11,6 +11,200 @@ import {
 } from "./_support/store-fixtures.js";
 
 describe("SQL Gemini account runtime store", () => {
+	test("loads candidate account secrets with only browser email metadata", async () => {
+		const row = {
+			id: "first",
+			cookie_header: "cookie",
+			cookie_hash: "cookie-hash",
+			identity_hash: "identity-hash",
+			login_email_hash: "email-hash",
+		};
+		const db = new RecordingSql([
+			{
+				sql: /SELECT a\.id, a\.cookie_header, a\.cookie_hash, a\.identity_hash, b\.login_email_hash FROM gemini_accounts a LEFT JOIN gemini_browser_accounts b ON b\.account_id = a\.id WHERE a\.id = \? LIMIT 1/,
+				binds: ["first"],
+				operation: "first",
+				result: row,
+			},
+		]);
+		assert.deepEqual(
+			await new SqlGeminiAccountStore(db).getBrowserCandidateAccount("first"),
+			row,
+		);
+		db.assertDrained();
+	});
+
+	test("atomically replaces a verified browser cookie and probe capabilities", async () => {
+		const write = {
+			cookieHeader: "__Secure-1PSID=new; __Secure-1PSIDTS=new-ts",
+			cookieHash: "new-cookie-hash",
+			identityHash: "new-identity-hash",
+			changed: true,
+			probe: {
+				statusCode: 1000,
+				issue: null,
+				models: [
+					{
+						modelId: "model-pro",
+						displayName: "Pro",
+						description: "verified",
+						available: true,
+						capacity: 1,
+						capacityField: 13,
+						modelNumber: 1,
+						discoveryOrder: 0,
+					},
+				],
+			},
+			nowMs: 6000,
+		};
+		const db = new RecordingSql([
+			{
+				sql: /UPDATE gemini_accounts SET cookie_header = \?, cookie_hash = \?, identity_hash = \?, issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, last_refresh_at_ms = \?, account_status_code = \?, status_checked_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \?/,
+				binds: [
+					write.cookieHeader,
+					write.cookieHash,
+					write.identityHash,
+					6000,
+					1000,
+					6000,
+					6000,
+					6000,
+					6000,
+					"first",
+				],
+				operation: "batch",
+				result: mutationResult(),
+			},
+			{
+				sql: "DELETE FROM gemini_account_models WHERE account_id = ?",
+				binds: ["first"],
+				operation: "batch",
+				result: mutationResult(),
+			},
+			{
+				sql: /INSERT INTO gemini_account_models/,
+				binds: ["first", "model-pro", "Pro", "verified", 1, 1, 13, 1, 0, 6000],
+				operation: "batch",
+				result: mutationResult(),
+			},
+			{
+				sql: /INSERT INTO gemini_browser_accounts .*ON CONFLICT\(account_id\) DO UPDATE SET browser_state = 'ready'.*last_check_at_ms = excluded\.last_check_at_ms.*last_cookie_update_at_ms = excluded\.last_cookie_update_at_ms.*auth_failure_count = 0.*failure_code = NULL/,
+				binds: ["first", 6000, 6000, 6000],
+				operation: "batch",
+				result: mutationResult(),
+			},
+			poolVersionExpectation(6000, "unconditional"),
+		]);
+		assert.deepEqual(
+			await new SqlGeminiAccountStore(db).replaceVerifiedBrowserCookie(
+				"first",
+				write,
+			),
+			{ changed: true },
+		);
+		db.assertBatches([[0, 1, 2, 3, 4]]);
+		db.assertDrained();
+	});
+
+	test("does not rewrite secret columns for an unchanged verified cookie", async () => {
+		const write = {
+			cookieHeader: "secret",
+			cookieHash: "hash",
+			identityHash: "identity",
+			changed: false,
+			probe: { statusCode: 1000, issue: null, models: [] },
+			nowMs: 7000,
+		};
+		const db = new RecordingSql([
+			{
+				sql: /UPDATE gemini_accounts SET issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, last_refresh_at_ms = \?, account_status_code = \?, status_checked_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \?/,
+				binds: [7000, 1000, 7000, 7000, 7000, 7000, "first"],
+				operation: "batch",
+				result: mutationResult(),
+			},
+			{
+				sql: "DELETE FROM gemini_account_models WHERE account_id = ?",
+				binds: ["first"],
+				operation: "batch",
+				result: mutationResult(),
+			},
+			{
+				sql: /INSERT INTO gemini_browser_accounts/,
+				binds: ["first", 7000, 7000, 7000],
+				operation: "batch",
+				result: mutationResult(),
+			},
+			poolVersionExpectation(7000, "unconditional"),
+		]);
+		assert.deepEqual(
+			await new SqlGeminiAccountStore(db).replaceVerifiedBrowserCookie(
+				"first",
+				write,
+			),
+			{ changed: false },
+		);
+		assert.doesNotMatch(
+			db.records[0]?.sql || "",
+			/cookie_header|cookie_hash|identity_hash/,
+		);
+		db.assertBatches([[0, 1, 2, 3]]);
+		db.assertDrained();
+	});
+
+	test("maps an atomic unique violation to a safe browser conflict", async () => {
+		const write = {
+			cookieHeader: "secret",
+			cookieHash: "hash",
+			identityHash: "identity",
+			changed: true,
+			probe: { statusCode: 1000, issue: null, models: [] },
+			nowMs: 8000,
+		};
+		const db = new RecordingSql([
+			{
+				sql: /UPDATE gemini_accounts SET cookie_header = \?/,
+				binds: [
+					"secret",
+					"hash",
+					"identity",
+					8000,
+					1000,
+					8000,
+					8000,
+					8000,
+					8000,
+					"first",
+				],
+				operation: "batch",
+				error: new Error(
+					"UNIQUE constraint failed: gemini_accounts.cookie_hash",
+				),
+			},
+			{
+				sql: "DELETE FROM gemini_account_models WHERE account_id = ?",
+				binds: ["first"],
+				operation: "batch",
+				result: mutationResult(),
+			},
+			{
+				sql: /INSERT INTO gemini_browser_accounts/,
+				binds: ["first", 8000, 8000, 8000],
+				operation: "batch",
+				result: mutationResult(),
+			},
+			poolVersionExpectation(8000, "unconditional"),
+		]);
+		assert.deepEqual(
+			await new SqlGeminiAccountStore(db).replaceVerifiedBrowserCookie(
+				"first",
+				write,
+			),
+			{ changed: false, reason: "conflict" },
+		);
+		db.assertBatches([[0, 1, 2, 3]]);
+		db.assertDrained();
+	});
 	test("reads refresh credentials through the exact secret projection", async () => {
 		const db = new RecordingSql([
 			{

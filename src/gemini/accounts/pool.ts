@@ -205,6 +205,11 @@ export class AccountPoolService {
 		invalidatePoolSnapshot(this.snapshot);
 	}
 
+	async refreshSnapshot(nowMs: number = this.nowMs()): Promise<void> {
+		this.invalidateSnapshot();
+		await this.selectableSnapshot(nowMs);
+	}
+
 	async routeCandidatesForModel(
 		model: Extract<ResolvedModel, { name: string }>,
 		capabilityFreshAfterMs: number,

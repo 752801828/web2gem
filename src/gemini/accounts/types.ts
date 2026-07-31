@@ -228,6 +228,27 @@ export type GeminiRefreshedCookieWriteResult = {
 	reason?: "duplicate_cookie";
 };
 
+export type GeminiBrowserCandidateAccount = Pick<
+	GeminiAccountRow,
+	"id" | "cookie_header" | "cookie_hash" | "identity_hash"
+> & {
+	login_email_hash: string | null;
+};
+
+export type GeminiVerifiedBrowserCookieWrite = {
+	cookieHeader: string;
+	cookieHash: string;
+	identityHash: string;
+	changed: boolean;
+	probe: GeminiAccountProbe;
+	nowMs: number;
+};
+
+export type GeminiVerifiedBrowserCookieWriteResult = {
+	changed: boolean;
+	reason?: "conflict";
+};
+
 export type GeminiAccountStore = {
 	getPoolVersion(): Promise<string>;
 	listSelectableAccounts(
@@ -237,6 +258,13 @@ export type GeminiAccountStore = {
 	getAccountForRefresh(
 		accountId: string,
 	): Promise<GeminiAccountSecretRow | null>;
+	getBrowserCandidateAccount(
+		accountId: string,
+	): Promise<GeminiBrowserCandidateAccount | null>;
+	replaceVerifiedBrowserCookie(
+		accountId: string,
+		write: GeminiVerifiedBrowserCookieWrite,
+	): Promise<GeminiVerifiedBrowserCookieWriteResult>;
 	tryAcquireRefreshLock(
 		accountId: string,
 		owner: string,

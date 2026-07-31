@@ -22,8 +22,11 @@ import type {
 	GeminiAccountRow,
 	GeminiAccountSecretRow,
 	GeminiAccountSnapshotRow,
+	GeminiBrowserCandidateAccount,
 	GeminiRefreshedCookieWrite,
 	GeminiRefreshedCookieWriteResult,
+	GeminiVerifiedBrowserCookieWrite,
+	GeminiVerifiedBrowserCookieWriteResult,
 } from "./types";
 
 export const POOL_VERSION_KEY = "pool_version";
@@ -239,6 +242,129 @@ export class SqlGeminiAccountStoreBase {
 			)
 			.bind(accountId)
 			.first<GeminiAccountSecretRow>();
+	}
+
+	async getBrowserCandidateAccount(
+		accountId: string,
+	): Promise<GeminiBrowserCandidateAccount | null> {
+		return this.db
+			.prepare(`
+        SELECT a.id, a.cookie_header, a.cookie_hash, a.identity_hash,
+          b.login_email_hash
+        FROM gemini_accounts a
+        LEFT JOIN gemini_browser_accounts b ON b.account_id = a.id
+        WHERE a.id = ?
+        LIMIT 1
+      `)
+			.bind(accountId)
+			.first<GeminiBrowserCandidateAccount>();
+	}
+
+	async replaceVerifiedBrowserCookie(
+		accountId: string,
+		write: GeminiVerifiedBrowserCookieWrite,
+	): Promise<GeminiVerifiedBrowserCookieWriteResult> {
+		if (!this.db.batch)
+			throw new Error("Verified browser cookie replacement requires SQL batch");
+		const accountUpdate = write.changed
+			? this.db
+					.prepare(`
+            UPDATE gemini_accounts
+            SET cookie_header = ?, cookie_hash = ?, identity_hash = ?,
+              issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL,
+              last_refresh_at_ms = ?, account_status_code = ?,
+              status_checked_at_ms = ?, last_refresh_attempt_at_ms = ?,
+              last_refresh_success_at_ms = ?, updated_at_ms = ?
+            WHERE id = ?
+          `)
+					.bind(
+						write.cookieHeader,
+						write.cookieHash,
+						write.identityHash,
+						write.nowMs,
+						write.probe.statusCode,
+						write.nowMs,
+						write.nowMs,
+						write.nowMs,
+						write.nowMs,
+						accountId,
+					)
+			: this.db
+					.prepare(`
+            UPDATE gemini_accounts
+            SET issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL,
+              last_refresh_at_ms = ?, account_status_code = ?,
+              status_checked_at_ms = ?, last_refresh_attempt_at_ms = ?,
+              last_refresh_success_at_ms = ?, updated_at_ms = ?
+            WHERE id = ?
+          `)
+					.bind(
+						write.nowMs,
+						write.probe.statusCode,
+						write.nowMs,
+						write.nowMs,
+						write.nowMs,
+						write.nowMs,
+						accountId,
+					);
+		const deleteModels = this.db
+			.prepare("DELETE FROM gemini_account_models WHERE account_id = ?")
+			.bind(accountId);
+		const insertModels = write.probe.models.map((model) =>
+			this.db
+				.prepare(`
+            INSERT INTO gemini_account_models (
+              account_id, model_id, display_name, description, available,
+              capacity, capacity_field, model_number, discovery_order,
+              checked_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `)
+				.bind(
+					accountId,
+					model.modelId,
+					model.displayName,
+					model.description,
+					model.available ? 1 : 0,
+					model.capacity,
+					model.capacityField,
+					model.modelNumber,
+					model.discoveryOrder,
+					write.nowMs,
+				),
+		);
+		const browserReady = this.db
+			.prepare(`
+        INSERT INTO gemini_browser_accounts (
+          account_id, browser_state, last_check_at_ms,
+          last_cookie_update_at_ms, auth_failure_count,
+          notification_state, failure_code, updated_at_ms
+        ) VALUES (?, 'ready', ?, ?, 0, NULL, NULL, ?)
+        ON CONFLICT(account_id) DO UPDATE SET
+          browser_state = 'ready',
+          last_check_at_ms = excluded.last_check_at_ms,
+          last_cookie_update_at_ms = excluded.last_cookie_update_at_ms,
+          auth_failure_count = 0,
+          notification_state = NULL,
+          failure_code = NULL,
+          updated_at_ms = excluded.updated_at_ms
+      `)
+			.bind(accountId, write.nowMs, write.nowMs, write.nowMs);
+		try {
+			const results = await this.db.batch([
+				accountUpdate,
+				deleteModels,
+				...insertModels,
+				browserReady,
+				this.poolVersionIncrementStatement(write.nowMs),
+			]);
+			if (resultChanged(results[0] || {}) === 0)
+				throw new Error("Verified browser cookie account not found");
+		} catch (error) {
+			if (isSqlUniqueConstraintError(error))
+				return { changed: false, reason: "conflict" };
+			throw error;
+		}
+		return { changed: write.changed };
 	}
 
 	async tryAcquireRefreshLock(

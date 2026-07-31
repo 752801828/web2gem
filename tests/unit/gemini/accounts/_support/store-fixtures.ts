@@ -11,7 +11,7 @@ import type {
 import type { GeminiAccountSummarySqlRow } from "../../../../../src/gemini/accounts/store-sql";
 
 type SqlExpectation = string | RegExp;
-type SQLOperation = "first" | "all" | "run" | "batch";
+type SQLOperation = "first" | "all" | "run" | "batch" | "aborted";
 
 export type SQLExpectation = {
 	sql: SqlExpectation;
@@ -175,11 +175,23 @@ export class RecordingSql implements SqlDatabaseLike {
 				return statement.record;
 			}),
 		);
-		return statements.map((statement) => {
+		const results: SqlResult<T>[] = [];
+		for (let index = 0; index < statements.length; index++) {
+			const statement = statements[index];
 			if (!(statement instanceof RecordingStatement) || statement.db !== this)
 				throw new Error("SQL batch received an unrecorded statement");
-			return statement.execute<SqlResult<T>>("batch");
-		});
+			try {
+				results.push(statement.execute<SqlResult<T>>("batch"));
+			} catch (error) {
+				for (const pending of statements.slice(index + 1)) {
+					if (!(pending instanceof RecordingStatement) || pending.db !== this)
+						throw new Error("SQL batch received an unrecorded statement");
+					pending.abort();
+				}
+				throw error;
+			}
+		}
+		return results;
 	}
 
 	assertBatches(expectedRecordIndexes: readonly (readonly number[])[]): void {
@@ -262,12 +274,26 @@ class RecordingStatement implements SqlPreparedStatementLike {
 		if (Object.hasOwn(this.expectation, "error")) throw this.expectation.error;
 		return this.expectation.result as T;
 	}
+
+	abort(): void {
+		if (this.record.operation !== null)
+			throw new Error(
+				`SQL statement aborted after execution: ${this.record.sql}`,
+			);
+		if (this.record.binds === null) {
+			assertValues(this.expectation.binds, [], this.record.sql);
+			this.record.binds = [];
+		}
+		this.record.operation = "aborted";
+	}
 }
 
 const ACCOUNT_STORE_METHODS = [
 	"getPoolVersion",
 	"listSelectableAccounts",
 	"getAccountForRefresh",
+	"getBrowserCandidateAccount",
+	"replaceVerifiedBrowserCookie",
 	"tryAcquireRefreshLock",
 	"releaseRefreshLock",
 	"writeRefreshedCookie",
@@ -360,6 +386,10 @@ export function createAccountStoreDouble(
 			invoke("listSelectableAccounts", [nowMs, limit]),
 		getAccountForRefresh: (accountId) =>
 			invoke("getAccountForRefresh", [accountId]),
+		getBrowserCandidateAccount: (accountId) =>
+			invoke("getBrowserCandidateAccount", [accountId]),
+		replaceVerifiedBrowserCookie: (accountId, write) =>
+			invoke("replaceVerifiedBrowserCookie", [accountId, write]),
 		tryAcquireRefreshLock: (accountId, owner, expiresAtMs, nowMs) =>
 			invoke("tryAcquireRefreshLock", [accountId, owner, expiresAtMs, nowMs]),
 		releaseRefreshLock: (accountId, owner) =>
