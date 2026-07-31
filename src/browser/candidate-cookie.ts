@@ -11,7 +11,7 @@ export type CandidateCookieResult =
 			ok: true;
 			changed: boolean;
 			state: "ready";
-			lastCookieUpdateAtMs: number;
+			lastCookieUpdateAtMs: number | null;
 	  }
 	| {
 			ok: false;
@@ -51,6 +51,7 @@ type CandidateAccount = {
 	cookie_hash: string;
 	identity_hash: string;
 	login_email_hash: string | null;
+	last_cookie_update_at_ms: number | null;
 };
 
 type CandidateWrite = {
@@ -119,15 +120,20 @@ export class CandidateCookieService<TConfig extends object> {
 		)
 			return { ok: false, code: "browser_identity_mismatch" };
 
-		const verification = await this.options.verifyAccount({
-			config: {
-				...this.options.baseConfig,
-				cookie: cookieHeader,
-				sapisid: "",
-				gemini_account: { accountId: account.id, cookieHash },
-			},
-			level: "status",
-		});
+		let verification: Awaited<ReturnType<CandidateVerifier<TConfig>>>;
+		try {
+			verification = await this.options.verifyAccount({
+				config: {
+					...this.options.baseConfig,
+					cookie: cookieHeader,
+					sapisid: "",
+					gemini_account: { accountId: account.id, cookieHash },
+				},
+				level: "status",
+			});
+		} catch {
+			return { ok: false, code: "browser_cookie_verification_failed" };
+		}
 		if (!verification.ok || !verification.probe)
 			return { ok: false, code: "browser_cookie_verification_failed" };
 		if (verification.probe.issue !== null)
@@ -151,7 +157,9 @@ export class CandidateCookieService<TConfig extends object> {
 			ok: true,
 			changed: stored.changed,
 			state: "ready",
-			lastCookieUpdateAtMs: input.nowMs,
+			lastCookieUpdateAtMs: stored.changed
+				? input.nowMs
+				: account.last_cookie_update_at_ms,
 		};
 	}
 
@@ -184,8 +192,8 @@ async function observedIdentityMatches(
 	if (!observedEmail || !account.login_email_hash) return false;
 	const canonical = observedEmail.trim().toLowerCase();
 	if (!canonical) return false;
-	return timingSafeHexEqual(
-		await sha256Hex(canonical),
+	return timingSafeBase64HashEqual(
+		await sha256Base64(canonical),
 		account.login_email_hash,
 	);
 }
@@ -200,21 +208,38 @@ async function sha256Hex(value: string): Promise<string> {
 	).join("");
 }
 
-function timingSafeHexEqual(left: string, right: string): boolean {
-	const leftBytes = hexBytes(left);
-	const rightBytes = hexBytes(right);
+async function sha256Base64(value: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(value),
+	);
+	return bytesToBase64(new Uint8Array(digest));
+}
+
+function timingSafeBase64HashEqual(left: string, right: string): boolean {
+	const leftBytes = canonicalHashBytes(left);
+	const rightBytes = canonicalHashBytes(right);
 	if (!leftBytes || !rightBytes) return false;
-	const size = Math.max(leftBytes.length, rightBytes.length);
-	let different = leftBytes.length ^ rightBytes.length;
-	for (let index = 0; index < size; index++)
+	let different = 0;
+	for (let index = 0; index < 32; index++)
 		different |= (leftBytes[index] || 0) ^ (rightBytes[index] || 0);
 	return different === 0;
 }
 
-function hexBytes(value: string): Uint8Array | null {
-	if (!/^[0-9a-f]{64}$/.test(value)) return null;
-	const bytes = new Uint8Array(32);
-	for (let index = 0; index < bytes.length; index++)
-		bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
-	return bytes;
+function canonicalHashBytes(value: string): Uint8Array | null {
+	if (!/^[A-Za-z0-9+/]{43}=$/.test(value)) return null;
+	try {
+		const binary = atob(value);
+		if (binary.length !== 32) return null;
+		const bytes = Uint8Array.from(binary, (character) =>
+			character.charCodeAt(0),
+		);
+		return bytesToBase64(bytes) === value ? bytes : null;
+	} catch {
+		return null;
+	}
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+	return btoa(String.fromCharCode(...bytes));
 }

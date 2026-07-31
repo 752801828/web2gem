@@ -46,6 +46,50 @@ function savedProPriorities(nowMs: number): GeminiModelRoutePriorityRow[] {
 }
 
 describe("gemini account runtime", () => {
+	test("refreshSnapshot reloads committed accounts and capabilities into the catalog", async () => {
+		const nowMs = 100000;
+		const first = account("first");
+		const store = createAccountStore([
+			runtimeCall("getPoolVersion", [], "1"),
+			runtimeCall("listSelectableAccounts", [nowMs, 100], [first]),
+			runtimeCall(
+				"listAccountCapabilities",
+				[["first"]],
+				[capabilityRow("first", "old-model", 1, 12, 1, 0, nowMs)],
+			),
+			runtimeCall("getPoolVersion", [], "2"),
+			runtimeCall("listSelectableAccounts", [nowMs, 100], [first]),
+			runtimeCall(
+				"listAccountCapabilities",
+				[["first"]],
+				[capabilityRow("first", "new-model", 2, 12, 1, 0, nowMs)],
+			),
+		]);
+		const pool = createPool(store, nowMs);
+		assert.deepEqual(
+			(await pool.modelCatalog(nowMs - 1000)).entries.map((entry) => entry.id),
+			[
+				"gemini-3.5-flash",
+				"gemini-3.5-flash-extended",
+				"old-model",
+				"old-model-extended",
+			],
+		);
+
+		await pool.refreshSnapshot(nowMs);
+
+		assert.deepEqual(
+			(await pool.modelCatalog(nowMs - 1000)).entries.map((entry) => entry.id),
+			[
+				"gemini-3.5-flash",
+				"gemini-3.5-flash-extended",
+				"new-model",
+				"new-model-extended",
+			],
+		);
+		store.assertExhausted();
+	});
+
 	test("honors saved exact-route priority during account acquisition", async () => {
 		const nowMs = 100000;
 		const rows = [

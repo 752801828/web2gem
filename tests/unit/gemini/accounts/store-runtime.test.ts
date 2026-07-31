@@ -18,10 +18,11 @@ describe("SQL Gemini account runtime store", () => {
 			cookie_hash: "cookie-hash",
 			identity_hash: "identity-hash",
 			login_email_hash: "email-hash",
+			last_cookie_update_at_ms: 555,
 		};
 		const db = new RecordingSql([
 			{
-				sql: /SELECT a\.id, a\.cookie_header, a\.cookie_hash, a\.identity_hash, b\.login_email_hash FROM gemini_accounts a LEFT JOIN gemini_browser_accounts b ON b\.account_id = a\.id WHERE a\.id = \? LIMIT 1/,
+				sql: /SELECT a\.id, a\.cookie_header, a\.cookie_hash, a\.identity_hash, b\.login_email_hash, b\.last_cookie_update_at_ms FROM gemini_accounts a LEFT JOIN gemini_browser_accounts b ON b\.account_id = a\.id WHERE a\.id = \? LIMIT 1/,
 				binds: ["first"],
 				operation: "first",
 				result: row,
@@ -130,8 +131,8 @@ describe("SQL Gemini account runtime store", () => {
 				result: mutationResult(),
 			},
 			{
-				sql: /INSERT INTO gemini_browser_accounts/,
-				binds: ["first", 7000, 7000, 7000],
+				sql: /INSERT INTO gemini_browser_accounts \( account_id, browser_state, last_check_at_ms, auth_failure_count, notification_state, failure_code, updated_at_ms \).*ON CONFLICT\(account_id\) DO UPDATE SET browser_state = 'ready', last_check_at_ms = excluded\.last_check_at_ms, auth_failure_count = 0/,
+				binds: ["first", 7000, 7000],
 				operation: "batch",
 				result: mutationResult(),
 			},

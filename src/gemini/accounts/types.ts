@@ -233,6 +233,7 @@ export type GeminiBrowserCandidateAccount = Pick<
 	"id" | "cookie_header" | "cookie_hash" | "identity_hash"
 > & {
 	login_email_hash: string | null;
+	last_cookie_update_at_ms: number | null;
 };
 
 export type GeminiVerifiedBrowserCookieWrite = {

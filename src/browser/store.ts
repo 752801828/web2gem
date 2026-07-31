@@ -1,4 +1,3 @@
-import type { SqlDatabaseLike } from "../gemini/accounts/types";
 import type {
 	BrowserAccountStatus,
 	BrowserAccountStore,
@@ -7,6 +6,17 @@ import type {
 	EncryptedBrowserCredentials,
 } from "./types";
 import { browserState } from "./types";
+
+type SqlResult<T = unknown> = { results?: T[]; meta?: unknown };
+type SqlPreparedStatementLike = {
+	bind(...values: unknown[]): SqlPreparedStatementLike;
+	first<T = unknown>(columnName?: string): Promise<T | null>;
+	all<T = unknown>(): Promise<SqlResult<T>>;
+	run<T = unknown>(): Promise<SqlResult<T>>;
+};
+type SqlDatabaseLike = {
+	prepare(sql: string): SqlPreparedStatementLike;
+};
 
 type StatusRow = {
 	credentials_configured: number;

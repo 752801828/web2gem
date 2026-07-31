@@ -1,4 +1,5 @@
 import type { RuntimeConfig } from "../../config";
+import { CandidateCookieService } from "../../browser/candidate-cookie";
 import {
 	buildGeminiModelCatalog,
 	type GeminiModelCatalog,
@@ -69,6 +70,8 @@ export type GeminiAccountPoolOptions = {
 	rotateCookie?: import("./lease").GeminiAccountCookieRotator;
 	verifyAccount?: import("./probe").GeminiAccountVerifier;
 };
+
+export const DEFAULT_CANDIDATE_COOKIE_VERIFIER = verifyGeminiAccount;
 
 export class AccountPoolService {
 	private readonly nowMs: () => number;
@@ -208,6 +211,18 @@ export class AccountPoolService {
 	async refreshSnapshot(nowMs: number = this.nowMs()): Promise<void> {
 		this.invalidateSnapshot();
 		await this.selectableSnapshot(nowMs);
+	}
+
+	createCandidateCookieService(
+		baseConfig: RuntimeConfig,
+		verifyAccount: GeminiAccountVerifier = DEFAULT_CANDIDATE_COOKIE_VERIFIER,
+	): CandidateCookieService<RuntimeConfig> {
+		return new CandidateCookieService({
+			store: this.store,
+			baseConfig,
+			verifyAccount,
+			pool: this,
+		});
 	}
 
 	async routeCandidatesForModel(

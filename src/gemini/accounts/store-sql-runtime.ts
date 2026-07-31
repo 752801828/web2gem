@@ -250,7 +250,7 @@ export class SqlGeminiAccountStoreBase {
 		return this.db
 			.prepare(`
         SELECT a.id, a.cookie_header, a.cookie_hash, a.identity_hash,
-          b.login_email_hash
+          b.login_email_hash, b.last_cookie_update_at_ms
         FROM gemini_accounts a
         LEFT JOIN gemini_browser_accounts b ON b.account_id = a.id
         WHERE a.id = ?
@@ -332,8 +332,9 @@ export class SqlGeminiAccountStoreBase {
 					write.nowMs,
 				),
 		);
-		const browserReady = this.db
-			.prepare(`
+		const browserReady = write.changed
+			? this.db
+					.prepare(`
         INSERT INTO gemini_browser_accounts (
           account_id, browser_state, last_check_at_ms,
           last_cookie_update_at_ms, auth_failure_count,
@@ -348,7 +349,22 @@ export class SqlGeminiAccountStoreBase {
           failure_code = NULL,
           updated_at_ms = excluded.updated_at_ms
       `)
-			.bind(accountId, write.nowMs, write.nowMs, write.nowMs);
+					.bind(accountId, write.nowMs, write.nowMs, write.nowMs)
+			: this.db
+					.prepare(`
+        INSERT INTO gemini_browser_accounts (
+          account_id, browser_state, last_check_at_ms,
+          auth_failure_count, notification_state, failure_code, updated_at_ms
+        ) VALUES (?, 'ready', ?, 0, NULL, NULL, ?)
+        ON CONFLICT(account_id) DO UPDATE SET
+          browser_state = 'ready',
+          last_check_at_ms = excluded.last_check_at_ms,
+          auth_failure_count = 0,
+          notification_state = NULL,
+          failure_code = NULL,
+          updated_at_ms = excluded.updated_at_ms
+      `)
+					.bind(accountId, write.nowMs, write.nowMs);
 		try {
 			const results = await this.db.batch([
 				accountUpdate,
