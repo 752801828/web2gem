@@ -478,7 +478,12 @@ describe("quality scripts", () => {
 			server.matchAll(/from\s+["']\.\/(.+?\.mjs)["']/g),
 			(match) => requiredString(match[1], "runtime import"),
 		);
-		assert.deepEqual(runtimeImports.sort(), ["io.mjs", "sqlite-binding.mjs"]);
+		assert.deepEqual(runtimeImports.sort(), [
+			"credential-crypto.mjs",
+			"io.mjs",
+			"secrets.mjs",
+			"sqlite-binding.mjs",
+		]);
 		for (const filename of runtimeImports) {
 			assert.match(
 				dockerfile,

@@ -3,6 +3,8 @@ import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 import { errorLine, outputLine } from "./io.mjs";
+import { createCredentialCryptoBinding } from "./credential-crypto.mjs";
+import { readBrowserMasterKey } from "./secrets.mjs";
 import { createSqliteBindingFromEnv } from "./sqlite-binding.mjs";
 
 const port = Number(process.env.PORT || 52389);
@@ -57,7 +59,17 @@ export function executionContext() {
 export function resolveDockerEnv(sourceEnv = process.env, options = {}) {
 	const nextEnv = { ...sourceEnv };
 	nextEnv.ACCOUNT_DB = createSqliteBindingFromEnv(sourceEnv, options.sqlite);
+	const credentialCrypto =
+		options.credentialCrypto || credentialCryptoFromSecret(options.secrets);
+	if (credentialCrypto) {
+		nextEnv.BROWSER_CREDENTIAL_CRYPTO = credentialCrypto;
+	}
 	return nextEnv;
+}
+
+function credentialCryptoFromSecret(options) {
+	const masterKey = readBrowserMasterKey(options?.path);
+	return masterKey ? createCredentialCryptoBinding(masterKey) : null;
 }
 
 export async function handleDockerRequest(req, res, options = {}) {
@@ -140,6 +152,9 @@ export function createDockerServer(options = {}) {
 				...options,
 				env: resolveDockerEnv(options.processEnv || process.env, {
 					fetch: options.fetch,
+					sqlite: options.sqlite,
+					secrets: options.secrets,
+					credentialCrypto: options.credentialCrypto,
 				}),
 			};
 	const server = http.createServer((req, res) => {
@@ -168,6 +183,9 @@ export async function startDockerServer(options = {}) {
 		options.env ||
 		resolveDockerEnv(options.processEnv || process.env, {
 			fetch: options.fetch,
+			sqlite: options.sqlite,
+			secrets: options.secrets,
+			credentialCrypto: options.credentialCrypto,
 		});
 	let app = options.app;
 	if (!app) {

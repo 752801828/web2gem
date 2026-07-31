@@ -18,7 +18,13 @@ type DockerServerOptions = {
 	env?: Record<string, unknown>;
 	processEnv?: NodeJS.ProcessEnv;
 	fetch?: typeof fetch;
+	secrets?: { path?: string };
+	credentialCrypto?: BrowserCredentialCrypto;
 	app?: DockerApp;
+};
+type BrowserCredentialCrypto = {
+	encrypt(accountId: string, credentials: unknown): Promise<unknown>;
+	decrypt(accountId: string, encrypted: unknown): Promise<unknown>;
 };
 type DockerApp = {
 	fetch(
@@ -69,9 +75,12 @@ const resolveDockerEnv = moduleFunction<
 		options?: {
 			fetch?: typeof fetch;
 			sqlite?: { migrationSql?: string; migrationPath?: string };
+			secrets?: { path?: string };
+			credentialCrypto?: BrowserCredentialCrypto;
 		},
 	) => Record<string, unknown> & {
 		ACCOUNT_DB?: { prepare(sql: string): unknown; close?: () => void };
+		BROWSER_CREDENTIAL_CRYPTO?: BrowserCredentialCrypto;
 	}
 >(dockerServerModule, "resolveDockerEnv");
 const startDockerServer = moduleFunction<
@@ -364,10 +373,43 @@ describe("docker server", () => {
 					migrationSql:
 						"CREATE TABLE IF NOT EXISTS local_test (id INTEGER PRIMARY KEY);",
 				},
+				secrets: { path: "missing-browser-master-key" },
 			},
 		);
 		assert.equal(typeof sqliteEnv.ACCOUNT_DB?.prepare, "function");
 		closeDockerStorage(sqliteEnv);
+	});
+	test("injects only an opaque credential binding when supplied", () => {
+		const credentialCrypto: BrowserCredentialCrypto = {
+			async encrypt() {
+				return {};
+			},
+			async decrypt() {
+				return {};
+			},
+		};
+		const withoutSecret = resolveDockerEnv(
+			{ SQLITE_PATH: ":memory:" },
+			{
+				sqlite: { migrationSql: "SELECT 1;" },
+				secrets: { path: "missing-browser-master-key" },
+			},
+		);
+		assert.equal(withoutSecret.BROWSER_CREDENTIAL_CRYPTO, undefined);
+		closeDockerStorage(withoutSecret);
+
+		const withBinding = resolveDockerEnv(
+			{ SQLITE_PATH: ":memory:" },
+			{
+				sqlite: { migrationSql: "SELECT 1;" },
+				secrets: { path: "missing-browser-master-key" },
+				credentialCrypto,
+			},
+		);
+		assert.equal(withBinding.BROWSER_CREDENTIAL_CRYPTO, credentialCrypto);
+		assert.equal("BROWSER_MASTER_KEY" in withBinding, false);
+		assert.equal("BROWSER_HELPER_CLIENT" in withBinding, false);
+		closeDockerStorage(withBinding);
 	});
 	test("rejects invalid runtime config before the Docker server listens", async () => {
 		await assert.rejects(

@@ -1,4 +1,8 @@
-export type AppEnv = Record<string, unknown>;
+import type { BrowserCredentialCrypto } from "../browser/types";
+
+export type AppEnv = Record<string, unknown> & {
+	BROWSER_CREDENTIAL_CRYPTO?: BrowserCredentialCrypto;
+};
 
 export type GeminiAccountLeaseContext = {
 	accountId: string;
