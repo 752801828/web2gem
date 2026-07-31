@@ -356,6 +356,7 @@ export class SqlGeminiAccountStoreBase {
           notification_state = NULL,
           failure_code = NULL,
           updated_at_ms = excluded.updated_at_ms
+        RETURNING last_cookie_update_at_ms
       `)
 					.bind(accountId, write.nowMs, write.nowMs, write.nowMs)
 			: this.db
@@ -371,6 +372,7 @@ export class SqlGeminiAccountStoreBase {
           notification_state = NULL,
           failure_code = NULL,
           updated_at_ms = excluded.updated_at_ms
+        RETURNING last_cookie_update_at_ms
       `)
 					.bind(accountId, write.nowMs, write.nowMs);
 		const result = await this.db.guardedBatch(accountUpdate, [
@@ -380,7 +382,21 @@ export class SqlGeminiAccountStoreBase {
 			this.poolVersionIncrementStatement(write.nowMs),
 		]);
 		if (!result.committed) return { changed: false, reason: "conflict" };
-		return { changed: write.changed };
+		const browserResult = result.results[2 + insertModels.length];
+		const timestamp = browserResult?.results?.[0] as
+			| { last_cookie_update_at_ms?: unknown }
+			| undefined;
+		const lastCookieUpdateAtMs = timestamp?.last_cookie_update_at_ms;
+		if (
+			lastCookieUpdateAtMs !== null &&
+			(!Number.isSafeInteger(lastCookieUpdateAtMs) ||
+				Number(lastCookieUpdateAtMs) < 0)
+		)
+			throw new Error("Verified browser cookie timestamp result is invalid");
+		return {
+			changed: write.changed,
+			lastCookieUpdateAtMs: lastCookieUpdateAtMs as number | null,
+		};
 	}
 
 	async tryAcquireRefreshLock(
@@ -418,18 +434,16 @@ export class SqlGeminiAccountStoreBase {
 		accountId: string,
 		update: GeminiRefreshedCookieWrite,
 	): Promise<GeminiRefreshedCookieWriteResult> {
-		const current = await this.getAccountRow(accountId);
-		if (!current) return { changed: false };
 		const cookieHeader = normalizeGeminiCookieHeader(update.cookieHeader);
 		const cookieHash = await sha256Hex(cookieHeader);
-		if (cookieHash === current.cookie_hash) {
-			await this.runMutationWithPoolVersion(
+		if (cookieHash === update.expectedCookieHash) {
+			const result = await this.runMutationWithPoolVersion(
 				this.db
 					.prepare(`
           UPDATE gemini_accounts
 							SET last_refresh_at_ms = ?, last_refresh_attempt_at_ms = ?,
 								last_refresh_success_at_ms = ?, updated_at_ms = ?
-							WHERE id = ?
+							WHERE id = ? AND cookie_hash = ? AND identity_hash = ?
 						`)
 					.bind(
 						update.refreshedAtMs,
@@ -437,10 +451,14 @@ export class SqlGeminiAccountStoreBase {
 						update.refreshedAtMs,
 						update.nowMs,
 						accountId,
+						update.expectedCookieHash,
+						update.expectedIdentityHash,
 					),
 				update.nowMs,
 			);
-			return { changed: false };
+			return resultChanged(result) > 0
+				? { changed: false }
+				: { changed: false, reason: "conflict" };
 		}
 		const duplicateId = await this.findAccountIdByCookieHash(cookieHash);
 		if (duplicateId && duplicateId !== accountId)
@@ -449,11 +467,11 @@ export class SqlGeminiAccountStoreBase {
 			await this.runMutationWithPoolVersion(
 				this.db
 					.prepare(`
-          UPDATE gemini_accounts
+							UPDATE OR IGNORE gemini_accounts
 							SET cookie_header = ?, cookie_hash = ?,
 								last_refresh_at_ms = ?, last_refresh_attempt_at_ms = ?,
 								last_refresh_success_at_ms = ?, updated_at_ms = ?
-          WHERE id = ?
+							WHERE id = ? AND cookie_hash = ? AND identity_hash = ?
         `)
 					.bind(
 						cookieHeader,
@@ -463,16 +481,19 @@ export class SqlGeminiAccountStoreBase {
 						update.refreshedAtMs,
 						update.nowMs,
 						accountId,
+						update.expectedCookieHash,
+						update.expectedIdentityHash,
 					),
 				update.nowMs,
 			);
 		} catch (error) {
 			if (!isSqlUniqueConstraintError(error)) throw error;
-			const duplicate = await this.findAccountIdByCookieHash(cookieHash);
-			if (!duplicate || duplicate === accountId) throw error;
 			return { changed: false, reason: "duplicate_cookie" };
 		}
-		return { changed: true };
+		const current = await this.getAccountForRefresh(accountId);
+		return current?.cookie_hash === cookieHash
+			? { changed: true }
+			: { changed: false, reason: "conflict" };
 	}
 
 	async writeAccountProbe(

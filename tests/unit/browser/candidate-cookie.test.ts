@@ -62,6 +62,7 @@ async function fixture(
 		storedEmail?: string | null;
 		verify?: GeminiAccountVerifier;
 		writeResult?: { changed: boolean; reason?: "conflict" };
+		storedLastCookieUpdateAtMs?: number | null;
 		lastCookieUpdateAtMs?: number | null;
 	} = {},
 ) {
@@ -88,7 +89,16 @@ async function fixture(
 		async replaceVerifiedBrowserCookie(_accountId, write) {
 			writes.push(write);
 			return (
-				options.writeResult ?? { changed: write.cookieHeader !== OLD_COOKIE }
+				options.writeResult ?? {
+					changed: write.cookieHeader !== OLD_COOKIE,
+					lastCookieUpdateAtMs:
+						options.storedLastCookieUpdateAtMs ??
+						(write.cookieHeader !== OLD_COOKIE
+							? NOW
+							: Object.hasOwn(options, "lastCookieUpdateAtMs")
+								? (options.lastCookieUpdateAtMs ?? null)
+								: 999),
+				}
 			);
 		},
 	};
@@ -268,6 +278,132 @@ describe("verified browser candidate cookies", () => {
 			state: "ready",
 			lastCookieUpdateAtMs: null,
 		});
+	});
+
+	test("returns the authoritative timestamp written concurrently during verification", async () => {
+		const { result } = await fixture({
+			lastCookieUpdateAtMs: 100,
+			storedLastCookieUpdateAtMs: 200,
+		});
+		assert.deepEqual(result, {
+			ok: true,
+			changed: false,
+			state: "ready",
+			lastCookieUpdateAtMs: 200,
+		});
+	});
+
+	test("real SQLite returns a browser timestamp updated after the pre-verification read", async () => {
+		const db = sqliteModule.createSqliteBinding({
+			path: ":memory:",
+			busyTimeoutMs: 1000,
+		});
+		try {
+			await db
+				.prepare(`INSERT INTO gemini_accounts (
+					id, cookie_header, cookie_hash, identity_hash, created_at_ms, updated_at_ms
+				) VALUES (?, ?, ?, ?, ?, ?)`)
+				.bind(
+					"timestamp-race",
+					OLD_COOKIE,
+					await sha256Hex(OLD_COOKIE),
+					await identityHashFromCookie(OLD_COOKIE),
+					1,
+					1,
+				)
+				.run();
+			await db
+				.prepare(`INSERT INTO gemini_browser_accounts (
+					account_id, last_cookie_update_at_ms, updated_at_ms
+				) VALUES (?, ?, ?)`)
+				.bind("timestamp-race", 100, 100)
+				.run();
+			const service = new CandidateCookieService({
+				store: new SqlGeminiAccountStore(db),
+				baseConfig: baseGeminiClientConfig(),
+				verifyAccount: async () => {
+					await db
+						.prepare(`UPDATE gemini_browser_accounts
+							SET last_cookie_update_at_ms = ?, updated_at_ms = ?
+							WHERE account_id = ?`)
+						.bind(200, 200, "timestamp-race")
+						.run();
+					return {
+						ok: true,
+						probe: { statusCode: 1000, issue: null, models: [] },
+					};
+				},
+			});
+			assert.deepEqual(
+				await service.replace({
+					accountId: "timestamp-race",
+					psid: "old-psid",
+					psidts: "old-ts",
+					observedEmail: null,
+					nowMs: NOW,
+				}),
+				{
+					ok: true,
+					changed: false,
+					state: "ready",
+					lastCookieUpdateAtMs: 200,
+				},
+			);
+		} finally {
+			db.close();
+		}
+	});
+
+	test("a stale regular refresh cannot overwrite a verified candidate identity", async () => {
+		const db = sqliteModule.createSqliteBinding({
+			path: ":memory:",
+			busyTimeoutMs: 1000,
+		});
+		try {
+			const oldHash = await sha256Hex(OLD_COOKIE);
+			const oldIdentity = await identityHashFromCookie(OLD_COOKIE);
+			await db
+				.prepare(`INSERT INTO gemini_accounts (
+					id, cookie_header, cookie_hash, identity_hash, created_at_ms, updated_at_ms
+				) VALUES (?, ?, ?, ?, ?, ?)`)
+				.bind("writer-race", OLD_COOKIE, oldHash, oldIdentity, 1, 1)
+				.run();
+			const store = new SqlGeminiAccountStore(db);
+			const candidateCookie =
+				"__Secure-1PSID=candidate; __Secure-1PSIDTS=candidate-ts";
+			assert.deepEqual(
+				await store.replaceVerifiedBrowserCookie("writer-race", {
+					expectedCookieHash: oldHash,
+					expectedIdentityHash: oldIdentity,
+					cookieHeader: candidateCookie,
+					cookieHash: await sha256Hex(candidateCookie),
+					identityHash: await identityHashFromCookie(candidateCookie),
+					changed: true,
+					probe: { statusCode: 1000, issue: null, models: [] },
+					nowMs: NOW,
+				}),
+				{ changed: true, lastCookieUpdateAtMs: NOW },
+			);
+			assert.deepEqual(
+				await store.writeRefreshedCookie("writer-race", {
+					expectedCookieHash: oldHash,
+					expectedIdentityHash: oldIdentity,
+					cookieHeader:
+						"__Secure-1PSID=old-psid; __Secure-1PSIDTS=stale-refresh",
+					refreshedAtMs: NOW + 1,
+					nowMs: NOW + 1,
+				}),
+				{ changed: false, reason: "conflict" },
+			);
+			const row = await store.getAccountForRefresh("writer-race");
+			assert.equal(row?.cookie_header, candidateCookie);
+			assert.equal(
+				row?.identity_hash,
+				await identityHashFromCookie(candidateCookie),
+			);
+		} finally {
+			db.close();
+		}
 	});
 
 	test("production pool factory owns the real verifier default and supports a test seam", async () => {

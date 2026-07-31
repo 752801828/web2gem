@@ -88,6 +88,8 @@ export async function persistObservedCookies(
 		const cookieHash = await sha256Hex(cookieHeader);
 		if (cookieHash === account.cookie_hash) return;
 		const writeback = await host.store.writeRefreshedCookie(lease.accountId, {
+			expectedCookieHash: account.cookie_hash,
+			expectedIdentityHash: account.identity_hash,
 			cookieHeader,
 			refreshedAtMs: nowMs,
 			nowMs,
@@ -223,11 +225,17 @@ async function refreshAccountOnce(
 			return { changed: false, reason: verification.reason };
 		}
 		const writeback = await host.store.writeRefreshedCookie(lease.accountId, {
+			expectedCookieHash: account.cookie_hash,
+			expectedIdentityHash: account.identity_hash,
 			cookieHeader: nextCookieHeader,
 			refreshedAtMs: nowMs,
 			nowMs,
 		});
-		if (!writeback.changed && writeback.reason === "duplicate_cookie") {
+		if (
+			!writeback.changed &&
+			(writeback.reason === "duplicate_cookie" ||
+				writeback.reason === "conflict")
+		) {
 			return {
 				changed: false,
 				reason: "rotation_duplicate",

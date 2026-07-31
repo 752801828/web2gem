@@ -72,7 +72,11 @@ export type CandidateCookieStore = {
 	replaceVerifiedBrowserCookie(
 		accountId: string,
 		write: CandidateWrite,
-	): Promise<{ changed: boolean; reason?: "conflict" }>;
+	): Promise<{
+		changed: boolean;
+		reason?: "conflict";
+		lastCookieUpdateAtMs?: number | null;
+	}>;
 };
 
 type CandidateSessionConfig<TConfig extends object> = TConfig & {
@@ -161,9 +165,7 @@ export class CandidateCookieService<TConfig extends object> {
 			ok: true,
 			changed: stored.changed,
 			state: "ready",
-			lastCookieUpdateAtMs: stored.changed
-				? input.nowMs
-				: account.last_cookie_update_at_ms,
+			lastCookieUpdateAtMs: stored.lastCookieUpdateAtMs ?? null,
 		};
 	}
 

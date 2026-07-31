@@ -97,8 +97,19 @@ function rejectedRuntimeLockCall(
 	);
 }
 
-function refreshedCookieWrite(cookieHeader: string, nowMs = 120000) {
-	return { cookieHeader, refreshedAtMs: nowMs, nowMs };
+function refreshedCookieWrite(
+	cookieHeader: string,
+	nowMs = 120000,
+	expectedCookieHash = "hash-a",
+	expectedIdentityHash = "identity-a",
+) {
+	return {
+		expectedCookieHash,
+		expectedIdentityHash,
+		cookieHeader,
+		refreshedAtMs: nowMs,
+		nowMs,
+	};
 }
 
 async function withFixedNow<T>(
@@ -336,7 +347,15 @@ describe("gemini account runtime", () => {
 				runtimeCall("getAccountForRefresh", ["restricted"], row),
 				runtimeCall(
 					"writeRefreshedCookie",
-					["restricted", refreshedCookieWrite(rotatedCookie)],
+					[
+						"restricted",
+						refreshedCookieWrite(
+							rotatedCookie,
+							120000,
+							"hash-restricted",
+							"identity-restricted",
+						),
+					],
 					{ changed: true },
 				),
 				runtimeCall(
@@ -417,7 +436,15 @@ describe("gemini account runtime", () => {
 				runtimeCall("getAccountForRefresh", ["stale-session"], row),
 				runtimeCall(
 					"writeRefreshedCookie",
-					["stale-session", refreshedCookieWrite(normalizedCookie, nowMs)],
+					[
+						"stale-session",
+						refreshedCookieWrite(
+							normalizedCookie,
+							nowMs,
+							"hash-stale-session",
+							"identity-stale-session",
+						),
+					],
 					{ changed: false },
 				),
 			]),
@@ -465,7 +492,15 @@ describe("gemini account runtime", () => {
 				runtimeCall("getAccountForRefresh", ["passive"], row),
 				runtimeCall(
 					"writeRefreshedCookie",
-					["passive", refreshedCookieWrite(updatedCookie)],
+					[
+						"passive",
+						refreshedCookieWrite(
+							updatedCookie,
+							120000,
+							row.cookie_hash,
+							row.identity_hash,
+						),
+					],
 					{ changed: true },
 				),
 			]),
@@ -561,7 +596,15 @@ describe("gemini account runtime", () => {
 					runtimeCall("getAccountForRefresh", ["passive-duplicate"], row),
 					runtimeCall(
 						"writeRefreshedCookie",
-						["passive-duplicate", refreshedCookieWrite(duplicateCookie)],
+						[
+							"passive-duplicate",
+							refreshedCookieWrite(
+								duplicateCookie,
+								120000,
+								row.cookie_hash,
+								row.identity_hash,
+							),
+						],
 						{ changed: false, reason: "duplicate_cookie" },
 					),
 				],

@@ -222,6 +222,8 @@ export type GeminiAccountSnapshotRow = Pick<
 >;
 
 export type GeminiRefreshedCookieWrite = {
+	expectedCookieHash: string;
+	expectedIdentityHash: string;
 	cookieHeader: string;
 	refreshedAtMs: number;
 	nowMs: number;
@@ -229,7 +231,7 @@ export type GeminiRefreshedCookieWrite = {
 
 export type GeminiRefreshedCookieWriteResult = {
 	changed: boolean;
-	reason?: "duplicate_cookie";
+	reason?: "duplicate_cookie" | "conflict";
 };
 
 export type GeminiBrowserCandidateAccount = Pick<
@@ -254,6 +256,7 @@ export type GeminiVerifiedBrowserCookieWrite = {
 export type GeminiVerifiedBrowserCookieWriteResult = {
 	changed: boolean;
 	reason?: "conflict";
+	lastCookieUpdateAtMs?: number | null;
 };
 
 export type GeminiAccountStore = {

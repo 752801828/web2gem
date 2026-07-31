@@ -97,7 +97,10 @@ describe("SQL Gemini account runtime store", () => {
 				sql: /INSERT INTO gemini_browser_accounts .*ON CONFLICT\(account_id\) DO UPDATE SET browser_state = 'ready'.*last_check_at_ms = excluded\.last_check_at_ms.*last_cookie_update_at_ms = excluded\.last_cookie_update_at_ms.*auth_failure_count = 0.*failure_code = NULL/,
 				binds: ["first", 6000, 6000, 6000],
 				operation: "batch",
-				result: mutationResult(),
+				result: {
+					...mutationResult(),
+					results: [{ last_cookie_update_at_ms: 6000 }],
+				},
 			},
 			poolVersionExpectation(6000, "unconditional"),
 		]);
@@ -106,7 +109,7 @@ describe("SQL Gemini account runtime store", () => {
 				"first",
 				write,
 			),
-			{ changed: true },
+			{ changed: true, lastCookieUpdateAtMs: 6000 },
 		);
 		db.assertBatches([[0, 1, 2, 3, 4]]);
 		db.assertDrained();
@@ -147,10 +150,13 @@ describe("SQL Gemini account runtime store", () => {
 				result: mutationResult(),
 			},
 			{
-				sql: /INSERT INTO gemini_browser_accounts \( account_id, browser_state, last_check_at_ms, auth_failure_count, notification_state, failure_code, updated_at_ms \).*ON CONFLICT\(account_id\) DO UPDATE SET browser_state = 'ready', last_check_at_ms = excluded\.last_check_at_ms, auth_failure_count = 0/,
+				sql: /INSERT INTO gemini_browser_accounts \( account_id, browser_state, last_check_at_ms, auth_failure_count, notification_state, failure_code, updated_at_ms \).*ON CONFLICT\(account_id\) DO UPDATE SET browser_state = 'ready', last_check_at_ms = excluded\.last_check_at_ms, auth_failure_count = 0.*RETURNING last_cookie_update_at_ms/,
 				binds: ["first", 7000, 7000],
 				operation: "batch",
-				result: mutationResult(),
+				result: {
+					...mutationResult(),
+					results: [{ last_cookie_update_at_ms: 6500 }],
+				},
 			},
 			poolVersionExpectation(7000, "unconditional"),
 		]);
@@ -159,7 +165,7 @@ describe("SQL Gemini account runtime store", () => {
 				"first",
 				write,
 			),
-			{ changed: false },
+			{ changed: false, lastCookieUpdateAtMs: 6500 },
 		);
 		assert.doesNotMatch(
 			(db.records[0]?.sql || "").split(" WHERE ")[0] || "",
@@ -325,14 +331,16 @@ describe("SQL Gemini account runtime store", () => {
 		});
 		const db = new RecordingSql([
 			{
-				sql: "SELECT * FROM gemini_accounts WHERE id = ? LIMIT 1",
-				binds: ["first"],
-				operation: "first",
-				result: current,
-			},
-			{
-				sql: /UPDATE gemini_accounts SET last_refresh_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \?/,
-				binds: [2000, 2000, 2000, 2000, "first"],
+				sql: /UPDATE gemini_accounts SET last_refresh_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \? AND cookie_hash = \? AND identity_hash = \?/,
+				binds: [
+					2000,
+					2000,
+					2000,
+					2000,
+					"first",
+					current.cookie_hash,
+					current.identity_hash,
+				],
 				operation: "batch",
 				result: mutationResult(),
 			},
@@ -341,13 +349,15 @@ describe("SQL Gemini account runtime store", () => {
 
 		assert.deepEqual(
 			await new SqlGeminiAccountStore(db).writeRefreshedCookie("first", {
+				expectedCookieHash: current.cookie_hash,
+				expectedIdentityHash: current.identity_hash,
 				cookieHeader,
 				refreshedAtMs: 2000,
 				nowMs: 2000,
 			}),
 			{ changed: false },
 		);
-		db.assertBatches([[1, 2]]);
+		db.assertBatches([[0, 1]]);
 		db.assertDrained();
 	});
 
@@ -356,12 +366,6 @@ describe("SQL Gemini account runtime store", () => {
 		const nextHash = await sha256Hex(nextCookie);
 		const db = new RecordingSql([
 			{
-				sql: "SELECT * FROM gemini_accounts WHERE id = ? LIMIT 1",
-				binds: ["first"],
-				operation: "first",
-				result: accountSqlRow("first", { cookie_hash: "old-hash" }),
-			},
-			{
 				sql: "SELECT id FROM gemini_accounts WHERE cookie_hash = ? LIMIT 1",
 				binds: [nextHash],
 				operation: "first",
@@ -369,23 +373,41 @@ describe("SQL Gemini account runtime store", () => {
 				result: null,
 			},
 			{
-				sql: /UPDATE gemini_accounts SET cookie_header = \?, cookie_hash = \?, last_refresh_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \?/,
-				binds: [nextCookie, nextHash, 3000, 3000, 3000, 3000, "first"],
+				sql: /UPDATE OR IGNORE gemini_accounts SET cookie_header = \?, cookie_hash = \?, last_refresh_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \? AND cookie_hash = \? AND identity_hash = \?/,
+				binds: [
+					nextCookie,
+					nextHash,
+					3000,
+					3000,
+					3000,
+					3000,
+					"first",
+					"old-hash",
+					"identity-first",
+				],
 				operation: "batch",
 				result: mutationResult(),
 			},
 			poolVersionExpectation(3000),
+			{
+				sql: "SELECT id, cookie_header, cookie_hash, identity_hash, last_refresh_success_at_ms FROM gemini_accounts WHERE id = ? LIMIT 1",
+				binds: ["first"],
+				operation: "first",
+				result: { ...accountSqlRow("first"), cookie_hash: nextHash },
+			},
 		]);
 
 		assert.deepEqual(
 			await new SqlGeminiAccountStore(db).writeRefreshedCookie("first", {
+				expectedCookieHash: "old-hash",
+				expectedIdentityHash: "identity-first",
 				cookieHeader: nextCookie,
 				refreshedAtMs: 3000,
 				nowMs: 3000,
 			}),
 			{ changed: true },
 		);
-		db.assertBatches([[2, 3]]);
+		db.assertBatches([[1, 2]]);
 		db.assertDrained();
 	});
 
