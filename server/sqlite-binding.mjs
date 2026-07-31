@@ -69,7 +69,7 @@ export function createSqliteBinding(config, options = {}) {
 		});
 		database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
 		database.exec("BEGIN IMMEDIATE");
-		if (options.migrationSql !== undefined) {
+		if (options.migrationSql != null) {
 			database.exec(options.migrationSql);
 		} else if (options.migrationPath) {
 			database.exec(readFileSync(options.migrationPath, "utf8"));

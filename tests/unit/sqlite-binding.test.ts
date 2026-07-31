@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, test } from "vitest";
 import { isRecord } from "../../src/shared/types";
 import { assert } from "./assertions.js";
@@ -29,6 +30,13 @@ type SqliteConfig = {
 	busyTimeoutMs: number;
 };
 
+type SqliteOptions = {
+	Database?: typeof DatabaseSync;
+	migrationsDirectory?: string;
+	migrationPath?: string;
+	migrationSql?: string | null;
+};
+
 type Callable = (...args: never[]) => unknown;
 
 async function importUnknown(specifier: string): Promise<unknown> {
@@ -49,16 +57,10 @@ const sqliteModule = await importUnknown(
 	new URL("../../server/sqlite-binding.mjs", import.meta.url).href,
 );
 const createSqliteBinding = moduleFunction<
-	(
-		config: SqliteConfig,
-		options?: { migrationSql?: string; migrationPath?: string },
-	) => SqliteBinding
+	(config: SqliteConfig, options?: SqliteOptions) => SqliteBinding
 >(sqliteModule, "createSqliteBinding");
 const createSqliteBindingFromEnv = moduleFunction<
-	(
-		env?: Record<string, unknown>,
-		options?: { migrationSql?: string; migrationPath?: string },
-	) => SqliteBinding
+	(env?: Record<string, unknown>, options?: SqliteOptions) => SqliteBinding
 >(sqliteModule, "createSqliteBindingFromEnv");
 const resolveSqliteConfig = moduleFunction<
 	(env?: Record<string, unknown>) => SqliteConfig
@@ -220,6 +222,99 @@ describe("Docker SQLite binding", () => {
 				() => migrationFiles(directory),
 				/duplicate migration identifier/,
 			);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test("rolls back and closes a file database when an ordered migration fails", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "web2gem-migration-failure-"));
+		const migrationsDirectory = join(directory, "migrations");
+		const path = join(directory, "pool.sqlite");
+		let rollbackObserved = false;
+		let failedDatabaseClosed = false;
+		class TrackedDatabase extends DatabaseSync {
+			override exec(sql: string) {
+				if (sql === "ROLLBACK") rollbackObserved = true;
+				return super.exec(sql);
+			}
+
+			override close() {
+				assert.equal(rollbackObserved, true);
+				failedDatabaseClosed = true;
+				super.close();
+			}
+		}
+		try {
+			mkdirSync(migrationsDirectory);
+			writeFileSync(
+				join(migrationsDirectory, "0001_probe.sql"),
+				"CREATE TABLE migration_probe (value TEXT UNIQUE); INSERT INTO migration_probe VALUES ('first');",
+				{ flush: true },
+			);
+			writeFileSync(
+				join(migrationsDirectory, "0002_broken.sql"),
+				"CREATE TABLE migration_secret_token (",
+				{ flush: true },
+			);
+			try {
+				createSqliteBinding(
+					{ path, busyTimeoutMs: 1000 },
+					{ Database: TrackedDatabase, migrationsDirectory },
+				);
+				throw new Error("expected malformed migration to fail");
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				assert.match(message, /failed to initialize SQLite storage/);
+				assert.doesNotMatch(message, /migration_secret_token/);
+			}
+			assert.equal(rollbackObserved, true);
+			assert.equal(failedDatabaseClosed, true);
+
+			writeFileSync(
+				join(migrationsDirectory, "0002_broken.sql"),
+				"CREATE TABLE migration_recovery (value TEXT);",
+				{ flush: true },
+			);
+			const recovered = createSqliteBinding(
+				{ path, busyTimeoutMs: 1000 },
+				{ migrationsDirectory },
+			);
+			try {
+				assert.deepEqual(
+					(await recovered.prepare("SELECT value FROM migration_probe").all())
+						.results,
+					[{ value: "first" }],
+				);
+			} finally {
+				recovered.close();
+			}
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test("falls back to migrationPath when migrationSql is null", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "web2gem-null-migration-"));
+		const migrationPath = join(directory, "fallback.sql");
+		try {
+			writeFileSync(migrationPath, SIMPLE_MIGRATION);
+			const binding = createSqliteBinding(
+				{ path: ":memory:", busyTimeoutMs: 1000 },
+				{ migrationSql: null, migrationPath },
+			);
+			try {
+				assert.equal(
+					await binding
+						.prepare(
+							"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'items'",
+						)
+						.first("name"),
+					"items",
+				);
+			} finally {
+				binding.close();
+			}
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}
