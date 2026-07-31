@@ -44,7 +44,10 @@ const ADMIN_OVERVIEW_SELECT = `
   a.id, a.label, a.enabled, a.issue, a.cooldown_until_ms, a.last_issue_at_ms,
   a.last_used_at_ms, a.last_refresh_at_ms, a.status_checked_at_ms,
   a.last_refresh_success_at_ms, a.created_at_ms, a.updated_at_ms,
-  COALESCE(b.credential_version = 1, 0) AS credentials_configured,
+  COALESCE(b.credential_ciphertext IS NOT NULL
+    AND b.credential_nonce IS NOT NULL
+    AND b.credential_version = 1
+    AND b.login_email_hash IS NOT NULL, 0) AS credentials_configured,
   COALESCE(b.browser_state, 'idle') AS browser_state,
   b.last_check_at_ms, b.last_cookie_update_at_ms,
   b.last_auto_login_at_ms, b.failure_code

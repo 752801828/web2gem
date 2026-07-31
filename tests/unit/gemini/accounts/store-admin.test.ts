@@ -15,6 +15,8 @@ describe("SQL Gemini account store admin projections", () => {
 		const row = adminSqlRow("account-a");
 		const malformed = {
 			...row,
+			credentials_configured: 0,
+			credential_version: 1,
 			browser_state: "not-a-browser-state",
 			failure_code: 42,
 		};
@@ -50,7 +52,7 @@ describe("SQL Gemini account store admin projections", () => {
 		};
 		const db = new RecordingSql([
 			{
-				sql: /SELECT a\.id, a\.label, a\.enabled, a\.issue, a\.cooldown_until_ms, .* FROM gemini_accounts a LEFT JOIN gemini_browser_accounts b ON b\.account_id = a\.id WHERE a\.enabled = 1 AND a\.cooldown_until_ms > \? ORDER BY a\.id ASC LIMIT \?/,
+				sql: /SELECT a\.id, a\.label, a\.enabled, a\.issue, a\.cooldown_until_ms, .* COALESCE\(b\.credential_ciphertext IS NOT NULL AND b\.credential_nonce IS NOT NULL AND b\.credential_version = 1 AND b\.login_email_hash IS NOT NULL, 0\) AS credentials_configured, .* FROM gemini_accounts a LEFT JOIN gemini_browser_accounts b ON b\.account_id = a\.id WHERE a\.enabled = 1 AND a\.cooldown_until_ms > \? ORDER BY a\.id ASC LIMIT \?/,
 				binds: [1000, 11],
 				operation: "batch",
 				result: { results: [row] },
@@ -85,7 +87,11 @@ describe("SQL Gemini account store admin projections", () => {
 		if (!pageRecord) throw new Error("admin page statement was not recorded");
 		assert.doesNotMatch(
 			pageRecord.sql,
-			/cookie_header|cookie_hash|identity_hash|credential_ciphertext|credential_nonce|login_email_hash/,
+			/cookie_header|cookie_hash|identity_hash|b\.(?:credential_ciphertext|credential_nonce|login_email_hash)\s*(?:,|\bAS\b)/i,
+		);
+		assert.doesNotMatch(
+			pageRecord.sql,
+			/b\.(?:credential_ciphertext|credential_nonce|login_email_hash)\s+(?!IS\b)[A-Za-z_]\w*/i,
 		);
 		assert.doesNotMatch(
 			JSON.stringify(overview),

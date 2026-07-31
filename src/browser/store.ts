@@ -1,4 +1,3 @@
-import { resultChanged } from "../gemini/accounts/domain";
 import type { SqlDatabaseLike } from "../gemini/accounts/types";
 import type {
 	BrowserAccountStatus,
@@ -62,7 +61,10 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
 		const result = await this.db
 			.prepare(`
         SELECT a.id AS account_id, a.label,
-          COALESCE(b.credential_version = 1, 0) AS credentials_configured,
+          COALESCE(b.credential_ciphertext IS NOT NULL
+            AND b.credential_nonce IS NOT NULL
+            AND b.credential_version = 1
+            AND b.login_email_hash IS NOT NULL, 0) AS credentials_configured,
           COALESCE(b.browser_state, 'idle') AS browser_state,
           b.last_check_at_ms, b.last_cookie_update_at_ms,
           b.last_auto_login_at_ms, b.failure_code,
@@ -192,8 +194,11 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
         RETURNING account_id
       `)
 			.bind(accountId, owner, expiresAtMs, nowMs, nowMs, owner)
-			.run();
-		return resultChanged(result) > 0 || (result.results?.length || 0) > 0;
+			.run<{ account_id: unknown }>();
+		return (
+			result.results?.length === 1 &&
+			result.results[0]?.account_id === accountId
+		);
 	}
 
 	async releaseLease(accountId: string, owner: string): Promise<void> {
@@ -266,7 +271,12 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
 			.bind(accountId, date, nowMs)
 			.run<{ auto_login_attempt_count: number }>();
 		const count = result.results?.[0]?.auto_login_attempt_count;
-		if (typeof count !== "number")
+		if (
+			result.results?.length !== 1 ||
+			typeof count !== "number" ||
+			!Number.isInteger(count) ||
+			count < 1
+		)
 			throw new Error("SQL browser attempt update returned no count");
 		return count;
 	}

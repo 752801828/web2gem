@@ -36,7 +36,7 @@ describe("SQL browser account store", () => {
 				binds: ["malformed"],
 				operation: "first",
 				result: {
-					credentials_configured: 1,
+					credentials_configured: 0,
 					browser_state: "not-a-browser-state",
 					last_check_at_ms: null,
 					last_cookie_update_at_ms: null,
@@ -62,7 +62,7 @@ describe("SQL browser account store", () => {
 			failureCode: null,
 		});
 		assert.deepEqual(await store.getStatus("malformed"), {
-			credentialsConfigured: true,
+			credentialsConfigured: false,
 			state: "idle",
 			lastCheckAtMs: null,
 			lastCookieUpdateAtMs: null,
@@ -148,7 +148,7 @@ describe("SQL browser account store", () => {
 	test("lists only enabled accounts using a secret-free projection", async () => {
 		const db = new RecordingSql([
 			{
-				sql: /SELECT a\.id AS account_id, a\.label, .* FROM gemini_accounts a LEFT JOIN gemini_browser_accounts b ON b\.account_id = a\.id WHERE a\.enabled = 1 ORDER BY/,
+				sql: /SELECT a\.id AS account_id, a\.label, COALESCE\(b\.credential_ciphertext IS NOT NULL AND b\.credential_nonce IS NOT NULL AND b\.credential_version = 1 AND b\.login_email_hash IS NOT NULL, 0\) AS credentials_configured, .* FROM gemini_accounts a LEFT JOIN gemini_browser_accounts b ON b\.account_id = a\.id WHERE a\.enabled = 1 ORDER BY/,
 				binds: [],
 				operation: "all",
 				result: {
@@ -173,13 +173,111 @@ describe("SQL browser account store", () => {
 		const result = await new SqlBrowserAccountStore(db).listScheduled(500);
 
 		assert.equal(result[0]?.accountId, "account-a");
+		assert.equal(result[0]?.status.credentialsConfigured, false);
 		assert.doesNotMatch(
 			db.records[0]?.sql || "",
-			/credential_ciphertext|credential_nonce|login_email_hash|cookie_header|cookie_hash/,
+			/b\.(?:credential_ciphertext|credential_nonce|login_email_hash)\s*(?:,|\bAS\b)|cookie_header|cookie_hash/i,
+		);
+		assert.doesNotMatch(
+			db.records[0]?.sql || "",
+			/b\.(?:credential_ciphertext|credential_nonce|login_email_hash)\s+(?!IS\b)[A-Za-z_]\w*/i,
 		);
 		assert.doesNotMatch(
 			JSON.stringify(result),
 			/ciphertext|nonce|emailHash|cookieHeader|cookieHash|internalToken/,
+		);
+		db.assertDrained();
+	});
+
+	test("trusts only a matching lease RETURNING row", async () => {
+		const leaseSql =
+			/INSERT INTO gemini_browser_accounts .* RETURNING account_id/;
+		const binds = ["account-a", "owner-a", 200, 100, 100, "owner-a"];
+		const db = new RecordingSql([
+			{
+				sql: leaseSql,
+				binds,
+				operation: "run",
+				result: { results: [] },
+			},
+			{
+				sql: leaseSql,
+				binds,
+				operation: "run",
+				result: { results: [{ account_id: "account-a" }] },
+			},
+			{
+				sql: leaseSql,
+				binds,
+				operation: "run",
+				result: { results: [{ account_id: "account-b" }] },
+			},
+			{
+				sql: leaseSql,
+				binds,
+				operation: "run",
+				result: { results: [{ account_id: 42 }] },
+			},
+			{
+				sql: leaseSql,
+				binds,
+				operation: "run",
+				result: {
+					results: [{ account_id: "account-a" }, { account_id: "account-a" }],
+				},
+			},
+		]);
+		const store = new SqlBrowserAccountStore(db);
+
+		assert.equal(
+			await store.tryAcquireLease("account-a", "owner-a", 200, 100),
+			false,
+		);
+		assert.equal(
+			await store.tryAcquireLease("account-a", "owner-a", 200, 100),
+			true,
+		);
+		assert.equal(
+			await store.tryAcquireLease("account-a", "owner-a", 200, 100),
+			false,
+		);
+		assert.equal(
+			await store.tryAcquireLease("account-a", "owner-a", 200, 100),
+			false,
+		);
+		assert.equal(
+			await store.tryAcquireLease("account-a", "owner-a", 200, 100),
+			false,
+		);
+		db.assertDrained();
+	});
+
+	test("fails safely when attempt RETURNING is empty or malformed", async () => {
+		const attemptSql =
+			/INSERT INTO gemini_browser_accounts .* RETURNING auto_login_attempt_count/;
+		const db = new RecordingSql([
+			{
+				sql: attemptSql,
+				binds: ["account-a", "2026-07-31", 100],
+				operation: "run",
+				result: { results: [] },
+			},
+			{
+				sql: attemptSql,
+				binds: ["account-a", "2026-07-31", 101],
+				operation: "run",
+				result: { results: [{ auto_login_attempt_count: "2" }] },
+			},
+		]);
+		const store = new SqlBrowserAccountStore(db);
+
+		await assert.rejects(
+			store.recordAutoLoginAttempt("account-a", "2026-07-31", 100),
+			"SQL browser attempt update returned no count",
+		);
+		await assert.rejects(
+			store.recordAutoLoginAttempt("account-a", "2026-07-31", 101),
+			"SQL browser attempt update returned no count",
 		);
 		db.assertDrained();
 	});
