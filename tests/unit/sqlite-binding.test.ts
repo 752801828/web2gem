@@ -22,6 +22,10 @@ type SqliteStatement = {
 type SqliteBinding = {
 	prepare(sql: string): SqliteStatement;
 	batch(statements: SqliteStatement[]): Promise<SqliteResult[]>;
+	guardedBatch(
+		guard: SqliteStatement,
+		statements: SqliteStatement[],
+	): Promise<{ committed: boolean; results: SqliteResult[] }>;
 	close(): void;
 };
 
@@ -199,6 +203,126 @@ describe("Docker SQLite binding", () => {
 		} finally {
 			binding.close();
 			other.close();
+		}
+	});
+
+	test("guarded batches skip dependent statements and roll back on a missing guard row", async () => {
+		const binding = createSqliteBinding(
+			{ path: ":memory:", busyTimeoutMs: 1000 },
+			{ migrationSql: SIMPLE_MIGRATION },
+		);
+		try {
+			await binding
+				.prepare("INSERT INTO items(value) VALUES (?)")
+				.bind("original")
+				.run();
+			assert.deepEqual(
+				await binding.guardedBatch(
+					binding
+						.prepare(
+							"UPDATE OR IGNORE items SET value = ? WHERE id = ? RETURNING id",
+						)
+						.bind("ignored", 99),
+					[
+						binding
+							.prepare("INSERT INTO items(value) VALUES (?)")
+							.bind("must-not-run"),
+					],
+				),
+				{ committed: false, results: [] },
+			);
+			assert.deepEqual(
+				(await binding.prepare("SELECT value FROM items ORDER BY id").all())
+					.results,
+				[{ value: "original" }],
+			);
+			assert.equal(
+				(
+					await binding.guardedBatch(
+						binding
+							.prepare(
+								"UPDATE OR IGNORE items SET value = ? WHERE id = ? RETURNING id",
+							)
+							.bind("updated", 1),
+						[
+							binding
+								.prepare("INSERT INTO items(value) VALUES (?)")
+								.bind("dependent"),
+						],
+					)
+				).committed,
+				true,
+			);
+			assert.deepEqual(
+				(await binding.prepare("SELECT value FROM items ORDER BY id").all())
+					.results,
+				[{ value: "updated" }, { value: "dependent" }],
+			);
+		} finally {
+			binding.close();
+		}
+	});
+
+	test("guarded batches roll back a successful guard when a dependent statement fails", async () => {
+		const binding = createSqliteBinding(
+			{ path: ":memory:", busyTimeoutMs: 1000 },
+			{ migrationSql: SIMPLE_MIGRATION },
+		);
+		try {
+			await binding
+				.prepare("INSERT INTO items(value) VALUES (?)")
+				.bind("original")
+				.run();
+			await assert.rejects(
+				() =>
+					binding.guardedBatch(
+						binding
+							.prepare("UPDATE items SET value = ? WHERE id = ? RETURNING id")
+							.bind("guarded-secret", 1),
+						[
+							binding
+								.prepare("INSERT INTO items(value) VALUES (?)")
+								.bind("guarded-secret"),
+						],
+					),
+				/SQLite guarded batch failed/,
+			);
+			assert.equal(
+				await binding
+					.prepare("SELECT value FROM items WHERE id = 1")
+					.first("value"),
+				"original",
+			);
+		} catch (error) {
+			assert.doesNotMatch(String(error), /guarded-secret/);
+			throw error;
+		} finally {
+			binding.close();
+		}
+	});
+
+	test("guarded batches reject a guard that returns more than one row", async () => {
+		const binding = createSqliteBinding(
+			{ path: ":memory:", busyTimeoutMs: 1000 },
+			{ migrationSql: SIMPLE_MIGRATION },
+		);
+		try {
+			await binding.batch([
+				binding.prepare("INSERT INTO items(value) VALUES ('one')"),
+				binding.prepare("INSERT INTO items(value) VALUES ('two')"),
+			]);
+			assert.deepEqual(
+				await binding.guardedBatch(binding.prepare("SELECT id FROM items"), [
+					binding.prepare("INSERT INTO items(value) VALUES ('must-not-run')"),
+				]),
+				{ committed: false, results: [] },
+			);
+			assert.equal(
+				await binding.prepare("SELECT COUNT(*) FROM items").first("COUNT(*)"),
+				2,
+			);
+		} finally {
+			binding.close();
 		}
 	});
 

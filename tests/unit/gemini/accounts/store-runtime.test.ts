@@ -37,6 +37,8 @@ describe("SQL Gemini account runtime store", () => {
 
 	test("atomically replaces a verified browser cookie and probe capabilities", async () => {
 		const write = {
+			expectedCookieHash: "old-cookie-hash",
+			expectedIdentityHash: "old-identity-hash",
 			cookieHeader: "__Secure-1PSID=new; __Secure-1PSIDTS=new-ts",
 			cookieHash: "new-cookie-hash",
 			identityHash: "new-identity-hash",
@@ -61,7 +63,7 @@ describe("SQL Gemini account runtime store", () => {
 		};
 		const db = new RecordingSql([
 			{
-				sql: /UPDATE gemini_accounts SET cookie_header = \?, cookie_hash = \?, identity_hash = \?, issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, last_refresh_at_ms = \?, account_status_code = \?, status_checked_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \?/,
+				sql: /UPDATE OR IGNORE gemini_accounts SET cookie_header = \?, cookie_hash = \?, identity_hash = \?, issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, last_refresh_at_ms = \?, account_status_code = \?, status_checked_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \? AND cookie_hash = \? AND identity_hash = \? RETURNING id/,
 				binds: [
 					write.cookieHeader,
 					write.cookieHash,
@@ -73,9 +75,11 @@ describe("SQL Gemini account runtime store", () => {
 					6000,
 					6000,
 					"first",
+					"old-cookie-hash",
+					"old-identity-hash",
 				],
 				operation: "batch",
-				result: mutationResult(),
+				result: { ...mutationResult(), results: [{ id: "first" }] },
 			},
 			{
 				sql: "DELETE FROM gemini_account_models WHERE account_id = ?",
@@ -110,6 +114,8 @@ describe("SQL Gemini account runtime store", () => {
 
 	test("does not rewrite secret columns for an unchanged verified cookie", async () => {
 		const write = {
+			expectedCookieHash: "hash",
+			expectedIdentityHash: "identity",
 			cookieHeader: "secret",
 			cookieHash: "hash",
 			identityHash: "identity",
@@ -119,10 +125,20 @@ describe("SQL Gemini account runtime store", () => {
 		};
 		const db = new RecordingSql([
 			{
-				sql: /UPDATE gemini_accounts SET issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, last_refresh_at_ms = \?, account_status_code = \?, status_checked_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \?/,
-				binds: [7000, 1000, 7000, 7000, 7000, 7000, "first"],
+				sql: /UPDATE OR IGNORE gemini_accounts SET issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, last_refresh_at_ms = \?, account_status_code = \?, status_checked_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \? AND cookie_hash = \? AND identity_hash = \? RETURNING id/,
+				binds: [
+					7000,
+					1000,
+					7000,
+					7000,
+					7000,
+					7000,
+					"first",
+					"hash",
+					"identity",
+				],
 				operation: "batch",
-				result: mutationResult(),
+				result: { ...mutationResult(), results: [{ id: "first" }] },
 			},
 			{
 				sql: "DELETE FROM gemini_account_models WHERE account_id = ?",
@@ -146,15 +162,17 @@ describe("SQL Gemini account runtime store", () => {
 			{ changed: false },
 		);
 		assert.doesNotMatch(
-			db.records[0]?.sql || "",
+			(db.records[0]?.sql || "").split(" WHERE ")[0] || "",
 			/cookie_header|cookie_hash|identity_hash/,
 		);
 		db.assertBatches([[0, 1, 2, 3]]);
 		db.assertDrained();
 	});
 
-	test("maps an atomic unique violation to a safe browser conflict", async () => {
+	test("maps an ignored guard conflict without executing dependent writes", async () => {
 		const write = {
+			expectedCookieHash: "old-hash",
+			expectedIdentityHash: "old-identity",
 			cookieHeader: "secret",
 			cookieHash: "hash",
 			identityHash: "identity",
@@ -164,7 +182,7 @@ describe("SQL Gemini account runtime store", () => {
 		};
 		const db = new RecordingSql([
 			{
-				sql: /UPDATE gemini_accounts SET cookie_header = \?/,
+				sql: /UPDATE OR IGNORE gemini_accounts SET cookie_header = \?/,
 				binds: [
 					"secret",
 					"hash",
@@ -176,11 +194,11 @@ describe("SQL Gemini account runtime store", () => {
 					8000,
 					8000,
 					"first",
+					"old-hash",
+					"old-identity",
 				],
 				operation: "batch",
-				error: new Error(
-					"UNIQUE constraint failed: gemini_accounts.cookie_hash",
-				),
+				result: { ...mutationResult(0), results: [] },
 			},
 			{
 				sql: "DELETE FROM gemini_account_models WHERE account_id = ?",

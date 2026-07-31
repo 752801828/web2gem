@@ -137,6 +137,45 @@ export function createSqliteBinding(config, options = {}) {
 				});
 			}
 		},
+		async guardedBatch(guard, statements) {
+			assertOpen();
+			if (
+				!(guard instanceof SqlitePreparedStatement) ||
+				!Array.isArray(statements)
+			) {
+				throw new SqliteBindingError("SQLite guarded batch is invalid", {
+					code: "sqlite_invalid_guarded_batch",
+				});
+			}
+			guard.assertOwner(owner);
+			for (const statement of statements) {
+				if (!(statement instanceof SqlitePreparedStatement)) {
+					throw new SqliteBindingError(
+						"SQLite guarded batch received an invalid statement",
+						{ code: "sqlite_invalid_batch_statement" },
+					);
+				}
+				statement.assertOwner(owner);
+			}
+			try {
+				database.exec("BEGIN IMMEDIATE");
+				const guardResult = guard.execute(owner);
+				if (guardResult.results.length !== 1) {
+					database.exec("ROLLBACK");
+					return { committed: false, results: [] };
+				}
+				const results = statements.map((statement) => statement.execute(owner));
+				database.exec("COMMIT");
+				return { committed: true, results: [guardResult, ...results] };
+			} catch {
+				try {
+					if (database.isTransaction) database.exec("ROLLBACK");
+				} catch {}
+				throw new SqliteBindingError("SQLite guarded batch failed", {
+					code: "sqlite_guarded_batch_error",
+				});
+			}
+		},
 		close() {
 			if (closed) return;
 			closed = true;

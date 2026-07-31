@@ -46,6 +46,43 @@ function savedProPriorities(nowMs: number): GeminiModelRoutePriorityRow[] {
 }
 
 describe("gemini account runtime", () => {
+	test("refreshSnapshot waits out a stale in-flight load before forcing a post-commit load", async () => {
+		const nowMs = 100000;
+		let resolveStale!: (value: string) => void;
+		const staleVersion = new Promise<string>((resolve) => {
+			resolveStale = resolve;
+		});
+		const store = createAccountStore([
+			runtimeCall("getPoolVersion", [], staleVersion as unknown as string),
+			runtimeCall("listSelectableAccounts", [nowMs, 100], [account("stale")]),
+			runtimeCall("listAccountCapabilities", [["stale"]], []),
+			runtimeCall("getPoolVersion", [], "2"),
+			runtimeCall("listSelectableAccounts", [nowMs, 100], [account("fresh")]),
+			runtimeCall("listAccountCapabilities", [["fresh"]], []),
+		]);
+		const pool = createPool(store, nowMs);
+		const staleLoad = pool.selectableSnapshot(nowMs);
+		const refresh = pool.refreshSnapshot(nowMs);
+		let refreshed = false;
+		void refresh.then(() => {
+			refreshed = true;
+		});
+		await Promise.resolve();
+		assert.equal(refreshed, false);
+
+		resolveStale("1");
+		assert.deepEqual(
+			(await staleLoad).map((row) => row.id),
+			["stale"],
+		);
+		await refresh;
+		assert.deepEqual(
+			(await pool.selectableSnapshot(nowMs)).map((row) => row.id),
+			["fresh"],
+		);
+		store.assertExhausted();
+	});
+
 	test("refreshSnapshot reloads committed accounts and capabilities into the catalog", async () => {
 		const nowMs = 100000;
 		const first = account("first");

@@ -55,6 +55,8 @@ type CandidateAccount = {
 };
 
 type CandidateWrite = {
+	expectedCookieHash: string;
+	expectedIdentityHash: string;
 	cookieHeader: string;
 	cookieHash: string;
 	identityHash: string;
@@ -94,7 +96,7 @@ type CandidateCookieServiceOptions<TConfig extends object> = {
 	store: CandidateCookieStore;
 	baseConfig: TConfig;
 	verifyAccount: CandidateVerifier<TConfig>;
-	pool?: { refreshSnapshot(nowMs?: number): Promise<void> };
+	pool?: { refreshSnapshot(nowMs?: number, accountId?: string): Promise<void> };
 	refreshPool?: () => Promise<void>;
 };
 
@@ -142,6 +144,8 @@ export class CandidateCookieService<TConfig extends object> {
 		const stored = await this.options.store.replaceVerifiedBrowserCookie(
 			account.id,
 			{
+				expectedCookieHash: account.cookie_hash,
+				expectedIdentityHash: account.identity_hash,
 				cookieHeader,
 				cookieHash,
 				identityHash,
@@ -152,7 +156,7 @@ export class CandidateCookieService<TConfig extends object> {
 		);
 		if (stored.reason === "conflict")
 			return { ok: false, code: "browser_cookie_conflict" };
-		await this.refreshPool(input.nowMs);
+		await this.refreshPool(input.nowMs, account.id);
 		return {
 			ok: true,
 			changed: stored.changed,
@@ -163,8 +167,9 @@ export class CandidateCookieService<TConfig extends object> {
 		};
 	}
 
-	private async refreshPool(nowMs: number): Promise<void> {
-		if (this.options.pool) await this.options.pool.refreshSnapshot(nowMs);
+	private async refreshPool(nowMs: number, accountId: string): Promise<void> {
+		if (this.options.pool)
+			await this.options.pool.refreshSnapshot(nowMs, accountId);
 		else if (this.options.refreshPool) await this.options.refreshPool();
 	}
 }
@@ -182,7 +187,11 @@ function validInput(input: CandidateCookieInput): boolean {
 }
 
 function bareCookieValue(value: unknown): value is string {
-	return typeof value === "string" && value.length > 0 && !/[\s=;]/.test(value);
+	return (
+		typeof value === "string" &&
+		!value.includes("=") &&
+		/^[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]+$/.test(value)
+	);
 }
 
 async function observedIdentityMatches(

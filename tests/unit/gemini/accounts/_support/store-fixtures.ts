@@ -194,6 +194,37 @@ export class RecordingSql implements SqlDatabaseLike {
 		return results;
 	}
 
+	async guardedBatch<T = unknown>(
+		guard: SqlPreparedStatementLike,
+		statements: SqlPreparedStatementLike[],
+	): Promise<{ committed: boolean; results: SqlResult<T>[] }> {
+		if (!(guard instanceof RecordingStatement) || guard.db !== this)
+			throw new Error("SQL guarded batch received an unrecorded guard");
+		this.batches.push(
+			[guard, ...statements].map((statement) => {
+				if (!(statement instanceof RecordingStatement) || statement.db !== this)
+					throw new Error("SQL guarded batch received an unrecorded statement");
+				return statement.record;
+			}),
+		);
+		const guardResult = guard.execute<SqlResult<T>>("batch");
+		if (guardResult.results?.length !== 1) {
+			for (const statement of statements) {
+				if (!(statement instanceof RecordingStatement) || statement.db !== this)
+					throw new Error("SQL guarded batch received an unrecorded statement");
+				statement.abort();
+			}
+			return { committed: false, results: [] };
+		}
+		const results = [guardResult];
+		for (const statement of statements) {
+			if (!(statement instanceof RecordingStatement) || statement.db !== this)
+				throw new Error("SQL guarded batch received an unrecorded statement");
+			results.push(statement.execute<SqlResult<T>>("batch"));
+		}
+		return { committed: true, results };
+	}
+
 	assertBatches(expectedRecordIndexes: readonly (readonly number[])[]): void {
 		const actualRecordIndexes = this.batches.map((batch) =>
 			batch.map((record) => this.records.indexOf(record)),

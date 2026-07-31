@@ -264,18 +264,21 @@ export class SqlGeminiAccountStoreBase {
 		accountId: string,
 		write: GeminiVerifiedBrowserCookieWrite,
 	): Promise<GeminiVerifiedBrowserCookieWriteResult> {
-		if (!this.db.batch)
-			throw new Error("Verified browser cookie replacement requires SQL batch");
+		if (!this.db.guardedBatch)
+			throw new Error(
+				"Verified browser cookie replacement requires guarded SQL batch",
+			);
 		const accountUpdate = write.changed
 			? this.db
 					.prepare(`
-            UPDATE gemini_accounts
+            UPDATE OR IGNORE gemini_accounts
             SET cookie_header = ?, cookie_hash = ?, identity_hash = ?,
               issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL,
               last_refresh_at_ms = ?, account_status_code = ?,
               status_checked_at_ms = ?, last_refresh_attempt_at_ms = ?,
               last_refresh_success_at_ms = ?, updated_at_ms = ?
-            WHERE id = ?
+            WHERE id = ? AND cookie_hash = ? AND identity_hash = ?
+            RETURNING id
           `)
 					.bind(
 						write.cookieHeader,
@@ -288,15 +291,18 @@ export class SqlGeminiAccountStoreBase {
 						write.nowMs,
 						write.nowMs,
 						accountId,
+						write.expectedCookieHash,
+						write.expectedIdentityHash,
 					)
 			: this.db
 					.prepare(`
-            UPDATE gemini_accounts
+            UPDATE OR IGNORE gemini_accounts
             SET issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL,
               last_refresh_at_ms = ?, account_status_code = ?,
               status_checked_at_ms = ?, last_refresh_attempt_at_ms = ?,
               last_refresh_success_at_ms = ?, updated_at_ms = ?
-            WHERE id = ?
+            WHERE id = ? AND cookie_hash = ? AND identity_hash = ?
+            RETURNING id
           `)
 					.bind(
 						write.nowMs,
@@ -306,6 +312,8 @@ export class SqlGeminiAccountStoreBase {
 						write.nowMs,
 						write.nowMs,
 						accountId,
+						write.expectedCookieHash,
+						write.expectedIdentityHash,
 					);
 		const deleteModels = this.db
 			.prepare("DELETE FROM gemini_account_models WHERE account_id = ?")
@@ -365,21 +373,13 @@ export class SqlGeminiAccountStoreBase {
           updated_at_ms = excluded.updated_at_ms
       `)
 					.bind(accountId, write.nowMs, write.nowMs);
-		try {
-			const results = await this.db.batch([
-				accountUpdate,
-				deleteModels,
-				...insertModels,
-				browserReady,
-				this.poolVersionIncrementStatement(write.nowMs),
-			]);
-			if (resultChanged(results[0] || {}) === 0)
-				throw new Error("Verified browser cookie account not found");
-		} catch (error) {
-			if (isSqlUniqueConstraintError(error))
-				return { changed: false, reason: "conflict" };
-			throw error;
-		}
+		const result = await this.db.guardedBatch(accountUpdate, [
+			deleteModels,
+			...insertModels,
+			browserReady,
+			this.poolVersionIncrementStatement(write.nowMs),
+		]);
+		if (!result.committed) return { changed: false, reason: "conflict" };
 		return { changed: write.changed };
 	}
 

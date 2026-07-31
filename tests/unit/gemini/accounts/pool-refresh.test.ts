@@ -14,6 +14,7 @@ import { deferred } from "../../_support/deferred.js";
 import {
 	account,
 	accountContext,
+	createPool,
 	createAccountStore,
 	rejectUnexpectedCookieRotation,
 	required,
@@ -114,6 +115,40 @@ async function withFixedNow<T>(
 }
 
 describe("gemini account runtime", () => {
+	test("candidate snapshot refresh removes stale cached account cookie state", async () => {
+		const oldRow = account("a");
+		const nextCookie = "__Secure-1PSID=p-a; __Secure-1PSIDTS=candidate";
+		const nextHash = await sha256Hex(nextCookie);
+		const nextRow = account("a", {
+			cookie_header: nextCookie,
+			cookie_hash: nextHash,
+		});
+		const store = createAccountStore([
+			runtimeCall("getPoolVersion", [], "1"),
+			runtimeCall("listSelectableAccounts", [120000, 100], [oldRow]),
+			runtimeCall("getPoolVersion", [], "2"),
+			runtimeCall("listSelectableAccounts", [120000, 100], [nextRow]),
+		]);
+		const pool = createPool(store, 120000);
+		const oldLease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"old lease",
+		);
+		await oldLease.maintainSessionIfStale(Number.POSITIVE_INFINITY);
+		oldLease.release();
+
+		await pool.refreshSnapshot(120000, "a");
+
+		const nextLease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"candidate lease",
+		);
+		assert.equal(nextLease.config.cookie, nextCookie);
+		assert.equal(accountContext(nextLease.config).cookieHash, nextHash);
+		nextLease.release();
+		store.assertExhausted();
+	});
+
 	test("deduplicates refreshes and updates active and cached lease credentials", async () => {
 		const row = account("a");
 		const rotatedCookie = "__Secure-1PSID=p-a; __Secure-1PSIDTS=rotated";

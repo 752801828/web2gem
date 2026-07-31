@@ -34,6 +34,10 @@ export type SqlDatabaseLike = {
 	batch?<T = unknown>(
 		statements: SqlPreparedStatementLike[],
 	): Promise<SqlResult<T>[]>;
+	guardedBatch?<T = unknown>(
+		guard: SqlPreparedStatementLike,
+		statements: SqlPreparedStatementLike[],
+	): Promise<{ committed: boolean; results: SqlResult<T>[] }>;
 };
 
 export type SqlPreparedStatementLike = {
@@ -237,6 +241,8 @@ export type GeminiBrowserCandidateAccount = Pick<
 };
 
 export type GeminiVerifiedBrowserCookieWrite = {
+	expectedCookieHash: string;
+	expectedIdentityHash: string;
 	cookieHeader: string;
 	cookieHash: string;
 	identityHash: string;

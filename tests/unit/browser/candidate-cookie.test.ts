@@ -21,6 +21,7 @@ import {
 } from "../../../src/gemini/accounts/pool";
 import { verifyGeminiAccount } from "../../../src/gemini/accounts/probe";
 import type { GeminiAccountStore } from "../../../src/gemini/accounts/types";
+import { SqlGeminiAccountStore } from "../../../src/gemini/accounts/store-sql";
 
 type CredentialCryptoModule = {
 	createCredentialCryptoBinding(key: Uint8Array): BrowserCredentialCrypto;
@@ -29,6 +30,16 @@ type CredentialCryptoModule = {
 const credentialCryptoModule = (await import(
 	new URL("../../../server/credential-crypto.mjs", import.meta.url).href
 )) as CredentialCryptoModule;
+const sqliteModule = (await import(
+	new URL("../../../server/sqlite-binding.mjs", import.meta.url).href
+)) as {
+	createSqliteBinding(config: {
+		path: string;
+		busyTimeoutMs: number;
+	}): import("../../../src/gemini/accounts/types").SqlDatabaseLike & {
+		close(): void;
+	};
+};
 
 const NOW = 123_456;
 const OLD_COOKIE = "__Secure-1PSID=old-psid; __Secure-1PSIDTS=old-ts";
@@ -126,6 +137,11 @@ describe("verified browser candidate cookies", () => {
 		assert.equal(result.ok && result.changed, true);
 		assert.equal(writes.length, 1);
 		assert.equal(writes[0]?.changed, true);
+		assert.equal(writes[0]?.expectedCookieHash, await sha256Hex(OLD_COOKIE));
+		assert.equal(
+			writes[0]?.expectedIdentityHash,
+			await identityHashFromCookie(OLD_COOKIE),
+		);
 	});
 
 	test("accepts a changed identity only when canonical observed email matches configured credentials", async () => {
@@ -296,6 +312,139 @@ describe("verified browser candidate cookies", () => {
 		assert.deepEqual(calls, ["load", "verify"]);
 	});
 
+	for (const candidateKind of ["changed", "unchanged"] as const) {
+		test(`rejects a concurrent account mutation for a ${candidateKind} candidate without side effects`, async () => {
+			const db = sqliteModule.createSqliteBinding({
+				path: ":memory:",
+				busyTimeoutMs: 1000,
+			});
+			try {
+				const originalCookie = OLD_COOKIE;
+				const originalCookieHash = await sha256Hex(originalCookie);
+				const originalIdentityHash =
+					await identityHashFromCookie(originalCookie);
+				await db
+					.prepare(`INSERT INTO gemini_accounts (
+						id, cookie_header, cookie_hash, identity_hash, created_at_ms, updated_at_ms
+					) VALUES (?, ?, ?, ?, ?, ?)`)
+					.bind(
+						"race-account",
+						originalCookie,
+						originalCookieHash,
+						originalIdentityHash,
+						1,
+						1,
+					)
+					.run();
+				const store = new SqlGeminiAccountStore(db);
+				const service = new CandidateCookieService({
+					store,
+					baseConfig: baseGeminiClientConfig(),
+					verifyAccount: async () => {
+						const concurrentCookie =
+							"__Secure-1PSID=concurrent; __Secure-1PSIDTS=concurrent";
+						await db
+							.prepare(`UPDATE gemini_accounts SET
+								cookie_header = ?, cookie_hash = ?, identity_hash = ?
+								WHERE id = ?`)
+							.bind(
+								concurrentCookie,
+								await sha256Hex(concurrentCookie),
+								await identityHashFromCookie(concurrentCookie),
+								"race-account",
+							)
+							.run();
+						return {
+							ok: true,
+							probe: { statusCode: 1000, issue: null, models: [MODEL] },
+						};
+					},
+				});
+				assert.deepEqual(
+					await service.replace({
+						accountId: "race-account",
+						psid: "old-psid",
+						psidts: candidateKind === "changed" ? "new-ts" : "old-ts",
+						observedEmail: null,
+						nowMs: NOW,
+					}),
+					{ ok: false, code: "browser_cookie_conflict" },
+				);
+				assert.equal(
+					await db
+						.prepare("SELECT COUNT(*) FROM gemini_account_models")
+						.first("COUNT(*)"),
+					0,
+				);
+				assert.equal(
+					await db
+						.prepare("SELECT COUNT(*) FROM gemini_browser_accounts")
+						.first("COUNT(*)"),
+					0,
+				);
+			} finally {
+				db.close();
+			}
+		});
+	}
+
+	test("does not misclassify a dependent model constraint failure as a cookie conflict", async () => {
+		const db = sqliteModule.createSqliteBinding({
+			path: ":memory:",
+			busyTimeoutMs: 1000,
+		});
+		try {
+			const cookieHash = await sha256Hex(OLD_COOKIE);
+			await db
+				.prepare(`INSERT INTO gemini_accounts (
+					id, cookie_header, cookie_hash, identity_hash, created_at_ms, updated_at_ms
+				) VALUES (?, ?, ?, ?, ?, ?)`)
+				.bind(
+					"model-conflict",
+					OLD_COOKIE,
+					cookieHash,
+					await identityHashFromCookie(OLD_COOKIE),
+					1,
+					1,
+				)
+				.run();
+			const service = new CandidateCookieService({
+				store: new SqlGeminiAccountStore(db),
+				baseConfig: baseGeminiClientConfig(),
+				verifyAccount: async () => ({
+					ok: true,
+					probe: { statusCode: 1000, issue: null, models: [MODEL, MODEL] },
+				}),
+			});
+			await assert.rejects(
+				() =>
+					service.replace({
+						accountId: "model-conflict",
+						psid: "old-psid",
+						psidts: "new-ts",
+						observedEmail: null,
+						nowMs: NOW,
+					}),
+				/SQLite guarded batch failed/,
+			);
+			assert.equal(
+				await db
+					.prepare("SELECT cookie_hash FROM gemini_accounts WHERE id = ?")
+					.bind("model-conflict")
+					.first("cookie_hash"),
+				cookieHash,
+			);
+			assert.equal(
+				await db
+					.prepare("SELECT COUNT(*) FROM gemini_account_models")
+					.first("COUNT(*)"),
+				0,
+			);
+		} finally {
+			db.close();
+		}
+	});
+
 	test("maps duplicate cookie or identity writes to a safe conflict", async () => {
 		const { result } = await fixture({
 			psidts: "new",
@@ -305,7 +454,18 @@ describe("verified browser candidate cookies", () => {
 	});
 
 	test("rejects non-bare cookie values before account lookup", async () => {
-		for (const psid of ["", "__Secure-1PSID=value", "value=x", "value;other"]) {
+		for (const psid of [
+			"",
+			"__Secure-1PSID=value",
+			"value=x",
+			"value;other",
+			"value with-space",
+			"value\tcontrol",
+			'value"quote',
+			"value,comma",
+			"value\\slash",
+			"value-é",
+		]) {
 			const { result, writes } = await fixture({ psid });
 			assert.deepEqual(result, {
 				ok: false,
@@ -313,6 +473,13 @@ describe("verified browser candidate cookies", () => {
 			});
 			assert.equal(writes.length, 0);
 		}
+	});
+
+	test("accepts the RFC 6265 cookie-octet boundaries used by Google cookies", async () => {
+		const value =
+			"!#$%&'()*+-./0123456789:<>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+		const { result } = await fixture({ psidts: value });
+		assert.equal(result.ok, true);
 	});
 });
 

@@ -208,9 +208,23 @@ export class AccountPoolService {
 		invalidatePoolSnapshot(this.snapshot);
 	}
 
-	async refreshSnapshot(nowMs: number = this.nowMs()): Promise<void> {
+	async refreshSnapshot(
+		nowMs: number = this.nowMs(),
+		invalidatedAccountId?: string,
+	): Promise<void> {
+		try {
+			await this.snapshot.pendingSnapshotLoad;
+		} catch {}
 		this.invalidateSnapshot();
 		await this.selectableSnapshot(nowMs);
+		if (invalidatedAccountId) this.accountStates.delete(invalidatedAccountId);
+		const currentHashes = new Map(
+			this.snapshot.snapshotRows.map((row) => [row.id, row.cookie_hash]),
+		);
+		for (const [accountId, state] of this.accountStates) {
+			if (currentHashes.get(accountId) !== state.cookieHash)
+				this.accountStates.delete(accountId);
+		}
 	}
 
 	createCandidateCookieService(
