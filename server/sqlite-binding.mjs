@@ -1,14 +1,30 @@
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 export const DEFAULT_SQLITE_PATH = "/data/web2gem.sqlite";
 export const DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 5000;
 
-const DEFAULT_MIGRATION_PATH = fileURLToPath(
-	new URL("../migrations/0001_gemini_accounts.sql", import.meta.url),
+const DEFAULT_MIGRATIONS_DIRECTORY = fileURLToPath(
+	new URL("../migrations/", import.meta.url),
 );
+const MIGRATION_FILENAME = /^\d{4}_[a-z0-9_]+\.sql$/;
+
+export function migrationFiles(directory) {
+	const identifiers = new Set();
+	return readdirSync(directory)
+		.filter((filename) => MIGRATION_FILENAME.test(filename))
+		.sort()
+		.map((filename) => {
+			const identifier = filename.slice(0, 4);
+			if (identifiers.has(identifier)) {
+				throw new Error(`duplicate migration identifier: ${identifier}`);
+			}
+			identifiers.add(identifier);
+			return join(directory, filename);
+		});
+}
 
 export function resolveSqliteConfig(env = process.env) {
 	const rawPath = clean(env.SQLITE_PATH) || DEFAULT_SQLITE_PATH;
@@ -52,11 +68,23 @@ export function createSqliteBinding(config, options = {}) {
 			timeout: config.busyTimeoutMs,
 		});
 		database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
-		const migrationSql =
-			options.migrationSql ??
-			readFileSync(options.migrationPath || DEFAULT_MIGRATION_PATH, "utf8");
-		database.exec(migrationSql);
+		database.exec("BEGIN IMMEDIATE");
+		if (options.migrationSql !== undefined) {
+			database.exec(options.migrationSql);
+		} else if (options.migrationPath) {
+			database.exec(readFileSync(options.migrationPath, "utf8"));
+		} else {
+			for (const migration of migrationFiles(
+				options.migrationsDirectory || DEFAULT_MIGRATIONS_DIRECTORY,
+			)) {
+				database.exec(readFileSync(migration, "utf8"));
+			}
+		}
+		database.exec("COMMIT");
 	} catch {
+		try {
+			if (database?.isTransaction) database.exec("ROLLBACK");
+		} catch {}
 		try {
 			database?.close();
 		} catch {}

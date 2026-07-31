@@ -27,7 +27,7 @@ COPY --from=build /app/dist/app.js ./dist/app.js
 COPY --from=build /app/server/docker-server.mjs ./server/docker-server.mjs
 COPY --from=build /app/server/sqlite-binding.mjs ./server/sqlite-binding.mjs
 COPY --from=build /app/server/io.mjs ./server/io.mjs
-COPY --from=build /app/migrations/0001_gemini_accounts.sql ./migrations/0001_gemini_accounts.sql
+COPY --from=build /app/migrations ./migrations
 
 EXPOSE 52389
 CMD ["node", "server/docker-server.mjs"]

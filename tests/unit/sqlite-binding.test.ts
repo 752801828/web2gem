@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "vitest";
@@ -63,6 +63,19 @@ const createSqliteBindingFromEnv = moduleFunction<
 const resolveSqliteConfig = moduleFunction<
 	(env?: Record<string, unknown>) => SqliteConfig
 >(sqliteModule, "resolveSqliteConfig");
+const migrationFiles = moduleFunction<(directory: string) => string[]>(
+	sqliteModule,
+	"migrationFiles",
+);
+
+const BROWSER_STATES = [
+	"idle",
+	"checking",
+	"ready",
+	"login_required",
+	"manual_action_required",
+	"error",
+] as const;
 
 const SIMPLE_MIGRATION = `
 	CREATE TABLE IF NOT EXISTS items (
@@ -187,11 +200,90 @@ describe("Docker SQLite binding", () => {
 		}
 	});
 
-	test("initializes idempotently and persists data in a file", async () => {
+	test("discovers ordered migration files and rejects duplicate identifiers", () => {
+		const directory = mkdtempSync(join(tmpdir(), "web2gem-migrations-"));
+		try {
+			for (const file of [
+				"0002_second.sql",
+				"notes.sql",
+				"0001_first.sql",
+				"0003-UPPER.sql",
+			])
+				writeFileSync(join(directory, file), "SELECT 1;");
+			assert.deepEqual(
+				migrationFiles(directory).map((file) => file.split(/[\\/]/).at(-1)),
+				["0001_first.sql", "0002_second.sql"],
+			);
+
+			writeFileSync(join(directory, "0002_duplicate.sql"), "SELECT 1;");
+			assert.throws(
+				() => migrationFiles(directory),
+				/duplicate migration identifier/,
+			);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	test("applies browser metadata migration idempotently with cascading accounts", async () => {
 		const directory = mkdtempSync(join(tmpdir(), "web2gem-sqlite-"));
 		const path = join(directory, "pool.sqlite");
 		try {
 			const first = createSqliteBindingFromEnv({ SQLITE_PATH: path });
+			assert.equal(
+				await first
+					.prepare(
+						"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'gemini_browser_accounts'",
+					)
+					.first("name"),
+				"gemini_browser_accounts",
+			);
+			for (const [index, state] of BROWSER_STATES.entries()) {
+				const accountId = `account-${index + 1}`;
+				await first
+					.prepare(
+						`INSERT INTO gemini_accounts (
+							id, cookie_header, cookie_hash, identity_hash, created_at_ms, updated_at_ms
+						) VALUES (?, ?, ?, ?, ?, ?)`,
+					)
+					.bind(
+						accountId,
+						`cookie-${index}`,
+						`cookie-hash-${index}`,
+						`identity-hash-${index}`,
+						1,
+						1,
+					)
+					.run();
+				await first
+					.prepare(
+						"INSERT INTO gemini_browser_accounts (account_id, browser_state, updated_at_ms) VALUES (?, ?, ?)",
+					)
+					.bind(accountId, state, 1)
+					.run();
+			}
+			await assert.rejects(
+				() =>
+					first
+						.prepare(
+							"UPDATE gemini_browser_accounts SET browser_state = 'unknown' WHERE account_id = 'account-1'",
+						)
+						.run(),
+				/SQLite query failed/,
+			);
+			await first
+				.prepare("DELETE FROM gemini_accounts WHERE id = ?")
+				.bind("account-1")
+				.run();
+			assert.equal(
+				await first
+					.prepare(
+						"SELECT COUNT(*) AS count FROM gemini_browser_accounts WHERE account_id = ?",
+					)
+					.bind("account-1")
+					.first("count"),
+				0,
+			);
 			await first
 				.prepare(
 					"UPDATE gemini_pool_meta SET value = ? WHERE key = 'pool_version'",

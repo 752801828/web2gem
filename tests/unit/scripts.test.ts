@@ -489,7 +489,7 @@ describe("quality scripts", () => {
 		}
 		assert.match(
 			dockerfile,
-			/COPY --from=build \/app\/migrations\/0001_gemini_accounts\.sql/,
+			/COPY --from=build \/app\/migrations \.\/migrations/,
 		);
 	});
 	test("keeps env secret templates trackable in docker and git ignore files", async () => {
