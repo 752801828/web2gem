@@ -1,3 +1,4 @@
+import { browserState } from "../../browser/types";
 import {
 	boundedGeminiAccountPageLimit,
 	GEMINI_DURABLE_ACCOUNT_ISSUES,
@@ -39,6 +40,16 @@ export const ADMIN_ACCOUNT_SELECT = `
   last_refresh_success_at_ms, created_at_ms, updated_at_ms
 `;
 
+const ADMIN_OVERVIEW_SELECT = `
+  a.id, a.label, a.enabled, a.issue, a.cooldown_until_ms, a.last_issue_at_ms,
+  a.last_used_at_ms, a.last_refresh_at_ms, a.status_checked_at_ms,
+  a.last_refresh_success_at_ms, a.created_at_ms, a.updated_at_ms,
+  COALESCE(b.credential_version = 1, 0) AS credentials_configured,
+  COALESCE(b.browser_state, 'idle') AS browser_state,
+  b.last_check_at_ms, b.last_cookie_update_at_ms,
+  b.last_auto_login_at_ms, b.failure_code
+`;
+
 export type GeminiAccountSummarySqlRow = {
 	id: string;
 	label: string | null;
@@ -52,6 +63,12 @@ export type GeminiAccountSummarySqlRow = {
 	last_refresh_success_at_ms: number | null;
 	created_at_ms: number;
 	updated_at_ms: number;
+	credentials_configured?: number;
+	browser_state?: unknown;
+	last_check_at_ms?: number | null;
+	last_cookie_update_at_ms?: number | null;
+	last_auto_login_at_ms?: number | null;
+	failure_code?: unknown;
 };
 
 export function adminWhere(
@@ -61,29 +78,29 @@ export function adminWhere(
 	const args: unknown[] = [];
 	const where: string[] = [];
 	if (filter.cursor) {
-		where.push("id > ?");
+		where.push("a.id > ?");
 		args.push(filter.cursor);
 	}
 	if (filter.state === "disabled") {
-		where.push("enabled != 1");
+		where.push("a.enabled != 1");
 	} else if (filter.state === "cooling") {
-		where.push("enabled = 1 AND cooldown_until_ms > ?");
+		where.push("a.enabled = 1 AND a.cooldown_until_ms > ?");
 		args.push(nowMs);
 	} else if (filter.state === "attention") {
 		where.push(
-			`enabled = 1 AND (cooldown_until_ms IS NULL OR cooldown_until_ms <= ?) AND issue IN (${GEMINI_DURABLE_ACCOUNT_ISSUES.map(() => "?").join(", ")})`,
+			`a.enabled = 1 AND (a.cooldown_until_ms IS NULL OR a.cooldown_until_ms <= ?) AND a.issue IN (${GEMINI_DURABLE_ACCOUNT_ISSUES.map(() => "?").join(", ")})`,
 		);
 		args.push(nowMs, ...GEMINI_DURABLE_ACCOUNT_ISSUES);
 	} else if (filter.state === "available") {
 		where.push(
-			`enabled = 1 AND (cooldown_until_ms IS NULL OR cooldown_until_ms <= ?) AND (issue IS NULL OR issue NOT IN (${GEMINI_DURABLE_ACCOUNT_ISSUES.map(() => "?").join(", ")}))`,
+			`a.enabled = 1 AND (a.cooldown_until_ms IS NULL OR a.cooldown_until_ms <= ?) AND (a.issue IS NULL OR a.issue NOT IN (${GEMINI_DURABLE_ACCOUNT_ISSUES.map(() => "?").join(", ")}))`,
 		);
 		args.push(nowMs, ...GEMINI_DURABLE_ACCOUNT_ISSUES);
 	}
 	if (filter.q) {
 		const like = `%${escapeSqlLike(filter.q)}%`;
 		where.push(
-			"(id LIKE ? ESCAPE '\\' OR label LIKE ? ESCAPE '\\' OR issue LIKE ? ESCAPE '\\')",
+			"(a.id LIKE ? ESCAPE '\\' OR a.label LIKE ? ESCAPE '\\' OR a.issue LIKE ? ESCAPE '\\')",
 		);
 		args.push(like, like, like);
 	}
@@ -108,6 +125,15 @@ export function summaryFromSql(
 		last_refresh_success_at_ms: row.last_refresh_success_at_ms,
 		created_at_ms: row.created_at_ms,
 		updated_at_ms: row.updated_at_ms,
+		browser: {
+			credentialsConfigured: row.credentials_configured === 1,
+			state: browserState(row.browser_state),
+			lastCheckAtMs: row.last_check_at_ms ?? null,
+			lastCookieUpdateAtMs: row.last_cookie_update_at_ms ?? null,
+			lastAutoLoginAtMs: row.last_auto_login_at_ms ?? null,
+			failureCode:
+				typeof row.failure_code === "string" ? row.failure_code : null,
+		},
 	};
 }
 
@@ -207,9 +233,10 @@ export class SqlGeminiAccountStore
 		const column = kind === "cookie" ? "cookie_hash" : "identity_hash";
 		const row = await this.db
 			.prepare(`
-						SELECT ${ADMIN_ACCOUNT_SELECT}
-						FROM gemini_accounts
-						WHERE ${column} = ?
+						SELECT ${ADMIN_OVERVIEW_SELECT}
+						FROM gemini_accounts a
+						LEFT JOIN gemini_browser_accounts b ON b.account_id = a.id
+						WHERE a.${column} = ?
 						LIMIT 1
 					`)
 			.bind(hash)
@@ -430,10 +457,11 @@ export class SqlGeminiAccountStore
 		const { where, args } = adminWhere(filter, nowMs);
 		return this.db
 			.prepare(`
-      SELECT ${ADMIN_ACCOUNT_SELECT}
-      FROM gemini_accounts
+      SELECT ${ADMIN_OVERVIEW_SELECT}
+      FROM gemini_accounts a
+      LEFT JOIN gemini_browser_accounts b ON b.account_id = a.id
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY id ASC
+      ORDER BY a.id ASC
       LIMIT ?
     `)
 			.bind(...args, limit + 1);

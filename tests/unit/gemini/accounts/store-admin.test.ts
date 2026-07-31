@@ -1,5 +1,8 @@
 import { describe, test } from "vitest";
-import { SqlGeminiAccountStore } from "../../../../src/gemini/accounts/store-sql";
+import {
+	SqlGeminiAccountStore,
+	summaryFromSql,
+} from "../../../../src/gemini/accounts/store-sql";
 import { assert } from "../../assertions.js";
 import {
 	adminSqlRow,
@@ -8,11 +11,35 @@ import {
 } from "./_support/store-fixtures.js";
 
 describe("SQL Gemini account store admin projections", () => {
+	test("normalizes malformed browser status from SQL rows", () => {
+		const row = adminSqlRow("account-a");
+		const malformed = {
+			...row,
+			browser_state: "not-a-browser-state",
+			failure_code: 42,
+		};
+
+		assert.deepEqual(summaryFromSql(malformed, 1000).browser, {
+			credentialsConfigured: false,
+			state: "idle",
+			lastCheckAtMs: null,
+			lastCookieUpdateAtMs: null,
+			lastAutoLoginAtMs: null,
+			failureCode: null,
+		});
+	});
+
 	test("maps a filtered admin overview without selecting credential columns", async () => {
 		const row = adminSqlRow("account-a", {
 			label: "Alpha",
 			issue: "rate_limit",
 			cooldown_until_ms: 5000,
+			credentials_configured: 0,
+			browser_state: "idle",
+			last_check_at_ms: null,
+			last_cookie_update_at_ms: null,
+			last_auto_login_at_ms: null,
+			failure_code: null,
 		});
 		const stats = {
 			total: 1,
@@ -23,7 +50,7 @@ describe("SQL Gemini account store admin projections", () => {
 		};
 		const db = new RecordingSql([
 			{
-				sql: /SELECT id, label, enabled, issue, cooldown_until_ms, .* FROM gemini_accounts WHERE enabled = 1 AND cooldown_until_ms > \? ORDER BY id ASC LIMIT \?/,
+				sql: /SELECT a\.id, a\.label, a\.enabled, a\.issue, a\.cooldown_until_ms, .* FROM gemini_accounts a LEFT JOIN gemini_browser_accounts b ON b\.account_id = a\.id WHERE a\.enabled = 1 AND a\.cooldown_until_ms > \? ORDER BY a\.id ASC LIMIT \?/,
 				binds: [1000, 11],
 				operation: "batch",
 				result: { results: [row] },
@@ -45,14 +72,25 @@ describe("SQL Gemini account store admin projections", () => {
 		if (!item) throw new Error("admin overview did not return an item");
 		assert.equal(item.state, "cooling");
 		assert.equal(item.issue, "rate_limit");
-		assert.equal(Object.keys(item).length, 13);
+		assert.deepEqual(item.browser, {
+			credentialsConfigured: false,
+			state: "idle",
+			lastCheckAtMs: null,
+			lastCookieUpdateAtMs: null,
+			lastAutoLoginAtMs: null,
+			failureCode: null,
+		});
+		assert.equal(Object.keys(item).length, 14);
 		const pageRecord = db.records[0];
 		if (!pageRecord) throw new Error("admin page statement was not recorded");
 		assert.doesNotMatch(
 			pageRecord.sql,
-			/cookie_header|cookie_hash|identity_hash/,
+			/cookie_header|cookie_hash|identity_hash|credential_ciphertext|credential_nonce|login_email_hash/,
 		);
-		assert.doesNotMatch(JSON.stringify(overview), /secret|cookie_hash/);
+		assert.doesNotMatch(
+			JSON.stringify(overview),
+			/secret|cookie_hash|ciphertext|nonce|email_hash|token/,
+		);
 		db.assertBatches([[0, 1]]);
 		db.assertDrained();
 	});

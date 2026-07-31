@@ -1,3 +1,4 @@
+import type { BrowserAccountStatus } from "../../browser/types";
 import type { GeminiPublicFamily } from "../../models";
 import type {
 	GeminiAccountIssue,
@@ -85,6 +86,7 @@ export type GeminiAccountSummary = {
 	last_refresh_success_at_ms: number | null;
 	created_at_ms: number;
 	updated_at_ms: number;
+	browser: BrowserAccountStatus;
 };
 
 export type GeminiAccountAdminFilter = {

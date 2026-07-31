@@ -72,6 +72,14 @@ export function accountSummary(
 		last_refresh_success_at_ms: null,
 		created_at_ms: 1000,
 		updated_at_ms: 1000,
+		browser: {
+			credentialsConfigured: false,
+			state: "idle",
+			lastCheckAtMs: null,
+			lastCookieUpdateAtMs: null,
+			lastAutoLoginAtMs: null,
+			failureCode: null,
+		},
 		...overrides,
 	};
 }
@@ -94,6 +102,12 @@ export function adminSqlRow(
 		last_refresh_success_at_ms: row.last_refresh_success_at_ms,
 		created_at_ms: row.created_at_ms,
 		updated_at_ms: row.updated_at_ms,
+		credentials_configured: 0,
+		browser_state: "idle",
+		last_check_at_ms: null,
+		last_cookie_update_at_ms: null,
+		last_auto_login_at_ms: null,
+		failure_code: null,
 	};
 }
 
