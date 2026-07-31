@@ -37,6 +37,50 @@ function key(fill: number): Uint8Array {
 	return new Uint8Array(32).fill(fill);
 }
 
+function noncanonicalBase64Alias(value: string): string {
+	const alphabet =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	const paddingIndex = value.indexOf("=");
+	const characterIndex = paddingIndex - 1;
+	const index = alphabet.indexOf(value[characterIndex] ?? "");
+	return `${value.slice(0, characterIndex)}${alphabet[index + 1]}${value.slice(characterIndex + 1)}`;
+}
+
+async function authenticatedEnvelope(
+	masterKey: Uint8Array,
+	accountId: string,
+	plaintext: string,
+): Promise<EncryptedBrowserCredentials> {
+	const nonce = crypto.getRandomValues(new Uint8Array(12));
+	const importedKey = await crypto.subtle.importKey(
+		"raw",
+		new Uint8Array(masterKey).buffer,
+		"AES-GCM",
+		false,
+		["encrypt"],
+	);
+	const ciphertext = await crypto.subtle.encrypt(
+		{
+			name: "AES-GCM",
+			iv: nonce,
+			additionalData: new TextEncoder().encode(`web2gem:${accountId}:v1`),
+			tagLength: 128,
+		},
+		importedKey,
+		new TextEncoder().encode(plaintext),
+	);
+	const emailHash = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode("user@example.com"),
+	);
+	return {
+		version: 1,
+		ciphertext: Buffer.from(ciphertext).toString("base64"),
+		nonce: Buffer.from(nonce).toString("base64"),
+		emailHash: Buffer.from(emailHash).toString("base64"),
+	};
+}
+
 async function errorText(
 	run: () => unknown | Promise<unknown>,
 ): Promise<string> {
@@ -184,14 +228,29 @@ describe("browser credential cryptography", () => {
 		const binding = credentialCryptoModule.createCredentialCryptoBinding(
 			key(8),
 		);
-		const mixed = await binding.encrypt("account-1", {
-			...credentials,
-			email: "  User@Example.COM  ",
-		});
 		const canonical = await binding.encrypt("account-1", credentials);
 
-		assert.equal(mixed.emailHash, canonical.emailHash);
-		assert.match(mixed.emailHash, /^[A-Za-z0-9+/]{43}=$/);
+		assert.match(canonical.emailHash, /^[A-Za-z0-9+/]{43}=$/);
+		const expected = await crypto.subtle.digest(
+			"SHA-256",
+			new TextEncoder().encode("user@example.com"),
+		);
+		assert.equal(canonical.emailHash, Buffer.from(expected).toString("base64"));
+	});
+
+	test("copies key bytes before asynchronous key import", async () => {
+		const sourceKey = key(13);
+		const binding =
+			credentialCryptoModule.createCredentialCryptoBinding(sourceKey);
+		sourceKey.fill(14);
+		const encrypted = await binding.encrypt("account-1", credentials);
+		const originalKeyBinding =
+			credentialCryptoModule.createCredentialCryptoBinding(key(13));
+
+		assert.deepEqual(
+			await originalKeyBinding.decrypt("account-1", encrypted),
+			credentials,
+		);
 	});
 
 	test("rejects a wrong key and changed-account AAD", async () => {
@@ -239,6 +298,105 @@ describe("browser credential cryptography", () => {
 		}
 		assert.match(message, /browser credential decryption failed/);
 	});
+
+	test("requires an exact plain encrypted envelope with bounded canonical base64", async () => {
+		const binding = credentialCryptoModule.createCredentialCryptoBinding(
+			key(15),
+		);
+		const valid = await binding.encrypt("account-1", credentials);
+		const envelopes: unknown[] = [
+			[valid],
+			{ ...valid, extra: "private-extra" },
+			Object.assign(Object.create({ inherited: true }), valid),
+			{ ...valid, nonce: Buffer.alloc(11).toString("base64") },
+			{ ...valid, nonce: `${valid.nonce}\n` },
+			{ ...valid, emailHash: noncanonicalBase64Alias(valid.emailHash) },
+			{ ...valid, emailHash: Buffer.alloc(31).toString("base64") },
+			{ ...valid, ciphertext: Buffer.alloc(15).toString("base64") },
+			{ ...valid, ciphertext: Buffer.alloc(9000).toString("base64") },
+		];
+		for (const encrypted of envelopes) {
+			const message = await errorText(() =>
+				binding.decrypt("account-1", encrypted as EncryptedBrowserCredentials),
+			);
+			assert.equal(message, "Error: browser credential decryption failed");
+			assert.doesNotMatch(message, /private-extra/);
+		}
+	});
+
+	test("rejects authenticated JSON outside the exact canonical credential schema", async () => {
+		const masterKey = key(16);
+		const binding =
+			credentialCryptoModule.createCredentialCryptoBinding(masterKey);
+		const invalidPlaintexts = [
+			"[]",
+			"null",
+			JSON.stringify({ ...credentials, extra: "private-extra" }),
+			JSON.stringify({
+				email: " User@Example.COM ",
+				password: "p",
+				totpSecret: "MY======",
+			}),
+			JSON.stringify({
+				email: "user@example.com",
+				password: "",
+				totpSecret: "MY======",
+			}),
+			JSON.stringify({
+				email: "user@example.com",
+				password: "p",
+				totpSecret: "ABC1",
+			}),
+			JSON.stringify({
+				email: `${"a".repeat(309)}@example.com`,
+				password: "p",
+				totpSecret: "MY======",
+			}),
+			JSON.stringify({
+				email: "user@example.com",
+				password: "p".repeat(1025),
+				totpSecret: "MY======",
+			}),
+			JSON.stringify({
+				email: "user@example.com",
+				password: "p",
+				totpSecret: "A".repeat(257),
+			}),
+			'{"email":"user@example.com","password":"p","totpSecret":"MY======","__proto__":"private-proto"}',
+			'{"email":"user@example.com","password":"p","totpSecret":"MY======","constructor":"private-constructor"}',
+		];
+
+		for (const plaintext of invalidPlaintexts) {
+			const encrypted = await authenticatedEnvelope(
+				masterKey,
+				"account-1",
+				plaintext,
+			);
+			const message = await errorText(() =>
+				binding.decrypt("account-1", encrypted),
+			);
+			assert.equal(message, "Error: browser credential decryption failed");
+			assert.doesNotMatch(message, /private-/);
+		}
+	});
+
+	test("encrypt accepts only exact canonical credentials", async () => {
+		const binding = credentialCryptoModule.createCredentialCryptoBinding(
+			key(17),
+		);
+		for (const value of [
+			{ ...credentials, email: " User@Example.COM " },
+			{ ...credentials, totpSecret: "jbsw-y3dp ehpk3pxp" },
+			{ ...credentials, extra: "private-extra" },
+			Object.assign(Object.create({ inherited: true }), credentials),
+		]) {
+			const message = await errorText(() =>
+				binding.encrypt("account-1", value as BrowserCredentials),
+			);
+			assert.equal(message, "Error: browser credential encryption failed");
+			assert.doesNotMatch(message, /private-extra/);
+		}
+	});
 });
 
 describe("browser master key secret", () => {
@@ -282,5 +440,19 @@ describe("browser master key secret", () => {
 		} finally {
 			await rm(directory, { recursive: true, force: true });
 		}
+	});
+
+	test("redacts unreadable secret paths and filesystem errors", () => {
+		const privatePath = tmpdir();
+		const message = (() => {
+			try {
+				secretsModule.readBrowserMasterKey(privatePath);
+				return "";
+			} catch (error) {
+				return String(error);
+			}
+		})();
+		assert.equal(message, "Error: browser master key could not be read");
+		assert.doesNotMatch(message, new RegExp(privatePath));
 	});
 });
