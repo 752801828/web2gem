@@ -45,7 +45,7 @@ describe("Feishu browser notifications", () => {
 		const delays: number[] = [];
 		const bodies: unknown[] = [];
 		let attempts = 0;
-		const patches: [string, unknown][] = [];
+		const patches: unknown[][] = [];
 		const notifier = createFeishuNotifier(
 			{
 				feishu: FEISHU,
@@ -65,8 +65,12 @@ describe("Feishu browser notifications", () => {
 						: Response.json({ code: 0, msg: "success" });
 				},
 				client: {
-					async patchState(accountId: string, state: unknown) {
-						patches.push([accountId, state]);
+					async patchNotificationState(...args: unknown[]) {
+						patches.push(args);
+						return true;
+					},
+					async patchState() {
+						throw new Error("must not rewrite full status");
 					},
 				},
 			},
@@ -102,11 +106,46 @@ describe("Feishu browser notifications", () => {
 			/test-signing-secret|password|cookie/i,
 		);
 		assert.deepEqual(patches, [
-			[
-				"account-123456",
-				{ ...STATE, notificationState: "manual_action_required" },
-			],
+			["account-123456", "manual_action_required", "manual_action_required"],
 		]);
+	});
+
+	test("treats a concurrent recovery CAS miss as expected without stale writes", async () => {
+		let fullStateWrites = 0;
+		const patches: unknown[][] = [];
+		const notifier = createFeishuNotifier(
+			{ feishu: FEISHU, novncPublicUrl: "http://127.0.0.1:6080/vnc.html" },
+			{
+				clock: () => 0,
+				async fetch() {
+					return Response.json({ code: 0 });
+				},
+				client: {
+					async patchNotificationState(...args: unknown[]) {
+						patches.push(args);
+						return false;
+					},
+					async patchState() {
+						fullStateWrites++;
+					},
+				},
+			},
+		);
+
+		assert.equal(
+			await notifier.notifyTransition({
+				accountId: "account-a",
+				label: "Primary",
+				previousNotificationState: null,
+				failureCategory: "captcha",
+				stateUpdate: STATE,
+			}),
+			true,
+		);
+		assert.deepEqual(patches, [
+			["account-a", "manual_action_required", "manual_action_required"],
+		]);
+		assert.equal(fullStateWrites, 0);
 	});
 
 	test("rejects HTTP 200 Feishu business failures without persisting dedupe state", async () => {
@@ -127,8 +166,9 @@ describe("Feishu browser notifications", () => {
 					});
 				},
 				client: {
-					async patchState() {
+					async patchNotificationState() {
 						patches++;
+						return true;
 					},
 				},
 			},
@@ -167,8 +207,9 @@ describe("Feishu browser notifications", () => {
 					return new Response("private upstream body", { status: 400 });
 				},
 				client: {
-					async patchState() {
+					async patchNotificationState() {
 						patches++;
+						return true;
 					},
 				},
 			},

@@ -60,7 +60,8 @@ export function createWeb2gemClient(config, options = {}) {
 	const token = config.internalToken;
 	const fetchImpl = options.fetch || fetch;
 	const timeoutMs = options.timeoutMs || REQUEST_TIMEOUT_MS;
-	let serverDate = null;
+	const monotonicNow = options.monotonicNow || (() => performance.now());
+	let serverDateSample = null;
 
 	const call = async (method, path, body, validate) => {
 		try {
@@ -75,8 +76,12 @@ export function createWeb2gemClient(config, options = {}) {
 				signal: AbortSignal.timeout(timeoutMs),
 			});
 			const sampledDate = response.headers.get("date");
-			if (sampledDate && Number.isFinite(Date.parse(sampledDate)))
-				serverDate = sampledDate;
+			const sampledServerMs = sampledDate ? Date.parse(sampledDate) : NaN;
+			if (Number.isFinite(sampledServerMs))
+				serverDateSample = {
+					serverMs: sampledServerMs,
+					receivedAtMs: monotonicNow(),
+				};
 			const value = await readJson(response);
 			if (!response.ok) throw remoteError(response.status, value);
 			if (!validate(value)) invalidResponse(response.status);
@@ -93,7 +98,12 @@ export function createWeb2gemClient(config, options = {}) {
 
 	return Object.freeze({
 		get serverDate() {
-			return serverDate;
+			if (!serverDateSample) return null;
+			const elapsedMs = Math.max(
+				0,
+				monotonicNow() - serverDateSample.receivedAtMs,
+			);
+			return new Date(serverDateSample.serverMs + elapsedMs).toUTCString();
 		},
 		async listAccounts() {
 			const value = await call("GET", PREFIX, undefined, isAccountList);
@@ -131,6 +141,19 @@ export function createWeb2gemClient(config, options = {}) {
 				state,
 				(value) => exactTrue(value, "updated"),
 			);
+		},
+		async patchNotificationState(
+			accountId,
+			expectedState,
+			notificationState,
+		) {
+			const value = await call(
+				"PATCH",
+				accountPath(accountId, "state"),
+				{ expectedState, notificationState },
+				(value) => exactBoolean(value, "updated"),
+			);
+			return value.updated;
 		},
 		submitCandidateCookie(accountId, candidate) {
 			return call(

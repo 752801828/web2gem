@@ -2,6 +2,7 @@ import { SqlBrowserAccountStore } from "../../browser/store";
 import { browserNotificationState, BROWSER_STATES } from "../../browser/types";
 import type {
 	BrowserAccountStore,
+	BrowserNotificationState,
 	BrowserState,
 	BrowserStatusUpdate,
 } from "../../browser/types";
@@ -132,6 +133,16 @@ export async function handleBrowserHelperRequest(
 			return jsonResponse({ released: true });
 		}
 		if (route.kind === "state") {
+			const notification = notificationStateBody(body);
+			if (notification) {
+				const updated = await browserStore(env).patchNotificationState(
+					accountId,
+					notification.expectedState,
+					notification.notificationState,
+					Date.now(),
+				);
+				return jsonResponse({ updated });
+			}
 			await browserStore(env).writeStatus(accountId, stateBody(body));
 			return jsonResponse({ updated: true });
 		}
@@ -305,6 +316,24 @@ function stateBody(body: UnknownRecord): BrowserStatusUpdate {
 		notificationState: browserNotificationState(body.notificationState),
 		failureCode: body.failureCode,
 		nowMs: Date.now(),
+	};
+}
+
+function notificationStateBody(body: UnknownRecord): {
+	expectedState: BrowserState;
+	notificationState: BrowserNotificationState;
+} | null {
+	if (!Object.hasOwn(body, "expectedState")) return null;
+	const notificationState = browserNotificationState(body.notificationState);
+	if (
+		!exactKeys(body, ["expectedState", "notificationState"]) ||
+		!isBrowserState(body.expectedState) ||
+		notificationState === null
+	)
+		invalidRequest();
+	return {
+		expectedState: body.expectedState,
+		notificationState,
 	};
 }
 

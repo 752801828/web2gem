@@ -19,6 +19,8 @@ const TOKEN = "browser-helper-secret";
 class FakeBrowserStore implements BrowserAccountStore {
 	calls: string[] = [];
 	statusUpdates: BrowserStatusUpdate[] = [];
+	notificationUpdates: unknown[][] = [];
+	notificationUpdated = true;
 	failureCode: string | null = null;
 	notificationState: BrowserNotificationState | null = "manual_action_required";
 	credentials: EncryptedBrowserCredentials | null = {
@@ -79,6 +81,20 @@ class FakeBrowserStore implements BrowserAccountStore {
 	async writeStatus(_accountId: string, update: BrowserStatusUpdate) {
 		this.calls.push("writeStatus");
 		this.statusUpdates.push(update);
+	}
+	async patchNotificationState(
+		accountId: string,
+		expectedState: string,
+		notificationState: string,
+		nowMs: number,
+	) {
+		this.notificationUpdates.push([
+			accountId,
+			expectedState,
+			notificationState,
+			nowMs,
+		]);
+		return this.notificationUpdated;
 	}
 	async recordAutoLoginAttempt() {
 		throw new Error("unexpected recordAutoLoginAttempt");
@@ -335,6 +351,50 @@ describe("private browser-helper HTTP contract", () => {
 			{ ...validBody, notificationState: "sent" },
 			{ ...validBody, notificationState: "token=private" },
 			{ ...validBody, extra: "secret" },
+		]) {
+			const invalid = await request(
+				"/internal/browser/accounts/account-a/state",
+				{
+					method: "PATCH",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(body),
+				},
+				env(store),
+			);
+			assert.equal(invalid.status, 400);
+		}
+	});
+
+	test("CAS-patches notification state without rewriting full status", async () => {
+		const store = new FakeBrowserStore();
+		store.notificationUpdated = false;
+		const response = await request(
+			"/internal/browser/accounts/account-a/state",
+			{
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					expectedState: "manual_action_required",
+					notificationState: "manual_action_required",
+				}),
+			},
+			env(store),
+		);
+		assert.equal(response.status, 200);
+		assert.deepEqual(await response.json(), { updated: false });
+		assert.equal(store.statusUpdates.length, 0);
+		assert.equal(store.notificationUpdates.length, 1);
+		assert.deepEqual(store.notificationUpdates[0]?.slice(0, 3), [
+			"account-a",
+			"manual_action_required",
+			"manual_action_required",
+		]);
+		assert.equal(typeof store.notificationUpdates[0]?.[3], "number");
+
+		for (const body of [
+			{ expectedState: "unknown", notificationState: "error" },
+			{ expectedState: "error", notificationState: "unknown" },
+			{ expectedState: "error", notificationState: "error", extra: true },
 		]) {
 			const invalid = await request(
 				"/internal/browser/accounts/account-a/state",

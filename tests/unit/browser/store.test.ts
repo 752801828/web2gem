@@ -331,6 +331,40 @@ describe("SQL browser account store", () => {
 		db.assertDrained();
 	});
 
+	test("CAS-updates only notification state while the browser state still matches", async () => {
+		const sql =
+			/UPDATE gemini_browser_accounts SET notification_state = \?, updated_at_ms = \? WHERE account_id = \? AND browser_state = \? RETURNING account_id/;
+		const db = new RecordingSql([
+			{
+				sql,
+				binds: ["error", 20, "account-a", "error"],
+				operation: "run",
+				result: { results: [{ account_id: "account-a" }] },
+			},
+			{
+				sql,
+				binds: ["error", 21, "account-a", "error"],
+				operation: "run",
+				result: { results: [] },
+			},
+		]);
+		const store = new SqlBrowserAccountStore(db);
+
+		assert.equal(
+			await store.patchNotificationState("account-a", "error", "error", 20),
+			true,
+		);
+		assert.equal(
+			await store.patchNotificationState("account-a", "error", "error", 21),
+			false,
+		);
+		assert.doesNotMatch(
+			db.records[0]?.sql || "",
+			/last_check|last_cookie|last_auto_login|auth_failure|failure_code|SET\s+browser_state\s*=/,
+		);
+		db.assertDrained();
+	});
+
 	test("atomically owns leases, counts date-bucket attempts, and cascades deletes", async () => {
 		const db = sqliteModule.createSqliteBinding({
 			path: ":memory:",

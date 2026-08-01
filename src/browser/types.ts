@@ -109,6 +109,12 @@ export interface BrowserAccountStore {
 	): Promise<boolean>;
 	releaseLease(accountId: string, owner: string): Promise<void>;
 	writeStatus(accountId: string, update: BrowserStatusUpdate): Promise<void>;
+	patchNotificationState(
+		accountId: string,
+		expectedState: BrowserState,
+		notificationState: BrowserNotificationState,
+		nowMs: number,
+	): Promise<boolean>;
 	recordAutoLoginAttempt(
 		accountId: string,
 		date: string,

@@ -3,6 +3,8 @@ import { assert } from "../assertions.js";
 
 const clientModulePath: string = "../../../browser-helper/web2gem-client.mjs";
 const { createWeb2gemClient } = await import(clientModulePath);
+const cryptoModulePath: string = "../../../browser-helper/crypto.mjs";
+const { totpCandidates } = await import(cryptoModulePath);
 
 const CONFIG = {
 	web2gemInternalUrl: "http://web2gem:52389/",
@@ -42,6 +44,7 @@ describe("private web2gem client", () => {
 				emailHash: "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
 			},
 			{ updated: true },
+			{ updated: false },
 			{ changed: false, state: "ready", lastCookieUpdateAtMs: 123 },
 		];
 		const client = createWeb2gemClient(CONFIG, {
@@ -65,6 +68,10 @@ describe("private web2gem client", () => {
 			notificationState: null,
 			failureCode: null,
 		});
+		assert.equal(
+			await client.patchNotificationState("account a", "ready", "ready"),
+			false,
+		);
 		await client.submitCandidateCookie("account a", {
 			psid: "test-psid",
 			psidts: "test-psidts",
@@ -116,6 +123,13 @@ describe("private web2gem client", () => {
 					true,
 				],
 				[
+					"http://web2gem:52389/internal/browser/accounts/account%20a/state",
+					"PATCH",
+					"Bearer test-internal-token",
+					"error",
+					true,
+				],
+				[
 					"http://web2gem:52389/internal/browser/accounts/account%20a/candidate-cookie",
 					"POST",
 					"Bearer test-internal-token",
@@ -124,7 +138,45 @@ describe("private web2gem client", () => {
 				],
 			],
 		);
+		assert.deepEqual(JSON.parse(String(requests[5]?.init.body)), {
+			expectedState: "ready",
+			notificationState: "ready",
+		});
 		assert.equal(client.serverDate, new Date(60_000).toUTCString());
+	});
+
+	test("ages server Date samples with monotonic elapsed time", async () => {
+		let monotonicMs = 1_000;
+		const client = createWeb2gemClient(CONFIG, {
+			monotonicNow: () => monotonicMs,
+			async fetch() {
+				return Response.json(
+					{ accounts: [] },
+					{ headers: { Date: new Date(60_000).toUTCString() } },
+				);
+			},
+		});
+		await client.listAccounts();
+		monotonicMs = 32_000;
+		const estimatedServerDate = client.serverDate;
+		assert.equal(estimatedServerDate, new Date(91_000).toUTCString());
+
+		const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+		assert.equal(
+			totpCandidates(secret, 91, {
+				serverDate: estimatedServerDate,
+				maxClockSkewSec: 2,
+			}).length,
+			3,
+		);
+		assert.throws(
+			() =>
+				totpCandidates(secret, 120, {
+					serverDate: estimatedServerDate,
+					maxClockSkewSec: 2,
+				}),
+			/browser clock is not synchronized/,
+		);
 	});
 
 	test("caps JSON responses and throws only safe local errors", async () => {

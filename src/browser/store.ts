@@ -1,7 +1,9 @@
 import type {
 	BrowserAccountStatus,
 	BrowserAccountStore,
+	BrowserNotificationState,
 	BrowserScheduleAccount,
+	BrowserState,
 	BrowserStatusUpdate,
 	EncryptedBrowserCredentials,
 } from "./types";
@@ -258,6 +260,27 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
 				update.nowMs,
 			)
 			.run();
+	}
+
+	async patchNotificationState(
+		accountId: string,
+		expectedState: BrowserState,
+		notificationState: BrowserNotificationState,
+		nowMs: number,
+	): Promise<boolean> {
+		const result = await this.db
+			.prepare(`
+        UPDATE gemini_browser_accounts
+        SET notification_state = ?, updated_at_ms = ?
+        WHERE account_id = ? AND browser_state = ?
+        RETURNING account_id
+      `)
+			.bind(notificationState, nowMs, accountId, expectedState)
+			.run<{ account_id: unknown }>();
+		return (
+			result.results?.length === 1 &&
+			result.results[0]?.account_id === accountId
+		);
 	}
 
 	async recordAutoLoginAttempt(

@@ -57,10 +57,11 @@ export function createFeishuNotifier(config, options = {}) {
 			};
 			await deliver(config.feishu.webhookUrl, body, fetchImpl, sleep);
 			try {
-				await client.patchState(input.accountId, {
-					...input.stateUpdate,
-					notificationState: key,
-				});
+				await client.patchNotificationState(
+					input.accountId,
+					input.stateUpdate.state,
+					key,
+				);
 			} catch {
 				throw new FeishuNotificationError(
 					"feishu_notification_state_failed",

@@ -61,6 +61,9 @@ class FakeStore implements BrowserAccountStore {
 	}
 	async releaseLease() {}
 	async writeStatus(_accountId: string, _update: BrowserStatusUpdate) {}
+	async patchNotificationState() {
+		return false;
+	}
 	async recordAutoLoginAttempt() {
 		return 0;
 	}
