@@ -37,7 +37,7 @@ describe("private web2gem client", () => {
 			},
 			{ acquired: true },
 			{ released: true },
-			{ count: 2 },
+			{ reserved: true, count: 2 },
 			{
 				version: 1,
 				ciphertext: "YWFhYWFhYWFhYWFhYWFhYQ==",
@@ -59,9 +59,9 @@ describe("private web2gem client", () => {
 		assert.equal((await client.listAccounts())[0]?.notificationState, "ready");
 		assert.equal(await client.acquireLease("account a", "owner", 30), true);
 		await client.releaseLease("account a", "owner");
-		assert.equal(
-			await client.recordAutoLoginAttempt("account a", "2026-08-01"),
-			2,
+		assert.deepEqual(
+			await client.recordAutoLoginAttempt("account a", "2026-08-01", 2),
+			{ reserved: true, count: 2 },
 		);
 		await client.getEncryptedCredentials("account a");
 		await client.patchState("account a", {
@@ -153,6 +153,10 @@ describe("private web2gem client", () => {
 		assert.deepEqual(JSON.parse(String(requests[6]?.init.body)), {
 			expectedState: "ready",
 			notificationState: "ready",
+		});
+		assert.deepEqual(JSON.parse(String(requests[3]?.init.body)), {
+			date: "2026-08-01",
+			maxAttempts: 2,
 		});
 		assert.equal(client.serverDate, new Date(60_000).toUTCString());
 	});

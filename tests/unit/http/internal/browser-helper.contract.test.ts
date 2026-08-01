@@ -97,10 +97,17 @@ class FakeBrowserStore implements BrowserAccountStore {
 		]);
 		return this.notificationUpdated;
 	}
-	async recordAutoLoginAttempt(accountId: string, date: string, nowMs: number) {
-		this.calls.push(`attempt:${accountId}:${date}`);
+	async recordAutoLoginAttempt(
+		accountId: string,
+		date: string,
+		maxAttempts: number,
+		nowMs: number,
+	) {
+		this.calls.push(`attempt:${accountId}:${date}:${maxAttempts}`);
 		assert.equal(typeof nowMs, "number");
-		return ++this.autoLoginAttemptCount;
+		if (this.autoLoginAttemptCount >= maxAttempts)
+			return { reserved: false, count: this.autoLoginAttemptCount };
+		return { reserved: true, count: ++this.autoLoginAttemptCount };
 	}
 }
 
@@ -290,18 +297,30 @@ describe("private browser-helper HTTP contract", () => {
 			{
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ date: "2026-08-01" }),
+				body: JSON.stringify({ date: "2026-08-01", maxAttempts: 2 }),
 			},
 			env(store),
 		);
 		assert.equal(response.status, 200);
-		assert.deepEqual(await response.json(), { count: 1 });
-		assert.deepEqual(store.calls, ["attempt:account-a:2026-08-01"]);
+		assert.deepEqual(await response.json(), { reserved: true, count: 1 });
+		assert.deepEqual(store.calls, ["attempt:account-a:2026-08-01:2"]);
+		const denied = await request(
+			"/internal/browser/accounts/account-a/auto-login-attempt",
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ date: "2026-08-01", maxAttempts: 1 }),
+			},
+			env(store),
+		);
+		assert.deepEqual(await denied.json(), { reserved: false, count: 1 });
 
 		for (const body of [
-			{ date: "2026-8-1" },
-			{ date: "2026-02-30" },
-			{ date: "2026-08-01", extra: true },
+			{ date: "2026-8-1", maxAttempts: 2 },
+			{ date: "2026-02-30", maxAttempts: 2 },
+			{ date: "2026-08-01", maxAttempts: 0 },
+			{ date: "2026-08-01", maxAttempts: 3 },
+			{ date: "2026-08-01", maxAttempts: 2, extra: true },
 		]) {
 			const invalid = await request(
 				"/internal/browser/accounts/account-a/auto-login-attempt",

@@ -59,7 +59,12 @@ function scriptedPage(
 		gotoGemini: async () => undefined,
 		url: () => urls[states[index] ?? "unknown"],
 		visible: async (candidate: State) => candidate === states[index],
-		fillAndSubmit: async (state: State, value: string) => {
+		fillAndSubmit: async (
+			state: State,
+			value: string,
+			beforeSubmit?: () => Promise<void>,
+		) => {
+			await beforeSubmit?.();
 			submissions.push([state, value]);
 			if (options.unchanged) {
 				waitResult = "timeout";
@@ -362,9 +367,13 @@ describe("bounded Google login", () => {
 		const page = scriptedPage(["email", "password", "authenticated"]);
 		const events: string[] = [];
 		const fillAndSubmit = page.fillAndSubmit;
-		page.fillAndSubmit = async (state: State, value: string) => {
+		page.fillAndSubmit = async (
+			state: State,
+			value: string,
+			beforeSubmit?: () => Promise<void>,
+		) => {
+			await fillAndSubmit(state, value, beforeSubmit);
 			events.push(`submit:${state}`);
-			await fillAndSubmit(state, value);
 		};
 		assert.equal(
 			(
@@ -380,6 +389,68 @@ describe("bounded Google login", () => {
 			true,
 		);
 		assert.deepEqual(events, ["reserve", "submit:email", "submit:password"]);
+	});
+
+	test("does not reserve when trusted-element preflight fails", async () => {
+		let reservations = 0;
+		const control = {
+			isVisible: async () => true,
+			evaluate: async (callback: (value: unknown) => unknown) =>
+				callback({ form: { action: "https://evil.example/steal" } }),
+			fill: async () => undefined,
+			press: async () => undefined,
+			dispose: async () => undefined,
+		};
+		assert.deepEqual(
+			await runGoogleLogin({
+				page: createPlaywrightPageAdapter({
+					url: () => urls.email,
+					goto: async () => undefined,
+					locator: (selector: string) => {
+						const locator = {
+							first: () => locator,
+							isVisible: async () => selector.includes('input[type="email"]'),
+							elementHandle: async () => control,
+						};
+						return locator;
+					},
+				}),
+				credentials,
+				totpCodes: [],
+				beforeSubmit: async () => {
+					reservations += 1;
+				},
+			}),
+			{ ok: false, code: "login_failed" },
+		);
+		assert.equal(reservations, 0);
+	});
+
+	test("preflights TOTP clock skew before submitting email", async () => {
+		const page = scriptedPage(["email", "totp"]);
+		let reservations = 0;
+		let error: unknown;
+		try {
+			await runGoogleLogin({
+				page,
+				credentials: {
+					...credentials,
+					totpSecret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+				},
+				nowSeconds: 100,
+				serverDate: new Date(90_000).toUTCString(),
+				maxClockSkewSec: 5,
+				beforeSubmit: async () => {
+					reservations += 1;
+				},
+			});
+		} catch (caught) {
+			error = caught;
+		}
+		assert.equal(error instanceof BrowserMaintenanceError, true);
+		assert.equal((error as { code?: string }).code, "clock_skew");
+		assert.equal(page.submissions.length, 0);
+		assert.equal(reservations, 0);
 	});
 
 	test("does not reserve an attempt when login maintenance fails before submission", async () => {

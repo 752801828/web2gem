@@ -270,31 +270,31 @@ describe("SQL browser account store", () => {
 		db.assertDrained();
 	});
 
-	test("fails safely when attempt RETURNING is empty or malformed", async () => {
+	test("atomically denies capped attempts and rejects malformed RETURNING", async () => {
 		const attemptSql =
 			/INSERT INTO gemini_browser_accounts .* RETURNING auto_login_attempt_count/;
 		const db = new RecordingSql([
 			{
 				sql: attemptSql,
-				binds: ["account-a", "2026-07-31", 100],
+				binds: ["account-a", "2026-07-31", 100, 2],
 				operation: "run",
 				result: { results: [] },
 			},
 			{
 				sql: attemptSql,
-				binds: ["account-a", "2026-07-31", 101],
+				binds: ["account-a", "2026-07-31", 101, 2],
 				operation: "run",
 				result: { results: [{ auto_login_attempt_count: "2" }] },
 			},
 		]);
 		const store = new SqlBrowserAccountStore(db);
 
-		await assert.rejects(
-			store.recordAutoLoginAttempt("account-a", "2026-07-31", 100),
-			"SQL browser attempt update returned no count",
+		assert.deepEqual(
+			await store.recordAutoLoginAttempt("account-a", "2026-07-31", 2, 100),
+			{ reserved: false, count: 2 },
 		);
 		await assert.rejects(
-			store.recordAutoLoginAttempt("account-a", "2026-07-31", 101),
+			store.recordAutoLoginAttempt("account-a", "2026-07-31", 2, 101),
 			"SQL browser attempt update returned no count",
 		);
 		db.assertDrained();
@@ -418,17 +418,21 @@ describe("SQL browser account store", () => {
 				true,
 			);
 
-			assert.equal(
-				await store.recordAutoLoginAttempt("account-a", "2026-07-31", 110),
-				1,
+			assert.deepEqual(
+				await store.recordAutoLoginAttempt("account-a", "2026-07-31", 2, 110),
+				{ reserved: true, count: 1 },
 			);
-			assert.equal(
-				await store.recordAutoLoginAttempt("account-a", "2026-07-31", 111),
-				2,
+			assert.deepEqual(
+				await store.recordAutoLoginAttempt("account-a", "2026-07-31", 2, 111),
+				{ reserved: true, count: 2 },
 			);
-			assert.equal(
-				await store.recordAutoLoginAttempt("account-a", "2026-08-01", 112),
-				1,
+			assert.deepEqual(
+				await store.recordAutoLoginAttempt("account-a", "2026-07-31", 2, 112),
+				{ reserved: false, count: 2 },
+			);
+			assert.deepEqual(
+				await store.recordAutoLoginAttempt("account-a", "2026-08-01", 2, 113),
+				{ reserved: true, count: 1 },
 			);
 
 			await db

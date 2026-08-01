@@ -118,6 +118,7 @@ export interface BrowserAccountStore {
 	recordAutoLoginAttempt(
 		accountId: string,
 		date: string,
+		maxAttempts: number,
 		nowMs: number,
-	): Promise<number>;
+	): Promise<{ reserved: boolean; count: number }>;
 }

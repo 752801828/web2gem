@@ -126,8 +126,14 @@ export function createWeb2gemClient(config, options = {}) {
 				(value) => exactTrue(value, "released"),
 			);
 		},
-		async recordAutoLoginAttempt(accountId, date) {
-			if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date))
+		async recordAutoLoginAttempt(accountId, date, maxAttempts) {
+			if (
+				typeof date !== "string" ||
+				!/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+				!Number.isSafeInteger(maxAttempts) ||
+				maxAttempts < 1 ||
+				maxAttempts > 2
+			)
 				throw new Web2gemClientError(
 					400,
 					"web2gem_invalid_request",
@@ -136,10 +142,10 @@ export function createWeb2gemClient(config, options = {}) {
 			const value = await call(
 				"POST",
 				accountPath(accountId, "auto-login-attempt"),
-				{ date },
-				(value) => exactPositiveInteger(value, "count"),
+				{ date, maxAttempts },
+				isAttemptReservation,
 			);
-			return value.count;
+			return value;
 		},
 		getEncryptedCredentials(accountId) {
 			return call(
@@ -261,12 +267,13 @@ function exactTrue(value, key) {
 	return exactBoolean(value, key) && value[key] === true;
 }
 
-function exactPositiveInteger(value, key) {
+function isAttemptReservation(value) {
 	return (
 		plainObject(value) &&
-		Object.keys(value).length === 1 &&
-		Number.isSafeInteger(value[key]) &&
-		value[key] > 0
+		Object.keys(value).length === 2 &&
+		typeof value.reserved === "boolean" &&
+		Number.isSafeInteger(value.count) &&
+		value.count > 0
 	);
 }
 

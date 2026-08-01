@@ -83,10 +83,23 @@ function fixture(options: Record<string, unknown> = {}) {
 		async patchState(id: string, state: unknown) {
 			calls.push(["patch", id, state]);
 		},
-		async recordAutoLoginAttempt(id: string, date: string) {
+		async recordAutoLoginAttempt(
+			id: string,
+			date: string,
+			maxAttempts: number,
+		) {
+			if (options.attemptError) throw new Error("private API failure");
+			if (options.reservationDenied) {
+				calls.push(["attempt-denied", id, date, maxAttempts]);
+				return { reserved: false, count: maxAttempts };
+			}
+			if (attemptCount >= maxAttempts) {
+				calls.push(["attempt-denied", id, date, attemptCount]);
+				return { reserved: false, count: attemptCount };
+			}
 			attemptCount += 1;
 			calls.push(["attempt", id, date, attemptCount]);
-			return attemptCount;
+			return { reserved: true, count: attemptCount };
 		},
 		async getEncryptedCredentials(id: string) {
 			calls.push(["credentials", id]);
@@ -372,6 +385,40 @@ describe("browser maintenance scheduler", () => {
 			assert.equal(state.state, "error");
 			assert.equal(state.authFailureCount, 0);
 		}
+	});
+
+	test("treats attempt reservation API failure as maintenance without auth penalty", async () => {
+		const active = fixture({
+			attemptError: true,
+			loginResults: [{ ok: false, code: "login_failed" }],
+		});
+		await active.scheduler.enqueue({
+			accountId: "account-a",
+			mode: "scheduled",
+		});
+		const state = lastState(active.calls);
+		assert.equal(state.state, "error");
+		assert.equal(state.failureCode, "attempt_reservation_failed");
+		assert.equal(state.authFailureCount, 0);
+	});
+
+	test("does not submit or exceed auth failures when the atomic cap denies reservation", async () => {
+		const active = fixture({
+			reservationDenied: true,
+			loginResults: [{ ok: false, code: "login_failed" }],
+		});
+		await active.scheduler.enqueue({
+			accountId: "account-a",
+			mode: "scheduled",
+		});
+		const state = lastState(active.calls);
+		assert.equal(state.state, "error");
+		assert.equal(state.failureCode, "auto_login_limit");
+		assert.equal(state.authFailureCount, 0);
+		assert.equal(
+			active.calls.filter(([name]) => name === "attempt-denied").length,
+			1,
+		);
 	});
 
 	test("does not enter credentials for missing-cookie checks, explicit challenges, or visible sessions", async () => {

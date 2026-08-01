@@ -73,6 +73,18 @@ export async function runGoogleLogin({
 	let lastState = null;
 	let submittedState = null;
 	let codes;
+	let loginPreflightDone = false;
+	const preflightLogin = () => {
+		if (loginPreflightDone) return;
+		codes = loginTotpCodes(
+			credentials,
+			totpCodes,
+			nowSeconds,
+			serverDate,
+			maxClockSkewSec,
+		);
+		loginPreflightDone = true;
+	};
 	let submissionReserved = false;
 	const reserveSubmission = async () => {
 		if (submissionReserved) return;
@@ -104,29 +116,21 @@ export async function runGoogleLogin({
 				const value = credentials?.[state];
 				if (typeof value !== "string" || !value)
 					return { ok: false, code: "login_failed" };
+				preflightLogin();
 				submittedState = state;
 				automaticLoginUsed = true;
-				await reserveSubmission();
-				await adapter.fillAndSubmit(state, value);
+				await adapter.fillAndSubmit(state, value, reserveSubmission);
 				const outcome = await adapter.waitForPageChange(state);
 				if (outcome !== "changed")
 					return { ok: false, code: "login_failed" };
 				continue;
 			}
 
-			if (!codes)
-				codes = loginTotpCodes(
-					credentials,
-					totpCodes,
-					nowSeconds,
-					serverDate,
-					maxClockSkewSec,
-				);
+			preflightLogin();
 			const code = codes.shift();
 			if (!code) return { ok: false, code: "login_failed" };
 			automaticLoginUsed = true;
-			await reserveSubmission();
-			await adapter.fillAndSubmit("totp", code);
+			await adapter.fillAndSubmit("totp", code, reserveSubmission);
 			const outcome = await adapter.waitForPageChange("totp");
 			if (outcome === "timeout") return { ok: false, code: "login_failed" };
 			if (outcome !== "changed" && outcome !== "rejected")
@@ -165,7 +169,7 @@ export function createPlaywrightPageAdapter(
 				throw new BrowserMaintenanceError("browser_unavailable");
 			}
 		},
-		async fillAndSubmit(state, value) {
+		async fillAndSubmit(state, value, beforeSubmit) {
 			if (submission)
 				throw new Error("browser form submission state is invalid");
 			const initialUrl = trustedSubmissionUrl(page.url(), state);
@@ -203,6 +207,7 @@ export function createPlaywrightPageAdapter(
 							? await structuredRejectionBaseline(control)
 							: { error: null, watch: null },
 				};
+				await beforeSubmit?.();
 				await control.press("Enter");
 			} catch (error) {
 				const maintenance = pageMaintenanceError(error);

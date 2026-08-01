@@ -134,12 +134,13 @@ export async function handleBrowserHelperRequest(
 		}
 		if (route.kind === "autoLoginAttempt") {
 			const attempt = autoLoginAttemptBody(body);
-			const count = await browserStore(env).recordAutoLoginAttempt(
+			const reservation = await browserStore(env).recordAutoLoginAttempt(
 				accountId,
 				attempt.date,
+				attempt.maxAttempts,
 				Date.now(),
 			);
-			return jsonResponse({ count });
+			return jsonResponse(reservation);
 		}
 		if (route.kind === "state") {
 			const notification = notificationStateBody(body);
@@ -331,10 +332,17 @@ function stateBody(body: UnknownRecord): BrowserStatusUpdate {
 	};
 }
 
-function autoLoginAttemptBody(body: UnknownRecord): { date: string } {
-	if (!exactKeys(body, ["date"]) || !validCalendarDate(body.date))
+function autoLoginAttemptBody(body: UnknownRecord): {
+	date: string;
+	maxAttempts: number;
+} {
+	if (
+		!exactKeys(body, ["date", "maxAttempts"]) ||
+		!validCalendarDate(body.date) ||
+		!integerBetween(body.maxAttempts, 1, 2)
+	)
 		invalidRequest();
-	return { date: body.date };
+	return { date: body.date, maxAttempts: body.maxAttempts };
 }
 
 function validCalendarDate(value: unknown): value is string {

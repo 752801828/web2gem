@@ -65,7 +65,7 @@ class FakeStore implements BrowserAccountStore {
 		return false;
 	}
 	async recordAutoLoginAttempt() {
-		return 0;
+		return { reserved: false, count: 1 };
 	}
 }
 

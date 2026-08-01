@@ -210,13 +210,21 @@ export function createBrowserScheduler(config, dependencies) {
 						serverDate: client.serverDate,
 						maxClockSkewSec: config.maxClockSkewSec,
 						beforeSubmit: async () => {
-							const count = await client.recordAutoLoginAttempt(
-								account.id,
-								date,
-							);
+							let reservation;
+							try {
+								reservation = await client.recordAutoLoginAttempt(
+									account.id,
+									date,
+									config.autoLoginMaxAttemptsPerDay,
+								);
+							} catch {
+								throw new BrowserMaintenanceError(
+									"attempt_reservation_failed",
+								);
+							}
 							account.autoLoginAttemptDate = date;
-							account.autoLoginAttemptCount = count;
-							if (count > config.autoLoginMaxAttemptsPerDay)
+							account.autoLoginAttemptCount = reservation.count;
+							if (!reservation.reserved)
 								throw new BrowserMaintenanceError("auto_login_limit");
 							autoLoginAtMs = nowMs;
 						},

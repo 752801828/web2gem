@@ -286,8 +286,11 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
 	async recordAutoLoginAttempt(
 		accountId: string,
 		date: string,
+		maxAttempts: number,
 		nowMs: number,
-	): Promise<number> {
+	): Promise<{ reserved: boolean; count: number }> {
+		if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1)
+			throw new Error("SQL browser attempt limit is invalid");
 		const result = await this.db
 			.prepare(`
         INSERT INTO gemini_browser_accounts (
@@ -300,20 +303,24 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
               THEN gemini_browser_accounts.auto_login_attempt_count + 1
             ELSE 1
           END,
-          auto_login_attempt_date = excluded.auto_login_attempt_date,
-          updated_at_ms = excluded.updated_at_ms
-        RETURNING auto_login_attempt_count
+		  auto_login_attempt_date = excluded.auto_login_attempt_date,
+		  updated_at_ms = excluded.updated_at_ms
+		WHERE gemini_browser_accounts.auto_login_attempt_date <> excluded.auto_login_attempt_date
+		  OR gemini_browser_accounts.auto_login_attempt_count < ?
+		RETURNING auto_login_attempt_count
       `)
-			.bind(accountId, date, nowMs)
+			.bind(accountId, date, nowMs, maxAttempts)
 			.run<{ auto_login_attempt_count: number }>();
+		if (!result.results?.length) return { reserved: false, count: maxAttempts };
 		const count = result.results?.[0]?.auto_login_attempt_count;
 		if (
 			result.results?.length !== 1 ||
 			typeof count !== "number" ||
 			!Number.isInteger(count) ||
-			count < 1
+			count < 1 ||
+			count > maxAttempts
 		)
 			throw new Error("SQL browser attempt update returned no count");
-		return count;
+		return { reserved: true, count };
 	}
 }
