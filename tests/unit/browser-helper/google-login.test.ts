@@ -232,6 +232,74 @@ describe("bounded Google login", () => {
 		assert.equal(disposals, 2);
 	});
 
+	test("cleans partial structured rejection baselines", async () => {
+		const cleaned = { control: 0, error: 0, watch: 0, disconnected: 0 };
+		const error = {
+			isVisible: async () => true,
+			getAttribute: async () => "same-code",
+			dispose: async () => {
+				cleaned.error += 1;
+			},
+		};
+		const watchValue = {
+			state: { generation: 0 },
+			observer: {
+				disconnect: () => {
+					cleaned.disconnected += 1;
+				},
+			},
+		};
+		const watch = {
+			asElement: () => null,
+			evaluate: async (callback: (value: typeof watchValue) => unknown) =>
+				callback(watchValue),
+			dispose: async () => {
+				cleaned.watch += 1;
+			},
+		};
+		let evaluateHandleCalls = 0;
+		const control = {
+			isVisible: async () => true,
+			getAttribute: async () => {
+				throw new Error("baseline failed");
+			},
+			evaluate: async (callback: (value: unknown) => unknown) =>
+				callback({ form: { action: urls.totp }, isConnected: true }),
+			evaluateHandle: async () => {
+				evaluateHandleCalls += 1;
+				return evaluateHandleCalls === 1
+					? { asElement: () => error, dispose: async () => undefined }
+					: watch;
+			},
+			fill: async () => undefined,
+			press: async () => undefined,
+			dispose: async () => {
+				cleaned.control += 1;
+			},
+		};
+		const adapter = createPlaywrightPageAdapter({
+			url: () => urls.totp,
+			locator: (selector: string) => {
+				const locator = {
+					first: () => locator,
+					isVisible: async () => selector.includes('input[name="totpPin"]'),
+					elementHandle: async () => control,
+				};
+				return locator;
+			},
+		});
+		await assert.rejects(
+			adapter.fillAndSubmit("totp", "111111"),
+			/browser submission is not trusted/,
+		);
+		assert.deepEqual(cleaned, {
+			control: 1,
+			error: 1,
+			watch: 1,
+			disconnected: 1,
+		});
+	});
+
 	test("requires exact HTTPS origins before trusting login or Gemini state", async () => {
 		for (const origin of [
 			"http://accounts.google.com",
@@ -305,9 +373,13 @@ describe("bounded Google login", () => {
 
 	test("uses structured TOTP rejection events, not unrelated alerts", async () => {
 		type ErrorNode = { code: string; text: string };
-		let currentError: ErrorNode | null = null;
-		let createStructuredError = true;
+		const currentError: ErrorNode = {
+			code: "invalid_totp",
+			text: "same error",
+		};
+		let createStructuredMutation = true;
 		let unrelatedAlertChanges = 0;
+		let disconnectedWatches = 0;
 		const queriedSelectors: string[] = [];
 		const errorHandle = (node: ErrorNode) => ({
 			node,
@@ -320,30 +392,48 @@ describe("bounded Google login", () => {
 			) => callback(node, previous.node),
 			dispose: async () => undefined,
 		});
-		const controlHandle = () => ({
-			isVisible: async () => true,
-			getAttribute: async (name: string) =>
-				name === "aria-invalid" ? "false" : null,
-			evaluate: async (callback: (value: unknown) => unknown) =>
-				callback({
-					form: { action: urls.totp },
-					isConnected: true,
-				}),
-			evaluateHandle: async () => {
-				const element = currentError ? errorHandle(currentError) : null;
-				return {
-					asElement: () => element,
-					dispose: async () => undefined,
-				};
-			},
-			fill: async () => undefined,
-			press: async () => {
-				if (createStructuredError)
-					currentError = { code: "invalid_totp", text: "same error" };
-				else unrelatedAlertChanges += 1;
-			},
-			dispose: async () => undefined,
-		});
+		const controlHandle = () => {
+			let evaluateHandleCalls = 0;
+			const watch = {
+				state: { generation: 0 },
+				observer: {
+					disconnect: () => {
+						disconnectedWatches += 1;
+					},
+				},
+			};
+			return {
+				isVisible: async () => true,
+				getAttribute: async (name: string) =>
+					name === "aria-invalid" ? "true" : null,
+				evaluate: async (callback: (value: unknown) => unknown) =>
+					callback({
+						form: { action: urls.totp },
+						isConnected: true,
+					}),
+				evaluateHandle: async () => {
+					evaluateHandleCalls += 1;
+					if (evaluateHandleCalls === 2)
+						return {
+							asElement: () => null,
+							evaluate: async (callback: (value: typeof watch) => unknown) =>
+								callback(watch),
+							dispose: async () => undefined,
+						};
+					const element = errorHandle(currentError);
+					return {
+						asElement: () => element,
+						dispose: async () => undefined,
+					};
+				},
+				fill: async () => undefined,
+				press: async () => {
+					if (createStructuredMutation) watch.state.generation += 1;
+					else unrelatedAlertChanges += 1;
+				},
+				dispose: async () => undefined,
+			};
+		};
 		const adapter = createPlaywrightPageAdapter(
 			{
 				url: () => urls.totp,
@@ -366,11 +456,15 @@ describe("bounded Google login", () => {
 		await adapter.fillAndSubmit("totp", "222222");
 		assert.equal(await adapter.waitForPageChange("totp"), "rejected");
 
-		createStructuredError = false;
-		currentError = null;
+		createStructuredMutation = false;
 		await adapter.fillAndSubmit("totp", "333333");
 		assert.equal(await adapter.waitForPageChange("totp"), "timeout");
 		assert.equal(unrelatedAlertChanges, 1);
+
+		createStructuredMutation = true;
+		await adapter.fillAndSubmit("totp", "444444");
+		assert.equal(await adapter.waitForPageChange("totp"), "rejected");
+		assert.equal(disconnectedWatches, 4);
 		assert.equal(
 			queriedSelectors.some(
 				(selector) =>
@@ -442,6 +536,54 @@ describe("bounded Google login", () => {
 		assert.equal(error instanceof BrowserMaintenanceError, true);
 		assert.equal((error as { code?: string }).code, "navigation_failed");
 		assert.doesNotMatch(String(error), new RegExp(leaked));
+	});
+
+	test("preserves typed maintenance failures after initial navigation", async () => {
+		const leaked = "closed page with private proxy detail";
+		const locator = {
+			first: () => locator,
+			isVisible: async () => false,
+		};
+		let error: unknown;
+		try {
+			await runGoogleLogin({
+				page: {
+					goto: async () => undefined,
+					url: () => urls.password,
+					locator: () => locator,
+					waitForTimeout: async () => {
+						throw new Error(leaked);
+					},
+				},
+				credentials,
+				totpCodes: [],
+				stateReadyAttempts: 1,
+			});
+		} catch (caught) {
+			error = caught;
+		}
+		assert.equal(error instanceof BrowserMaintenanceError, true);
+		assert.equal((error as { code?: string }).code, "browser_unavailable");
+		assert.doesNotMatch(String(error), new RegExp(leaked));
+	});
+
+	test("observes only visible account email elements", async () => {
+		const queried: string[] = [];
+		const adapter = createPlaywrightPageAdapter({
+			locator: (selector: string) => {
+				queried.push(selector);
+				const locator = {
+					first: () => locator,
+					getAttribute: async () =>
+						selector.includes(":visible")
+							? "current@example.com"
+							: "stale@example.com",
+				};
+				return locator;
+			},
+		});
+		assert.equal(await adapter.observedEmail(), "current@example.com");
+		assert.equal(queried[0], "[data-email]:visible");
 	});
 
 	test("waits a bounded time for trusted route controls to become ready", async () => {

@@ -64,12 +64,16 @@ export function createChromiumLifecycle({
 			if (closePromise) return closePromise;
 			if (!activeContext) return;
 			const context = activeContext;
-			closePromise = (async () => {
+			const attempt = (async () => {
 				await (await context).close();
 				if (activeContext === context) activeContext = null;
-				closePromise = null;
 			})();
-			return closePromise;
+			closePromise = attempt;
+			try {
+				return await attempt;
+			} finally {
+				if (closePromise === attempt) closePromise = null;
+			}
 		},
 	};
 }

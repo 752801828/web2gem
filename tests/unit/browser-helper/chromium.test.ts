@@ -131,6 +131,7 @@ describe("browser helper Chromium lifecycle", () => {
 
 	test("retains the profile lock when context close fails", async () => {
 		let launches = 0;
+		let closeCalls = 0;
 		const lifecycle = createChromiumLifecycle({
 			browserType: {
 				launchPersistentContext: async () => {
@@ -138,7 +139,8 @@ describe("browser helper Chromium lifecycle", () => {
 					return {
 						cookies: async () => [],
 						close: async () => {
-							throw new Error("close failed");
+							closeCalls += 1;
+							if (closeCalls === 1) throw new Error("close failed");
 						},
 					};
 				},
@@ -150,7 +152,42 @@ describe("browser helper Chromium lifecycle", () => {
 			lifecycle.startVisible("account-b"),
 			/browser context is already active/,
 		);
-		await assert.rejects(lifecycle.close(), /close failed/);
-		assert.equal(launches, 1);
+		await lifecycle.close();
+		await lifecycle.startVisible("account-b");
+		assert.equal(closeCalls, 2);
+		assert.equal(launches, 2);
+	});
+
+	test("recovers when close waits on a launch that later fails", async () => {
+		let rejectLaunch!: (error: Error) => void;
+		let launches = 0;
+		let closes = 0;
+		const pending = new Promise<never>((_resolve, reject) => {
+			rejectLaunch = reject;
+		});
+		const lifecycle = createChromiumLifecycle({
+			browserType: {
+				launchPersistentContext: async () => {
+					launches += 1;
+					if (launches === 1) return pending;
+					return {
+						cookies: async () => [],
+						close: async () => {
+							closes += 1;
+						},
+					};
+				},
+			},
+		});
+		const starting = lifecycle.startHeadless("account-a");
+		const closing = lifecycle.close();
+		rejectLaunch(new Error("launch failed"));
+		await assert.rejects(starting, /launch failed/);
+		await assert.rejects(closing, /launch failed/);
+
+		await lifecycle.startHeadless("account-b");
+		await lifecycle.close();
+		assert.equal(launches, 2);
+		assert.equal(closes, 1);
 	});
 });

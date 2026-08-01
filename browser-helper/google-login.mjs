@@ -31,7 +31,7 @@ const SELECTORS = {
 
 export class BrowserMaintenanceError extends Error {
 	constructor(code) {
-		super("browser maintenance navigation failed");
+		super("browser maintenance failed");
 		this.name = "BrowserMaintenanceError";
 		this.code = code;
 	}
@@ -109,7 +109,8 @@ export async function runGoogleLogin({
 			if (outcome !== "changed" && outcome !== "rejected")
 				return { ok: false, code: "login_failed" };
 		}
-	} catch {
+	} catch (error) {
+		if (error instanceof BrowserMaintenanceError) throw error;
 		return { ok: false, code: "login_failed" };
 	}
 	return { ok: false, code: "login_failed" };
@@ -125,19 +126,34 @@ export function createPlaywrightPageAdapter(
 		async visible(state) {
 			const selector = SELECTORS[state];
 			if (!selector) return false;
-			return page
-				.locator(selector)
-				.first()
-				.isVisible()
-				.catch(() => false);
+			try {
+				return await page.locator(selector).first().isVisible();
+			} catch (error) {
+				const maintenance = pageMaintenanceError(error);
+				if (maintenance) throw maintenance;
+				return false;
+			}
 		},
 		gotoGemini: () => page.goto(GEMINI_URL, { waitUntil: "domcontentloaded" }),
-		waitForStateReady: () => page.waitForTimeout(250),
+		async waitForStateReady() {
+			try {
+				await page.waitForTimeout(250);
+			} catch {
+				throw new BrowserMaintenanceError("browser_unavailable");
+			}
+		},
 		async fillAndSubmit(state, value) {
 			if (submission)
 				throw new Error("browser form submission state is invalid");
 			const initialUrl = trustedSubmissionUrl(page.url(), state);
-			const control = await page.locator(SELECTORS[state]).first().elementHandle();
+			let control;
+			try {
+				control = await page.locator(SELECTORS[state]).first().elementHandle();
+			} catch (error) {
+				const maintenance = pageMaintenanceError(error);
+				if (maintenance) throw maintenance;
+				throw untrustedSubmission();
+			}
 			if (!control) throw untrustedSubmission();
 			try {
 				trustedSubmissionUrl(page.url(), state);
@@ -162,15 +178,17 @@ export function createPlaywrightPageAdapter(
 					rejection:
 						state === "totp"
 							? await structuredRejectionBaseline(control)
-							: { error: null },
+							: { error: null, watch: null },
 				};
 				await control.press("Enter");
-			} catch {
+			} catch (error) {
+				const maintenance = pageMaintenanceError(error);
 				if (submission?.control === control) {
 					const failed = submission;
 					submission = null;
 					await disposeSubmission(failed);
 				} else await control.dispose().catch(() => undefined);
+				if (maintenance) throw maintenance;
 				throw untrustedSubmission();
 			}
 		},
@@ -193,25 +211,31 @@ export function createPlaywrightPageAdapter(
 				return "timeout";
 			} catch (error) {
 				if (page.url() !== active.url) return "changed";
+				const maintenance = pageMaintenanceError(error);
+				if (maintenance) throw maintenance;
 				throw error;
 			} finally {
 				await disposeSubmission(active);
 				if (submission === active) submission = null;
 			}
 		},
-		cookies: () => page.context().cookies("https://gemini.google.com"),
+		async cookies() {
+			try {
+				return await page.context().cookies("https://gemini.google.com");
+			} catch {
+				throw new BrowserMaintenanceError("browser_unavailable");
+			}
+		},
 		async observedEmail() {
-			const dataEmail = await page
-				.locator("[data-email]")
-				.first()
-				.getAttribute("data-email")
-				.catch(() => null);
+			const dataEmail = await optionalAttribute(
+				page.locator("[data-email]:visible").first(),
+				"data-email",
+			);
 			if (reliableEmail(dataEmail)) return dataEmail.trim().toLowerCase();
-			const label = await page
-				.locator('[aria-label*="@"]')
-				.first()
-				.getAttribute("aria-label")
-				.catch(() => null);
+			const label = await optionalAttribute(
+				page.locator('[aria-label*="@"]:visible').first(),
+				"aria-label",
+			);
 			return label?.match(/[\w.!#$%&'*+/=?^`{|}~-]+@[\w.-]+\.[A-Za-z]{2,}/)?.[0] ?? null;
 		},
 	};
@@ -312,16 +336,37 @@ function reliableEmail(value) {
 async function semanticVisibility(page) {
 	return Object.fromEntries(
 		await Promise.all(
-			Object.entries(SELECTORS).map(async ([state, selector]) => [
-				state,
-				await page
-					.locator(selector)
-					.first()
-					.isVisible()
-					.catch(() => false),
-			]),
+			Object.entries(SELECTORS).map(async ([state, selector]) => {
+				try {
+					return [state, await page.locator(selector).first().isVisible()];
+				} catch (error) {
+					const maintenance = pageMaintenanceError(error);
+					if (maintenance) throw maintenance;
+					return [state, false];
+				}
+			}),
 		),
 	);
+}
+
+async function optionalAttribute(locator, name) {
+	try {
+		return await locator.getAttribute(name);
+	} catch (error) {
+		const maintenance = pageMaintenanceError(error);
+		if (maintenance) throw maintenance;
+		return null;
+	}
+}
+
+function pageMaintenanceError(error) {
+	if (error instanceof BrowserMaintenanceError) return error;
+	const message = error instanceof Error ? error.message : "";
+	return /(?:target|page|context|browser).*(?:closed|crash|disconnect)|(?:closed|crash|disconnect).*(?:target|page|context|browser)/i.test(
+		message,
+	)
+		? new BrowserMaintenanceError("browser_unavailable")
+		: null;
 }
 
 function trustedSubmissionUrl(value, state) {
@@ -342,18 +387,32 @@ function sameVisibility(left, right) {
 }
 
 async function structuredRejectionBaseline(control) {
-	const error = await submissionErrorElement(control);
-	return {
-		ariaInvalid: await control.getAttribute("aria-invalid"),
-		error,
-		errorVisible: error ? await error.isVisible().catch(() => false) : false,
-		errorCode: error
-			? await error.getAttribute("data-error-code").catch(() => null)
-			: null,
-	};
+	let error = null;
+	let watch = null;
+	try {
+		error = await submissionErrorElement(control);
+		watch = await installStructuredRejectionWatch(control);
+		return {
+			ariaInvalid: await control.getAttribute("aria-invalid"),
+			error,
+			watch,
+			errorVisible: error ? await error.isVisible().catch(() => false) : false,
+			errorCode: error
+				? await error.getAttribute("data-error-code").catch(() => null)
+				: null,
+		};
+	} catch (error_) {
+		await disposeRejection({ error, watch });
+		throw error_;
+	}
 }
 
 async function structuredRejectionChanged(control, baseline) {
+	if (
+		baseline.watch &&
+		(await baseline.watch.evaluate((watch) => watch.state.generation > 0))
+	)
+		return true;
 	const ariaInvalid = await control.getAttribute("aria-invalid");
 	if (baseline.ariaInvalid !== "true" && ariaInvalid === "true") return true;
 	const current = await submissionErrorElement(control);
@@ -399,7 +458,77 @@ async function submissionErrorElement(control) {
 	return null;
 }
 
+async function installStructuredRejectionWatch(control) {
+	return control.evaluateHandle((element, selector) => {
+		const described = (element.getAttribute("aria-describedby") ?? "")
+			.split(/\s+/)
+			.filter(Boolean)
+			.map((id) => document.getElementById(id));
+		const error =
+			described.find(Boolean) ?? element.form?.querySelector(selector) ?? null;
+		const state = { generation: 0, cleared: false };
+		const visible = (candidate) =>
+			Boolean(
+				candidate &&
+				candidate.getClientRects().length > 0 &&
+				candidate.getAttribute("aria-hidden") !== "true",
+			);
+		const explicitError = () =>
+			Boolean(
+				visible(error) &&
+				(error.getAttribute("data-error-code") || error.textContent?.trim()),
+			);
+		const observer = new MutationObserver((records) => {
+			const ariaRejected = element.getAttribute("aria-invalid") === "true";
+			const errorRejected = explicitError();
+			const rejectionMutation = records.some((record) => {
+				if (record.target === element)
+					return record.attributeName === "aria-invalid" && ariaRejected;
+				if (!error || !error.contains(record.target)) return false;
+				if (record.type === "characterData" || record.type === "childList")
+					return errorRejected;
+				if (record.attributeName === "data-error-code")
+					return Boolean(error.getAttribute("data-error-code"));
+				return state.cleared && errorRejected;
+			});
+			if (rejectionMutation) {
+				state.generation += 1;
+				state.cleared = false;
+			} else if (!ariaRejected && !errorRejected) state.cleared = true;
+		});
+		observer.observe(element, {
+			attributes: true,
+			attributeFilter: ["aria-invalid"],
+		});
+		if (error)
+			observer.observe(error, {
+				subtree: true,
+				childList: true,
+				characterData: true,
+				attributes: true,
+				attributeFilter: [
+					"data-error-code",
+					"hidden",
+					"style",
+					"class",
+					"aria-hidden",
+				],
+			});
+		return { observer, state };
+	}, STRUCTURED_ERROR_SELECTOR);
+}
+
 async function disposeSubmission(submission) {
-	await submission.rejection.error?.dispose().catch(() => undefined);
+	await disposeRejection(submission.rejection);
 	await submission.control.dispose().catch(() => undefined);
+}
+
+async function disposeRejection(rejection) {
+	if (rejection.watch) {
+		await rejection.watch
+			.evaluate((watch) => watch.observer.disconnect())
+			.catch(() => undefined);
+		await rejection.watch.dispose().catch(() => undefined);
+	}
+	await rejection.error?.dispose().catch(() => undefined);
 }
