@@ -52,14 +52,8 @@ export async function handleBrowserHelperRequest(
 	cfg: RuntimeConfig,
 	url: URL,
 ): Promise<Response> {
-	if (!browserHelperAuthorized(request, env.BROWSER_HELPER_INTERNAL_TOKEN))
-		return errorResponse(
-			new BrowserHelperError(
-				401,
-				"invalid_browser_helper_token",
-				"unauthorized",
-			),
-		);
+	const authError = browserHelperAuthErrorResponse(request, env);
+	if (authError) return authError;
 
 	try {
 		const route = browserHelperRoute(
@@ -163,6 +157,17 @@ export async function handleBrowserHelperRequest(
 	} catch (error) {
 		return errorResponse(error);
 	}
+}
+
+export function browserHelperAuthErrorResponse(
+	request: Request,
+	env: Pick<AppEnv, "BROWSER_HELPER_INTERNAL_TOKEN">,
+): Response | null {
+	if (browserHelperAuthorized(request, env.BROWSER_HELPER_INTERNAL_TOKEN))
+		return null;
+	return errorResponse(
+		new BrowserHelperError(401, "invalid_browser_helper_token", "unauthorized"),
+	);
 }
 
 function browserHelperAuthorized(

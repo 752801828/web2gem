@@ -153,6 +153,31 @@ describe("private browser-helper HTTP contract", () => {
 		assert.equal(response.status, 200);
 	});
 
+	test("authenticates before parsing unrelated runtime configuration", async () => {
+		for (const authorization of [undefined, "Bearer wrong"]) {
+			const headers = authorization ? { Authorization: authorization } : {};
+			const response = await handleApplicationRequest(
+				new Request("https://worker.example/internal/browser/accounts", {
+					headers,
+				}),
+				{
+					...env(),
+					RETRY_ATTEMPTS: "not-a-number",
+				},
+				{ waitUntil() {} },
+			);
+			assert.equal(response.status, 401);
+			const text = await response.text();
+			assert.doesNotMatch(text, /RETRY_ATTEMPTS|not-a-number/i);
+			assert.deepEqual(JSON.parse(text), {
+				error: {
+					code: "invalid_browser_helper_token",
+					message: "unauthorized",
+				},
+			});
+		}
+	});
+
 	test("lists only safe enabled-account schedule fields", async () => {
 		const store = new FakeBrowserStore();
 		store.failureCode = "SQL token=private-cookie";

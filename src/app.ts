@@ -45,6 +45,7 @@ import {
 	isGeminiModelRoutingAdminPath,
 } from "./http/admin/gemini-model-routing";
 import {
+	browserHelperAuthErrorResponse,
 	handleBrowserHelperRequest,
 	isBrowserHelperPath,
 } from "./http/internal/browser-helper";
@@ -300,6 +301,10 @@ export async function handleApplicationRequest(
 			status: 204,
 			headers: corsHeaders(request),
 		});
+	}
+	if (isBrowserHelperPath(path)) {
+		const authError = browserHelperAuthErrorResponse(request, env);
+		if (authError) return respond(authError);
 	}
 
 	let cfg: RuntimeConfig;
