@@ -5,6 +5,7 @@ import { describe, test } from "vitest";
 import {
 	encryptBrowserCredentials,
 	validateBrowserCredentials,
+	wipeBrowserCredentialFields,
 } from "../../../src/browser/credentials";
 import type {
 	BrowserCredentialCrypto,
@@ -93,6 +94,22 @@ async function errorText(
 }
 
 describe("browser credential validation", () => {
+	test("wipes known credential fields on invalid request objects", () => {
+		const input: Record<string, unknown> = {
+			email: "owner@example.com",
+			password: 123,
+			totpSecret: "JBSWY3DPEHPK3PXP",
+			extra: "unchanged",
+		};
+		wipeBrowserCredentialFields(input);
+		assert.deepEqual(input, {
+			email: "",
+			password: "",
+			totpSecret: "",
+			extra: "unchanged",
+		});
+	});
+
 	test("canonicalizes email and TOTP input before encryption", async () => {
 		let seen: BrowserCredentials | undefined;
 		const binding: BrowserCredentialCrypto = {

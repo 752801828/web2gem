@@ -46,6 +46,14 @@ export async function encryptBrowserCredentials(
 	return binding.encrypt(accountId, validateBrowserCredentials(input));
 }
 
+export function wipeBrowserCredentialFields(
+	input: Record<string, unknown>,
+): void {
+	for (const key of ["email", "password", "totpSecret"]) {
+		if (Object.hasOwn(input, key)) input[key] = "";
+	}
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

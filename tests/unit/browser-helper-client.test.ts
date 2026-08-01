@@ -77,6 +77,32 @@ describe("Docker browser-helper control client", () => {
 		assert.doesNotMatch(String(error), /ECONNREFUSED|secret|token/i);
 	});
 
+	test("maps response-stream failures to a fixed safe error", async () => {
+		const client = createBrowserHelperClient(ENV, {
+			async fetch() {
+				return new Response(
+					new ReadableStream({
+						pull(controller) {
+							controller.error(new Error("stream disconnected token=secret"));
+						},
+					}),
+				);
+			},
+		});
+		if (!client) throw new Error("expected browser helper client");
+		let error: unknown;
+		try {
+			await client.checkNow("account-a");
+		} catch (caught) {
+			error = caught;
+		}
+		assert.equal(
+			(error as { code?: unknown }).code,
+			"browser_helper_unavailable",
+		);
+		assert.doesNotMatch(String(error), /disconnected|secret|token/i);
+	});
+
 	test("rejects helper responses larger than 64 KiB", async () => {
 		const client = createBrowserHelperClient(ENV, {
 			async fetch() {
@@ -132,6 +158,22 @@ describe("Docker browser-helper control client", () => {
 		]) {
 			assert.throws(
 				() => createBrowserHelperClient({ ...ENV, NOVNC_PUBLIC_URL: url }),
+				/invalid browser helper configuration/i,
+			);
+		}
+	});
+
+	test("rejects internal URLs outside the Compose browser-helper host", () => {
+		for (const url of [
+			"http://external.example:6090",
+			"http://127.0.0.1:6090",
+		]) {
+			assert.throws(
+				() =>
+					createBrowserHelperClient({
+						...ENV,
+						BROWSER_HELPER_INTERNAL_URL: url,
+					}),
 				/invalid browser helper configuration/i,
 			);
 		}

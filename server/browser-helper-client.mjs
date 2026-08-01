@@ -23,27 +23,27 @@ export function createBrowserHelperClient(sourceEnv = process.env, options = {})
 	const timeoutMs = options.timeoutMs || REQUEST_TIMEOUT_MS;
 
 	const call = async (method, path) => {
-		let response;
 		try {
-			response = await fetchImpl(new URL(path, baseUrl), {
+			const response = await fetchImpl(new URL(path, baseUrl), {
 				method,
 				headers: { Authorization: `Bearer ${internalToken}` },
 				signal: AbortSignal.timeout(timeoutMs),
 			});
-		} catch {
+			const body = await readBoundedResponse(response);
+			if (!response.ok) {
+				const detail = safeError(body);
+				throw new BrowserHelperClientError(
+					response.status,
+					detail.code,
+					detail.message,
+				);
+			}
+		} catch (error) {
+			if (error instanceof BrowserHelperClientError) throw error;
 			throw new BrowserHelperClientError(
 				503,
 				"browser_helper_unavailable",
 				"browser helper is unavailable",
-			);
-		}
-		const body = await readBoundedResponse(response);
-		if (!response.ok) {
-			const detail = safeError(body);
-			throw new BrowserHelperClientError(
-				response.status,
-				detail.code,
-				detail.message,
 			);
 		}
 	};
@@ -106,7 +106,14 @@ function safeError(text) {
 
 function validatedInternalUrl(value) {
 	const url = parsedHttpUrl(value);
-	if (url.username || url.password || url.search || url.hash) invalidConfig();
+	if (
+		url.hostname !== "browser-helper" ||
+		url.username ||
+		url.password ||
+		url.search ||
+		url.hash
+	)
+		invalidConfig();
 	if (!url.pathname.endsWith("/")) url.pathname += "/";
 	return url;
 }

@@ -1,4 +1,7 @@
-import { validateBrowserCredentials } from "../../browser/credentials";
+import {
+	validateBrowserCredentials,
+	wipeBrowserCredentialFields,
+} from "../../browser/credentials";
 import { SqlBrowserAccountStore } from "../../browser/store";
 import type {
 	BrowserAccountStatus,
@@ -111,18 +114,18 @@ async function configureCredentials(
 ): Promise<Response> {
 	const crypto = requireCredentialCrypto(env);
 	const body = await readAdminJson(request);
-	if (
-		!exactKeys(body, ["email", "password", "totpSecret"]) ||
-		typeof body.email !== "string" ||
-		typeof body.password !== "string" ||
-		typeof body.totpSecret !== "string"
-	)
-		invalid("browser credentials are invalid");
-
-	const requested = body as BrowserCredentials;
+	let requested: BrowserCredentials | null = null;
 	let decrypted: BrowserCredentials | null = null;
 	let merged: BrowserCredentials | null = null;
 	try {
+		if (
+			!exactKeys(body, ["email", "password", "totpSecret"]) ||
+			typeof body.email !== "string" ||
+			typeof body.password !== "string" ||
+			typeof body.totpSecret !== "string"
+		)
+			invalid("browser credentials are invalid");
+		requested = body as BrowserCredentials;
 		const store = browserStore(env);
 		const existing = await store.getEncryptedCredentials(accountId);
 		if (existing) decrypted = await crypto.decrypt(accountId, existing);
@@ -138,7 +141,7 @@ async function configureCredentials(
 		if (error instanceof TypeError) invalid("browser credentials are invalid");
 		throw error;
 	} finally {
-		wipe(requested);
+		wipeBrowserCredentialFields(body);
 		if (decrypted) wipe(decrypted);
 		if (merged) wipe(merged);
 	}
