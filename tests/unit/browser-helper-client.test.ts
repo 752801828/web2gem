@@ -14,6 +14,7 @@ describe("Docker browser-helper control client", () => {
 			url: string;
 			method: string;
 			auth: string | null;
+			redirect: RequestRedirect | undefined;
 		}> = [];
 		const client = createBrowserHelperClient(ENV, {
 			async fetch(input: RequestInfo | URL, init?: RequestInit) {
@@ -22,6 +23,7 @@ describe("Docker browser-helper control client", () => {
 					url: String(input),
 					method: init?.method || "GET",
 					auth: headers.get("authorization"),
+					redirect: init?.redirect,
 				});
 				return Response.json({ ignored: "private" });
 			},
@@ -38,21 +40,25 @@ describe("Docker browser-helper control client", () => {
 				url: "http://browser-helper:6090/checks/account%20a",
 				method: "POST",
 				auth: "Bearer internal-token",
+				redirect: "error",
 			},
 			{
 				url: "http://browser-helper:6090/sessions/account%20a/open",
 				method: "POST",
 				auth: "Bearer internal-token",
+				redirect: "error",
 			},
 			{
 				url: "http://browser-helper:6090/sessions/stop",
 				method: "POST",
 				auth: "Bearer internal-token",
+				redirect: "error",
 			},
 			{
 				url: "http://browser-helper:6090/profiles/account%20a",
 				method: "DELETE",
 				auth: "Bearer internal-token",
+				redirect: "error",
 			},
 		]);
 	});

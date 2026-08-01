@@ -27,6 +27,7 @@ export function createBrowserHelperClient(sourceEnv = process.env, options = {})
 			const response = await fetchImpl(new URL(path, baseUrl), {
 				method,
 				headers: { Authorization: `Bearer ${internalToken}` },
+				redirect: "error",
 				signal: AbortSignal.timeout(timeoutMs),
 			});
 			const body = await readBoundedResponse(response);
