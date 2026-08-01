@@ -567,6 +567,52 @@ describe("bounded Google login", () => {
 		assert.doesNotMatch(String(error), new RegExp(leaked));
 	});
 
+	test("classifies a Chromium error page after submission as navigation failure", async () => {
+		const leaked = "net::ERR_PROXY_CONNECTION_FAILED private-proxy-detail";
+		const page = scriptedPage(["email"]);
+		page.url = () =>
+			page.submissions.length
+				? `chrome-error://chromewebdata/#${leaked}`
+				: urls.email;
+		let error: unknown;
+		try {
+			await runGoogleLogin({ page, credentials, totpCodes: [] });
+		} catch (caught) {
+			error = caught;
+		}
+		assert.equal(error instanceof BrowserMaintenanceError, true);
+		assert.equal((error as { code?: string }).code, "navigation_failed");
+		assert.doesNotMatch(String(error), /ERR_PROXY|private-proxy/i);
+	});
+
+	test("redacts Playwright timeout and net error operations", async () => {
+		for (const source of [
+			Object.assign(new Error("private timeout detail"), {
+				name: "TimeoutError",
+			}),
+			new Error(
+				"locator failed: net::ERR_NAME_NOT_RESOLVED private-dns-detail",
+			),
+		]) {
+			const locator = {
+				first: () => locator,
+				isVisible: async () => {
+					throw source;
+				},
+			};
+			const adapter = createPlaywrightPageAdapter({ locator: () => locator });
+			let error: unknown;
+			try {
+				await adapter.visible("email");
+			} catch (caught) {
+				error = caught;
+			}
+			assert.equal(error instanceof BrowserMaintenanceError, true);
+			assert.equal((error as { code?: string }).code, "browser_unavailable");
+			assert.doesNotMatch(String(error), /private|ERR_NAME|timeout detail/i);
+		}
+	});
+
 	test("observes only visible account email elements", async () => {
 		const queried: string[] = [];
 		const adapter = createPlaywrightPageAdapter({

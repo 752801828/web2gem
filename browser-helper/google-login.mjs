@@ -40,6 +40,8 @@ export class BrowserMaintenanceError extends Error {
 export async function classifyGooglePage(page) {
 	const adapter = asAdapter(page);
 	const url = safeUrl(adapter.url());
+	if (url?.protocol === "chrome-error:")
+		throw new BrowserMaintenanceError("navigation_failed");
 	const routeState = stateFromUrl(url);
 	if (routeState && !["email", "password", "totp"].includes(routeState))
 		return routeState;
@@ -362,9 +364,11 @@ async function optionalAttribute(locator, name) {
 function pageMaintenanceError(error) {
 	if (error instanceof BrowserMaintenanceError) return error;
 	const message = error instanceof Error ? error.message : "";
-	return /(?:target|page|context|browser).*(?:closed|crash|disconnect)|(?:closed|crash|disconnect).*(?:target|page|context|browser)/i.test(
-		message,
-	)
+	return error?.name === "TimeoutError" ||
+		/net::ERR_[A-Z_]+/i.test(message) ||
+		/(?:target|page|context|browser).*(?:closed|crash|disconnect)|(?:closed|crash|disconnect).*(?:target|page|context|browser)/i.test(
+			message,
+		)
 		? new BrowserMaintenanceError("browser_unavailable")
 		: null;
 }
