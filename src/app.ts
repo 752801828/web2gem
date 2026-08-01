@@ -44,6 +44,10 @@ import {
 	handleGeminiModelRoutingAdminRequest,
 	isGeminiModelRoutingAdminPath,
 } from "./http/admin/gemini-model-routing";
+import {
+	handleBrowserHelperRequest,
+	isBrowserHelperPath,
+} from "./http/internal/browser-helper";
 import { createGeminiCompletionProvider } from "./gemini/completion-provider";
 import type { GeminiAuthenticatedSessionReason } from "./shared/errors";
 import { getGeminiAccountPoolFromEnv } from "./gemini/accounts/runtime";
@@ -85,7 +89,7 @@ type AppRouteContext = ApplicationRequestContext & {
 };
 
 type AppRoute<P> = {
-	method?: "GET" | "POST";
+	method?: "GET" | "POST" | "PATCH" | "DELETE";
 	access: "exempt" | "public";
 	match: (path: string) => P | null;
 	when?: (request: Request) => boolean;
@@ -115,6 +119,12 @@ const matchPredicate =
 		predicate(path) ? {} : null;
 
 const APP_ROUTES: readonly AppRoute<unknown>[] = [
+	route({
+		access: "exempt",
+		match: matchPredicate(isBrowserHelperPath),
+		handle: ({ request, env, cfg, url }) =>
+			handleBrowserHelperRequest(request, env, cfg, url),
+	}),
 	route({
 		access: "exempt",
 		match: matchPredicate(isGeminiAccountAdminUiPath),

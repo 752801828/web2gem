@@ -1,7 +1,17 @@
 import type { BrowserCredentialCrypto } from "../browser/types";
+import type { BrowserAccountStore } from "../browser/types";
+import type {
+	CandidateCookieInput,
+	CandidateCookieResult,
+} from "../browser/candidate-cookie";
 
 export type AppEnv = Record<string, unknown> & {
 	BROWSER_CREDENTIAL_CRYPTO?: BrowserCredentialCrypto;
+	BROWSER_HELPER_INTERNAL_TOKEN?: string;
+	BROWSER_ACCOUNT_STORE?: BrowserAccountStore;
+	BROWSER_CANDIDATE_COOKIE_SERVICE?: {
+		replace(input: CandidateCookieInput): Promise<CandidateCookieResult>;
+	};
 };
 
 export type GeminiAccountLeaseContext = {
