@@ -1,7 +1,12 @@
 import { totpCandidates } from "./crypto.mjs";
 
 const GEMINI_URL = "https://gemini.google.com/app";
+const GEMINI_ORIGIN = "https://gemini.google.com";
+const ACCOUNTS_ORIGIN = "https://accounts.google.com";
+const GOOGLE_ORIGIN = "https://www.google.com";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const REJECTION_SELECTOR =
+	'[aria-live="assertive"], [role="alert"], [data-error-code]';
 const CHALLENGES = [
 	"captcha",
 	"passkey",
@@ -30,14 +35,14 @@ export async function classifyGooglePage(page) {
 	const url = safeUrl(adapter.url());
 	const routeState = stateFromUrl(url);
 	if (routeState) return routeState;
-	if (url?.hostname === "accounts.google.com") {
+	if (url?.origin === ACCOUNTS_ORIGIN) {
 		for (const state of CHALLENGES)
 			if (await adapter.visible(state)) return state;
 		for (const state of ["email", "password", "totp"])
 			if (await adapter.visible(state)) return state;
 	}
 	if (
-		url?.hostname === "gemini.google.com" &&
+		url?.origin === GEMINI_ORIGIN &&
 		(await adapter.visible("authenticated"))
 	)
 		return "authenticated";
@@ -76,7 +81,9 @@ export async function runGoogleLogin({
 				submittedState = state;
 				automaticLoginUsed = true;
 				await adapter.fillAndSubmit(state, value);
-				await adapter.waitForPageChange();
+				const outcome = await adapter.waitForPageChange(state);
+				if (outcome !== "changed")
+					return { ok: false, code: "login_failed" };
 				continue;
 			}
 
@@ -85,7 +92,10 @@ export async function runGoogleLogin({
 			if (!code) return { ok: false, code: "login_failed" };
 			automaticLoginUsed = true;
 			await adapter.fillAndSubmit("totp", code);
-			await adapter.waitForPageChange();
+			const outcome = await adapter.waitForPageChange("totp");
+			if (outcome === "timeout") return { ok: false, code: "login_failed" };
+			if (outcome !== "changed" && outcome !== "rejected")
+				return { ok: false, code: "login_failed" };
 		}
 	} catch {
 		return { ok: false, code: "login_failed" };
@@ -94,6 +104,7 @@ export async function runGoogleLogin({
 }
 
 export function createPlaywrightPageAdapter(page) {
+	let submission = null;
 	return {
 		url: () => page.url(),
 		async visible(state) {
@@ -108,10 +119,64 @@ export function createPlaywrightPageAdapter(page) {
 		gotoGemini: () => page.goto(GEMINI_URL, { waitUntil: "domcontentloaded" }),
 		async fillAndSubmit(state, value) {
 			const control = page.locator(SELECTORS[state]).first();
+			submission = {
+				state,
+				url: page.url(),
+				visibleStates: await semanticVisibility(page),
+				rejection: await visibleRejectionText(page),
+			};
 			await control.fill(value);
 			await control.press("Enter");
 		},
-		waitForPageChange: () => page.waitForTimeout(1_000),
+		async waitForPageChange(state) {
+			if (!submission || submission.state !== state)
+				throw new Error("browser form submission state is invalid");
+			try {
+				const result = await page.waitForFunction(
+					({
+						initialUrl,
+						selectors,
+						visibleStates,
+						rejectionSelector,
+						rejection,
+					}) => {
+						const visible = (element) =>
+							Boolean(element && element.getClientRects().length > 0);
+						if (location.href !== initialUrl) return "changed";
+						for (const [candidate, selector] of Object.entries(selectors))
+							if (
+								visible(document.querySelector(selector)) !==
+								Boolean(visibleStates[candidate])
+							)
+								return "changed";
+						const currentRejection = [...document.querySelectorAll(rejectionSelector)]
+							.filter(visible)
+							.map((element) => element.textContent?.trim() ?? "")
+							.filter(Boolean)
+							.join("\n")
+							.slice(0, 4_096);
+						return currentRejection && currentRejection !== rejection
+							? "rejected"
+							: false;
+					},
+					{
+						initialUrl: submission.url,
+						selectors: SELECTORS,
+						visibleStates: submission.visibleStates,
+						rejectionSelector: REJECTION_SELECTOR,
+						rejection: submission.rejection,
+					},
+					{ timeout: 10_000, polling: 100 },
+				);
+				const value = await result.jsonValue();
+				await result.dispose();
+				return value;
+			} catch (error) {
+				if (page.url() !== submission.url) return "changed";
+				if (error?.name === "TimeoutError") return "timeout";
+				throw error;
+			}
+		},
 		cookies: () => page.context().cookies("https://gemini.google.com"),
 		async observedEmail() {
 			const dataEmail = await page
@@ -146,11 +211,10 @@ function safeUrl(value) {
 
 function stateFromUrl(url) {
 	if (!url) return null;
-	const hostname = url.hostname.toLowerCase();
 	const value = url.pathname.toLowerCase();
-	if (hostname === "www.google.com" && /\/sorry(?:\/|$)/.test(value))
+	if (url.origin === GOOGLE_ORIGIN && /\/sorry(?:\/|$)/.test(value))
 		return "captcha";
-	if (hostname !== "accounts.google.com") return null;
+	if (url.origin !== ACCOUNTS_ORIGIN) return null;
 	if (/captcha|recaptcha/.test(value)) return "captcha";
 	if (/\/challenge\/pk(?:\/|$)|passkey|webauthn/.test(value)) return "passkey";
 	if (/\/challenge\/(?:ipp|phone|sms)(?:\/|$)/.test(value))
@@ -200,4 +264,30 @@ function cookieValue(cookies, name) {
 
 function reliableEmail(value) {
 	return typeof value === "string" && value.length <= 320 && EMAIL_PATTERN.test(value.trim());
+}
+
+async function visibleRejectionText(page) {
+	return page.locator(REJECTION_SELECTOR).evaluateAll((elements) =>
+		elements
+			.filter((element) => element.getClientRects().length > 0)
+			.map((element) => element.textContent?.trim() ?? "")
+			.filter(Boolean)
+			.join("\n")
+			.slice(0, 4_096),
+	);
+}
+
+async function semanticVisibility(page) {
+	return Object.fromEntries(
+		await Promise.all(
+			Object.entries(SELECTORS).map(async ([state, selector]) => [
+				state,
+				await page
+					.locator(selector)
+					.first()
+					.isVisible()
+					.catch(() => false),
+			]),
+		),
+	);
 }
