@@ -1,0 +1,143 @@
+import { describe, test } from "vitest";
+import { createBrowserHelperClient } from "../../server/browser-helper-client.mjs";
+import { assert } from "./assertions.js";
+
+const ENV = {
+	BROWSER_HELPER_INTERNAL_URL: "http://browser-helper:6090",
+	BROWSER_HELPER_INTERNAL_TOKEN: "internal-token",
+	NOVNC_PUBLIC_URL: "http://127.0.0.1:6080/vnc.html",
+};
+
+describe("Docker browser-helper control client", () => {
+	test("uses the control token and exact helper paths", async () => {
+		const requests: Array<{
+			url: string;
+			method: string;
+			auth: string | null;
+		}> = [];
+		const client = createBrowserHelperClient(ENV, {
+			async fetch(input: RequestInfo | URL, init?: RequestInit) {
+				const headers = new Headers(init?.headers);
+				requests.push({
+					url: String(input),
+					method: init?.method || "GET",
+					auth: headers.get("authorization"),
+				});
+				return Response.json({ ignored: "private" });
+			},
+		});
+		if (!client) throw new Error("expected browser helper client");
+		await client.checkNow("account a");
+		assert.deepEqual(await client.openVisible("account a"), {
+			url: ENV.NOVNC_PUBLIC_URL,
+		});
+		await client.stopVisible();
+		await client.deleteProfile("account a");
+		assert.deepEqual(requests, [
+			{
+				url: "http://browser-helper:6090/checks/account%20a",
+				method: "POST",
+				auth: "Bearer internal-token",
+			},
+			{
+				url: "http://browser-helper:6090/sessions/account%20a/open",
+				method: "POST",
+				auth: "Bearer internal-token",
+			},
+			{
+				url: "http://browser-helper:6090/sessions/stop",
+				method: "POST",
+				auth: "Bearer internal-token",
+			},
+			{
+				url: "http://browser-helper:6090/profiles/account%20a",
+				method: "DELETE",
+				auth: "Bearer internal-token",
+			},
+		]);
+	});
+
+	test("maps connection failures to a fixed safe error", async () => {
+		const client = createBrowserHelperClient(ENV, {
+			async fetch() {
+				throw new Error("connect ECONNREFUSED token=secret");
+			},
+		});
+		if (!client) throw new Error("expected browser helper client");
+		let error: unknown;
+		try {
+			await client.checkNow("account-a");
+		} catch (caught) {
+			error = caught;
+		}
+		assert.equal(
+			(error as { code?: unknown }).code,
+			"browser_helper_unavailable",
+		);
+		assert.doesNotMatch(String(error), /ECONNREFUSED|secret|token/i);
+	});
+
+	test("rejects helper responses larger than 64 KiB", async () => {
+		const client = createBrowserHelperClient(ENV, {
+			async fetch() {
+				return new Response("x".repeat(65 * 1024));
+			},
+		});
+		if (!client) throw new Error("expected browser helper client");
+		let error: unknown;
+		try {
+			await client.checkNow("account-a");
+		} catch (caught) {
+			error = caught;
+		}
+		assert.equal(
+			(error as { code?: unknown }).code,
+			"browser_helper_response_too_large",
+		);
+	});
+
+	test("preserves safe helper error codes without forwarding remote details", async () => {
+		const client = createBrowserHelperClient(ENV, {
+			async fetch() {
+				return Response.json(
+					{
+						error: {
+							code: "visible_session_conflict",
+							message: "token=private session detail",
+						},
+					},
+					{ status: 409 },
+				);
+			},
+		});
+		if (!client) throw new Error("expected browser helper client");
+		let error: unknown;
+		try {
+			await client.openVisible("account-a");
+		} catch (caught) {
+			error = caught;
+		}
+		assert.equal(
+			(error as { code?: unknown }).code,
+			"visible_session_conflict",
+		);
+		assert.doesNotMatch(String(error), /private|session detail|token/i);
+	});
+
+	test("rejects public noVNC URLs containing credentials or tokens", () => {
+		for (const url of [
+			"http://user:password@127.0.0.1:6080/vnc.html",
+			"http://127.0.0.1:6080/vnc.html?token=private",
+			"https://remote.example/vnc.html",
+		]) {
+			assert.throws(
+				() => createBrowserHelperClient({ ...ENV, NOVNC_PUBLIC_URL: url }),
+				/invalid browser helper configuration/i,
+			);
+		}
+	});
+
+	test("returns null when helper configuration is entirely absent", () => {
+		assert.equal(createBrowserHelperClient({}), null);
+	});
+});

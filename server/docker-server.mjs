@@ -4,6 +4,7 @@ import { finished } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 import { errorLine, outputLine } from "./io.mjs";
 import { createCredentialCryptoBinding } from "./credential-crypto.mjs";
+import { createBrowserHelperClient } from "./browser-helper-client.mjs";
 import { readBrowserMasterKey } from "./secrets.mjs";
 import { createSqliteBindingFromEnv } from "./sqlite-binding.mjs";
 
@@ -64,6 +65,10 @@ export function resolveDockerEnv(sourceEnv = process.env, options = {}) {
 	if (credentialCrypto) {
 		nextEnv.BROWSER_CREDENTIAL_CRYPTO = credentialCrypto;
 	}
+	const browserHelperClient =
+		options.browserHelperClient ||
+		createBrowserHelperClient(sourceEnv, { fetch: options.fetch });
+	if (browserHelperClient) nextEnv.BROWSER_HELPER_CLIENT = browserHelperClient;
 	return nextEnv;
 }
 
@@ -155,6 +160,7 @@ export function createDockerServer(options = {}) {
 					sqlite: options.sqlite,
 					secrets: options.secrets,
 					credentialCrypto: options.credentialCrypto,
+					browserHelperClient: options.browserHelperClient,
 				}),
 			};
 	const server = http.createServer((req, res) => {
@@ -186,6 +192,7 @@ export async function startDockerServer(options = {}) {
 			sqlite: options.sqlite,
 			secrets: options.secrets,
 			credentialCrypto: options.credentialCrypto,
+			browserHelperClient: options.browserHelperClient,
 		});
 	let app = options.app;
 	if (!app) {

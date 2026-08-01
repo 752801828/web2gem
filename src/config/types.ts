@@ -12,6 +12,12 @@ export type AppEnv = Record<string, unknown> & {
 	BROWSER_CANDIDATE_COOKIE_SERVICE?: {
 		replace(input: CandidateCookieInput): Promise<CandidateCookieResult>;
 	};
+	BROWSER_HELPER_CLIENT?: {
+		checkNow(accountId: string): Promise<void>;
+		openVisible(accountId: string): Promise<{ url: string }>;
+		stopVisible(): Promise<void>;
+		deleteProfile(accountId: string): Promise<void>;
+	};
 };
 
 export type GeminiAccountLeaseContext = {

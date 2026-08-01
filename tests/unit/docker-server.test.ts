@@ -20,11 +20,18 @@ type DockerServerOptions = {
 	fetch?: typeof fetch;
 	secrets?: { path?: string };
 	credentialCrypto?: BrowserCredentialCrypto;
+	browserHelperClient?: BrowserHelperClient;
 	app?: DockerApp;
 };
 type BrowserCredentialCrypto = {
 	encrypt(accountId: string, credentials: unknown): Promise<unknown>;
 	decrypt(accountId: string, encrypted: unknown): Promise<unknown>;
+};
+type BrowserHelperClient = {
+	checkNow(accountId: string): Promise<void>;
+	openVisible(accountId: string): Promise<{ url: string }>;
+	stopVisible(): Promise<void>;
+	deleteProfile(accountId: string): Promise<void>;
 };
 type DockerApp = {
 	fetch(
@@ -77,10 +84,12 @@ const resolveDockerEnv = moduleFunction<
 			sqlite?: { migrationSql?: string; migrationPath?: string };
 			secrets?: { path?: string };
 			credentialCrypto?: BrowserCredentialCrypto;
+			browserHelperClient?: BrowserHelperClient;
 		},
 	) => Record<string, unknown> & {
 		ACCOUNT_DB?: { prepare(sql: string): unknown; close?: () => void };
 		BROWSER_CREDENTIAL_CRYPTO?: BrowserCredentialCrypto;
+		BROWSER_HELPER_CLIENT?: BrowserHelperClient;
 	}
 >(dockerServerModule, "resolveDockerEnv");
 const startDockerServer = moduleFunction<
@@ -410,6 +419,27 @@ describe("docker server", () => {
 		assert.equal("BROWSER_MASTER_KEY" in withBinding, false);
 		assert.equal("BROWSER_HELPER_CLIENT" in withBinding, false);
 		closeDockerStorage(withBinding);
+	});
+	test("injects only an opaque browser helper client when supplied", () => {
+		const browserHelperClient: BrowserHelperClient = {
+			async checkNow() {},
+			async openVisible() {
+				return { url: "http://127.0.0.1:6080/vnc.html" };
+			},
+			async stopVisible() {},
+			async deleteProfile() {},
+		};
+		const resolved = resolveDockerEnv(
+			{ SQLITE_PATH: ":memory:" },
+			{
+				sqlite: { migrationSql: "SELECT 1;" },
+				secrets: { path: "missing-browser-master-key" },
+				browserHelperClient,
+			},
+		);
+		assert.equal(resolved.BROWSER_HELPER_CLIENT, browserHelperClient);
+		assert.equal("NOVNC_PUBLIC_URL" in resolved, false);
+		closeDockerStorage(resolved);
 	});
 	test("rejects invalid runtime config before the Docker server listens", async () => {
 		await assert.rejects(

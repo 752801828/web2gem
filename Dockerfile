@@ -25,6 +25,7 @@ ENV NODE_ENV=production \
 
 COPY --from=build /app/dist/app.js ./dist/app.js
 COPY --from=build /app/server/docker-server.mjs ./server/docker-server.mjs
+COPY --from=build /app/server/browser-helper-client.mjs ./server/browser-helper-client.mjs
 COPY --from=build /app/server/credential-crypto.mjs ./server/credential-crypto.mjs
 COPY --from=build /app/server/secrets.mjs ./server/secrets.mjs
 COPY --from=build /app/server/sqlite-binding.mjs ./server/sqlite-binding.mjs

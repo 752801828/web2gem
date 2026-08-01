@@ -45,6 +45,10 @@ import {
 	isGeminiModelRoutingAdminPath,
 } from "./http/admin/gemini-model-routing";
 import {
+	handleBrowserAccountAdminRequest,
+	isBrowserAccountAdminPath,
+} from "./http/admin/browser-accounts";
+import {
 	browserHelperAuthErrorResponse,
 	handleBrowserHelperRequest,
 	isBrowserHelperPath,
@@ -130,6 +134,12 @@ const APP_ROUTES: readonly AppRoute<unknown>[] = [
 		access: "exempt",
 		match: matchPredicate(isGeminiAccountAdminUiPath),
 		handle: ({ request }) => handleGeminiAccountAdminUiRequest(request),
+	}),
+	route({
+		access: "exempt",
+		match: matchPredicate(isBrowserAccountAdminPath),
+		handle: ({ request, env, cfg, url }) =>
+			handleBrowserAccountAdminRequest(request, env, cfg, url),
 	}),
 	route({
 		access: "exempt",

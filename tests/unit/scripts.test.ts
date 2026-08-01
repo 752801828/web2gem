@@ -479,6 +479,7 @@ describe("quality scripts", () => {
 			(match) => requiredString(match[1], "runtime import"),
 		);
 		assert.deepEqual(runtimeImports.sort(), [
+			"browser-helper-client.mjs",
 			"credential-crypto.mjs",
 			"io.mjs",
 			"secrets.mjs",
