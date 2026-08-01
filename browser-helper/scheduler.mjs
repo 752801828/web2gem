@@ -200,22 +200,27 @@ export function createBrowserScheduler(config, dependencies) {
 						config.autoLoginMaxAttemptsPerDay;
 				if (canAttempt) {
 					const date = localDate(nowMs);
-					const count = await client.recordAutoLoginAttempt(account.id, date);
-					account.autoLoginAttemptDate = date;
-					account.autoLoginAttemptCount = count;
-					if (count <= config.autoLoginMaxAttemptsPerDay) {
-						const envelope = await client.getEncryptedCredentials(account.id);
-						const credentials = decryptCredentials(account.id, envelope);
-						autoLoginAtMs = nowMs;
-						result = await runLogin({
-							page,
-							mode: job.mode,
-							credentials,
-							nowSeconds: Math.floor(nowMs / 1_000),
-							serverDate: client.serverDate,
-							maxClockSkewSec: config.maxClockSkewSec,
-						});
-					}
+					const envelope = await client.getEncryptedCredentials(account.id);
+					const credentials = decryptCredentials(account.id, envelope);
+					result = await runLogin({
+						page,
+						mode: job.mode,
+						credentials,
+						nowSeconds: Math.floor(nowMs / 1_000),
+						serverDate: client.serverDate,
+						maxClockSkewSec: config.maxClockSkewSec,
+						beforeSubmit: async () => {
+							const count = await client.recordAutoLoginAttempt(
+								account.id,
+								date,
+							);
+							account.autoLoginAttemptDate = date;
+							account.autoLoginAttemptCount = count;
+							if (count > config.autoLoginMaxAttemptsPerDay)
+								throw new BrowserMaintenanceError("auto_login_limit");
+							autoLoginAtMs = nowMs;
+						},
+					});
 				}
 			}
 			if (result.ok) {

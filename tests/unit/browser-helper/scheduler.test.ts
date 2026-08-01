@@ -90,6 +90,8 @@ function fixture(options: Record<string, unknown> = {}) {
 		},
 		async getEncryptedCredentials(id: string) {
 			calls.push(["credentials", id]);
+			if (options.credentialError)
+				throw new BrowserMaintenanceError("credential_fetch_failed");
 			return {
 				version: 1,
 				ciphertext: "cipher",
@@ -137,6 +139,8 @@ function fixture(options: Record<string, unknown> = {}) {
 			owner: "helper-1",
 			decryptCredentials(_id: string, _envelope: unknown) {
 				calls.push(["decrypt"]);
+				if (options.decryptError)
+					throw new BrowserMaintenanceError("credential_decrypt_failed");
 				return {
 					email: "owner@example.com",
 					password: "private-password",
@@ -147,6 +151,8 @@ function fixture(options: Record<string, unknown> = {}) {
 				calls.push(["login", Boolean(input.credentials), input.mode]);
 				if (typeof options.runLogin === "function")
 					return (options.runLogin as (value: unknown) => unknown)(input);
+				if (input.credentials && typeof input.beforeSubmit === "function")
+					await (input.beforeSubmit as () => Promise<void>)();
 				const result = loginResults.shift() ?? defaultLoginResult;
 				if (result instanceof Error) throw result;
 				return result;
@@ -299,7 +305,7 @@ describe("browser maintenance scheduler", () => {
 		);
 	});
 
-	test("records the persistent daily attempt immediately before decrypting and bounds automatic login", async () => {
+	test("records the persistent daily attempt only at the first submission boundary", async () => {
 		const first = fixture({
 			loginResults: [
 				{ ok: false, code: "login_failed" },
@@ -317,8 +323,8 @@ describe("browser maintenance scheduler", () => {
 			mode: "scheduled",
 		});
 		const names = first.calls.map(([name]) => name);
-		assert.equal(names.indexOf("attempt") < names.indexOf("credentials"), true);
 		assert.equal(names.indexOf("credentials") < names.indexOf("decrypt"), true);
+		assert.equal(names.indexOf("decrypt") < names.indexOf("attempt"), true);
 		assert.deepEqual(
 			first.calls.filter(([name]) => name === "login").map((call) => call[1]),
 			[false, true],
@@ -346,6 +352,26 @@ describe("browser maintenance scheduler", () => {
 			capped.calls.some(([name]) => name === "credentials"),
 			false,
 		);
+	});
+
+	test("does not consume an automatic-login attempt on credential maintenance failures", async () => {
+		for (const failure of ["credentialError", "decryptError"] as const) {
+			const active = fixture({
+				[failure]: true,
+				loginResults: [{ ok: false, code: "login_failed" }],
+			});
+			await active.scheduler.enqueue({
+				accountId: "account-a",
+				mode: "scheduled",
+			});
+			assert.equal(
+				active.calls.some(([name]) => name === "attempt"),
+				false,
+			);
+			const state = lastState(active.calls);
+			assert.equal(state.state, "error");
+			assert.equal(state.authFailureCount, 0);
+		}
 	});
 
 	test("does not enter credentials for missing-cookie checks, explicit challenges, or visible sessions", async () => {

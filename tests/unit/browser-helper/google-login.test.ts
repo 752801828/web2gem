@@ -358,6 +358,49 @@ describe("bounded Google login", () => {
 		]);
 	});
 
+	test("runs the automatic-attempt reservation once immediately before the first form submission", async () => {
+		const page = scriptedPage(["email", "password", "authenticated"]);
+		const events: string[] = [];
+		const fillAndSubmit = page.fillAndSubmit;
+		page.fillAndSubmit = async (state: State, value: string) => {
+			events.push(`submit:${state}`);
+			await fillAndSubmit(state, value);
+		};
+		assert.equal(
+			(
+				await runGoogleLogin({
+					page,
+					credentials,
+					totpCodes: [],
+					beforeSubmit: async () => {
+						events.push("reserve");
+					},
+				})
+			).ok,
+			true,
+		);
+		assert.deepEqual(events, ["reserve", "submit:email", "submit:password"]);
+	});
+
+	test("does not reserve an attempt when login maintenance fails before submission", async () => {
+		let reservations = 0;
+		await assert.rejects(
+			runGoogleLogin({
+				page: {
+					gotoGemini: async () => {
+						throw new Error("private proxy failure");
+					},
+				},
+				credentials,
+				beforeSubmit: async () => {
+					reservations += 1;
+				},
+			}),
+			/browser maintenance failed/,
+		);
+		assert.equal(reservations, 0);
+	});
+
 	test("does not try another TOTP candidate when the page is unchanged", async () => {
 		const page = scriptedPage(["totp"], { unchanged: true });
 		assert.deepEqual(

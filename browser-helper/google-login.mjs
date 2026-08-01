@@ -66,12 +66,23 @@ export async function runGoogleLogin({
 	serverDate,
 	maxClockSkewSec = 120,
 	stateReadyAttempts = 20,
+	beforeSubmit,
 }) {
 	const adapter = asAdapter(page);
 	let automaticLoginUsed = false;
 	let lastState = null;
 	let submittedState = null;
 	let codes;
+	let submissionReserved = false;
+	const reserveSubmission = async () => {
+		if (submissionReserved) return;
+		if (beforeSubmit !== undefined) {
+			if (typeof beforeSubmit !== "function")
+				throw new BrowserMaintenanceError("browser_unavailable");
+			await beforeSubmit();
+		}
+		submissionReserved = true;
+	};
 	try {
 		await adapter.gotoGemini();
 	} catch {
@@ -95,6 +106,7 @@ export async function runGoogleLogin({
 					return { ok: false, code: "login_failed" };
 				submittedState = state;
 				automaticLoginUsed = true;
+				await reserveSubmission();
 				await adapter.fillAndSubmit(state, value);
 				const outcome = await adapter.waitForPageChange(state);
 				if (outcome !== "changed")
@@ -113,6 +125,7 @@ export async function runGoogleLogin({
 			const code = codes.shift();
 			if (!code) return { ok: false, code: "login_failed" };
 			automaticLoginUsed = true;
+			await reserveSubmission();
 			await adapter.fillAndSubmit("totp", code);
 			const outcome = await adapter.waitForPageChange("totp");
 			if (outcome === "timeout") return { ok: false, code: "login_failed" };
