@@ -371,6 +371,28 @@ describe("bounded Google login", () => {
 		assert.deepEqual(page.submissions, [["totp", "111111"]]);
 	});
 
+	test("honors the configured maximum clock skew when generating TOTP", async () => {
+		const page = scriptedPage(["totp"]);
+		let error: unknown;
+		try {
+			await runGoogleLogin({
+				page,
+				credentials: {
+					...credentials,
+					totpSecret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+				},
+				nowSeconds: 100,
+				serverDate: new Date(90_000).toUTCString(),
+				maxClockSkewSec: 5,
+			});
+		} catch (caught) {
+			error = caught;
+		}
+		assert.equal(error instanceof BrowserMaintenanceError, true);
+		assert.equal((error as { code?: string }).code, "clock_skew");
+		assert.equal(page.submissions.length, 0);
+	});
+
 	test("uses structured TOTP rejection events, not unrelated alerts", async () => {
 		type ErrorNode = { code: string; text: string };
 		const currentError: ErrorNode = {

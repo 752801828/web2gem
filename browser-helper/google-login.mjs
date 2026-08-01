@@ -64,6 +64,7 @@ export async function runGoogleLogin({
 	totpCodes,
 	nowSeconds = Math.floor(Date.now() / 1_000),
 	serverDate,
+	maxClockSkewSec = 120,
 	stateReadyAttempts = 20,
 }) {
 	const adapter = asAdapter(page);
@@ -101,7 +102,14 @@ export async function runGoogleLogin({
 				continue;
 			}
 
-			if (!codes) codes = loginTotpCodes(credentials, totpCodes, nowSeconds, serverDate);
+			if (!codes)
+				codes = loginTotpCodes(
+					credentials,
+					totpCodes,
+					nowSeconds,
+					serverDate,
+					maxClockSkewSec,
+				);
 			const code = codes.shift();
 			if (!code) return { ok: false, code: "login_failed" };
 			automaticLoginUsed = true;
@@ -294,18 +302,40 @@ function isTrustedPendingUrl(value) {
 	return ["email", "password", "totp"].includes(stateFromUrl(url));
 }
 
-function loginTotpCodes(credentials, supplied, nowSeconds, serverDate) {
-	const candidates = supplied ??
-		(() => {
+function loginTotpCodes(
+	credentials,
+	supplied,
+	nowSeconds,
+	serverDate,
+	maxClockSkewSec,
+) {
+	let candidates = supplied;
+	if (candidates === undefined) {
+		try {
 			const generated = totpCandidates(credentials?.totpSecret, nowSeconds, {
 				serverDate,
+				maxClockSkewSec,
 			});
-			return [generated[1], generated[0], generated[2]];
-		})();
+			candidates = [generated[1], generated[0], generated[2]];
+		} catch {
+			if (clockSkewed(nowSeconds, serverDate, maxClockSkewSec))
+				throw new BrowserMaintenanceError("clock_skew");
+			throw new Error("TOTP generation failed");
+		}
+	}
 	if (!Array.isArray(candidates)) return [];
 	return [...new Set(candidates)].filter(
 		(code) => typeof code === "string" && /^\d{6}$/.test(code),
 	).slice(0, 3);
+}
+
+function clockSkewed(nowSeconds, serverDate, maxClockSkewSec) {
+	const serverMs = Date.parse(serverDate);
+	return (
+		Number.isFinite(serverMs) &&
+		Number.isSafeInteger(maxClockSkewSec) &&
+		Math.abs(nowSeconds - serverMs / 1_000) > maxClockSkewSec
+	);
 }
 
 async function finishAuthenticated(adapter, automaticLoginUsed) {

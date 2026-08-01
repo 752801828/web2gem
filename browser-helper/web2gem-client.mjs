@@ -126,6 +126,21 @@ export function createWeb2gemClient(config, options = {}) {
 				(value) => exactTrue(value, "released"),
 			);
 		},
+		async recordAutoLoginAttempt(accountId, date) {
+			if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date))
+				throw new Web2gemClientError(
+					400,
+					"web2gem_invalid_request",
+					"invalid web2gem request",
+				);
+			const value = await call(
+				"POST",
+				accountPath(accountId, "auto-login-attempt"),
+				{ date },
+				(value) => exactPositiveInteger(value, "count"),
+			);
+			return value.count;
+		},
 		getEncryptedCredentials(accountId) {
 			return call(
 				"GET",
@@ -246,6 +261,15 @@ function exactTrue(value, key) {
 	return exactBoolean(value, key) && value[key] === true;
 }
 
+function exactPositiveInteger(value, key) {
+	return (
+		plainObject(value) &&
+		Object.keys(value).length === 1 &&
+		Number.isSafeInteger(value[key]) &&
+		value[key] > 0
+	);
+}
+
 function isAccountList(value) {
 	return (
 		plainObject(value) &&
@@ -313,7 +337,6 @@ function isCandidateResult(value) {
 		Object.keys(value).length === 3 &&
 		typeof value.changed === "boolean" &&
 		value.state === "ready" &&
-		Number.isSafeInteger(value.lastCookieUpdateAtMs) &&
-		value.lastCookieUpdateAtMs >= 0
+		nullableTimestamp(value.lastCookieUpdateAtMs)
 	);
 }

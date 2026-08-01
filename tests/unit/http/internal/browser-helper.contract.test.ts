@@ -29,6 +29,7 @@ class FakeBrowserStore implements BrowserAccountStore {
 		nonce: "encrypted-nonce",
 		emailHash: "email-hash",
 	};
+	autoLoginAttemptCount = 0;
 
 	async listScheduled() {
 		this.calls.push("listScheduled");
@@ -96,8 +97,10 @@ class FakeBrowserStore implements BrowserAccountStore {
 		]);
 		return this.notificationUpdated;
 	}
-	async recordAutoLoginAttempt() {
-		throw new Error("unexpected recordAutoLoginAttempt");
+	async recordAutoLoginAttempt(accountId: string, date: string, nowMs: number) {
+		this.calls.push(`attempt:${accountId}:${date}`);
+		assert.equal(typeof nowMs, "number");
+		return ++this.autoLoginAttemptCount;
 	}
 }
 
@@ -269,6 +272,39 @@ describe("private browser-helper HTTP contract", () => {
 		]) {
 			const invalid = await request(
 				"/internal/browser/accounts/account-a/lease",
+				{
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(body),
+				},
+				env(store),
+			);
+			assert.equal(invalid.status, 400);
+		}
+	});
+
+	test("atomically records a strictly dated automatic-login attempt", async () => {
+		const store = new FakeBrowserStore();
+		const response = await request(
+			"/internal/browser/accounts/account-a/auto-login-attempt",
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ date: "2026-08-01" }),
+			},
+			env(store),
+		);
+		assert.equal(response.status, 200);
+		assert.deepEqual(await response.json(), { count: 1 });
+		assert.deepEqual(store.calls, ["attempt:account-a:2026-08-01"]);
+
+		for (const body of [
+			{ date: "2026-8-1" },
+			{ date: "2026-02-30" },
+			{ date: "2026-08-01", extra: true },
+		]) {
+			const invalid = await request(
+				"/internal/browser/accounts/account-a/auto-login-attempt",
 				{
 					method: "POST",
 					headers: { "content-type": "application/json" },

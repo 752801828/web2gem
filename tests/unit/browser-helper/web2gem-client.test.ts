@@ -37,6 +37,7 @@ describe("private web2gem client", () => {
 			},
 			{ acquired: true },
 			{ released: true },
+			{ count: 2 },
 			{
 				version: 1,
 				ciphertext: "YWFhYWFhYWFhYWFhYWFhYQ==",
@@ -45,7 +46,7 @@ describe("private web2gem client", () => {
 			},
 			{ updated: true },
 			{ updated: false },
-			{ changed: false, state: "ready", lastCookieUpdateAtMs: 123 },
+			{ changed: false, state: "ready", lastCookieUpdateAtMs: null },
 		];
 		const client = createWeb2gemClient(CONFIG, {
 			async fetch(input: RequestInfo | URL, init?: RequestInit) {
@@ -58,6 +59,10 @@ describe("private web2gem client", () => {
 		assert.equal((await client.listAccounts())[0]?.notificationState, "ready");
 		assert.equal(await client.acquireLease("account a", "owner", 30), true);
 		await client.releaseLease("account a", "owner");
+		assert.equal(
+			await client.recordAutoLoginAttempt("account a", "2026-08-01"),
+			2,
+		);
 		await client.getEncryptedCredentials("account a");
 		await client.patchState("account a", {
 			state: "ready",
@@ -109,6 +114,13 @@ describe("private web2gem client", () => {
 					true,
 				],
 				[
+					"http://web2gem:52389/internal/browser/accounts/account%20a/auto-login-attempt",
+					"POST",
+					"Bearer test-internal-token",
+					"error",
+					true,
+				],
+				[
 					"http://web2gem:52389/internal/browser/accounts/account%20a/credentials",
 					"GET",
 					"Bearer test-internal-token",
@@ -138,11 +150,35 @@ describe("private web2gem client", () => {
 				],
 			],
 		);
-		assert.deepEqual(JSON.parse(String(requests[5]?.init.body)), {
+		assert.deepEqual(JSON.parse(String(requests[6]?.init.body)), {
 			expectedState: "ready",
 			notificationState: "ready",
 		});
 		assert.equal(client.serverDate, new Date(60_000).toUTCString());
+	});
+
+	test("accepts unchanged legacy cookies without a prior update timestamp", async () => {
+		const client = createWeb2gemClient(CONFIG, {
+			async fetch() {
+				return Response.json({
+					changed: false,
+					state: "ready",
+					lastCookieUpdateAtMs: null,
+				});
+			},
+		});
+		assert.deepEqual(
+			await client.submitCandidateCookie("account-a", {
+				psid: "psid",
+				psidts: "psidts",
+				observedEmail: "owner@example.com",
+			}),
+			{
+				changed: false,
+				state: "ready",
+				lastCookieUpdateAtMs: null,
+			},
+		);
 	});
 
 	test("ages server Date samples with monotonic elapsed time", async () => {

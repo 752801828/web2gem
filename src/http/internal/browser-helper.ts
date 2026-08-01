@@ -132,6 +132,15 @@ export async function handleBrowserHelperRequest(
 			await browserStore(env).releaseLease(accountId, lease.owner);
 			return jsonResponse({ released: true });
 		}
+		if (route.kind === "autoLoginAttempt") {
+			const attempt = autoLoginAttemptBody(body);
+			const count = await browserStore(env).recordAutoLoginAttempt(
+				accountId,
+				attempt.date,
+				Date.now(),
+			);
+			return jsonResponse({ count });
+		}
 		if (route.kind === "state") {
 			const notification = notificationStateBody(body);
 			if (notification) {
@@ -203,6 +212,7 @@ type BrowserHelperRoute =
 				| "releaseLease"
 				| "credentials"
 				| "state"
+				| "autoLoginAttempt"
 				| "candidateCookie";
 			accountId: string;
 	  };
@@ -232,6 +242,8 @@ function browserHelperRoute(
 		return { kind: "credentials", accountId };
 	if (action === "state" && method === "PATCH")
 		return { kind: "state", accountId };
+	if (action === "auto-login-attempt" && method === "POST")
+		return { kind: "autoLoginAttempt", accountId };
 	if (action === "candidate-cookie" && method === "POST")
 		return { kind: "candidateCookie", accountId };
 	return null;
@@ -317,6 +329,26 @@ function stateBody(body: UnknownRecord): BrowserStatusUpdate {
 		failureCode: body.failureCode,
 		nowMs: Date.now(),
 	};
+}
+
+function autoLoginAttemptBody(body: UnknownRecord): { date: string } {
+	if (!exactKeys(body, ["date"]) || !validCalendarDate(body.date))
+		invalidRequest();
+	return { date: body.date };
+}
+
+function validCalendarDate(value: unknown): value is string {
+	if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+		return false;
+	const year = Number(value.slice(0, 4));
+	const month = Number(value.slice(5, 7));
+	const day = Number(value.slice(8, 10));
+	const date = new Date(Date.UTC(year, month - 1, day));
+	return (
+		date.getUTCFullYear() === year &&
+		date.getUTCMonth() === month - 1 &&
+		date.getUTCDate() === day
+	);
 }
 
 function notificationStateBody(body: UnknownRecord): {
