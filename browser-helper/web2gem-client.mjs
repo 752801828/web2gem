@@ -1,6 +1,20 @@
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 64 * 1_024;
 const PREFIX = "/internal/browser/accounts";
+const BROWSER_STATES = new Set([
+	"idle",
+	"checking",
+	"ready",
+	"login_required",
+	"manual_action_required",
+	"error",
+]);
+const NOTIFICATION_STATES = new Set([
+	"login_required",
+	"manual_action_required",
+	"error",
+	"ready",
+]);
 const SAFE_REMOTE_CODES = new Set([
 	"browser_account_not_found",
 	"browser_candidate_invalid",
@@ -213,8 +227,50 @@ function isAccountList(value) {
 	return (
 		plainObject(value) &&
 		Object.keys(value).length === 1 &&
-		Array.isArray(value.accounts)
+		Array.isArray(value.accounts) &&
+		value.accounts.every(isScheduleAccount)
 	);
+}
+
+function isScheduleAccount(value) {
+	return (
+		plainObject(value) &&
+		Object.keys(value).length === 7 &&
+		typeof value.id === "string" &&
+		value.id.length > 0 &&
+		(value.label === null || typeof value.label === "string") &&
+		isAccountStatus(value.status) &&
+		nonnegativeInteger(value.authFailureCount) &&
+		(value.autoLoginAttemptDate === null ||
+			(typeof value.autoLoginAttemptDate === "string" &&
+				/^\d{4}-\d{2}-\d{2}$/.test(value.autoLoginAttemptDate))) &&
+		nonnegativeInteger(value.autoLoginAttemptCount) &&
+		(value.notificationState === null ||
+			NOTIFICATION_STATES.has(value.notificationState))
+	);
+}
+
+function isAccountStatus(value) {
+	return (
+		plainObject(value) &&
+		Object.keys(value).length === 6 &&
+		typeof value.credentialsConfigured === "boolean" &&
+		BROWSER_STATES.has(value.state) &&
+		nullableTimestamp(value.lastCheckAtMs) &&
+		nullableTimestamp(value.lastCookieUpdateAtMs) &&
+		nullableTimestamp(value.lastAutoLoginAtMs) &&
+		(value.failureCode === null ||
+			(typeof value.failureCode === "string" &&
+				/^[a-z0-9_]{1,64}$/.test(value.failureCode)))
+	);
+}
+
+function nullableTimestamp(value) {
+	return value === null || nonnegativeInteger(value);
+}
+
+function nonnegativeInteger(value) {
+	return Number.isSafeInteger(value) && value >= 0;
 }
 
 function isCredentialEnvelope(value) {

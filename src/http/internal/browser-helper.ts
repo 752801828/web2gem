@@ -1,5 +1,5 @@
 import { SqlBrowserAccountStore } from "../../browser/store";
-import { BROWSER_STATES } from "../../browser/types";
+import { browserNotificationState, BROWSER_STATES } from "../../browser/types";
 import type {
 	BrowserAccountStore,
 	BrowserState,
@@ -89,6 +89,9 @@ export async function handleBrowserHelperRequest(
 					authFailureCount: account.authFailureCount,
 					autoLoginAttemptDate: account.autoLoginAttemptDate,
 					autoLoginAttemptCount: account.autoLoginAttemptCount,
+					notificationState: browserNotificationState(
+						account.notificationState,
+					),
 				})),
 			});
 		}
@@ -284,7 +287,7 @@ function stateBody(body: UnknownRecord): BrowserStatusUpdate {
 		!integerBetween(body.authFailureCount, 0, 1_000_000) ||
 		!(
 			body.notificationState === null ||
-			boundedString(body.notificationState, 64)
+			browserNotificationState(body.notificationState) !== null
 		) ||
 		!(
 			body.failureCode === null ||
@@ -299,7 +302,7 @@ function stateBody(body: UnknownRecord): BrowserStatusUpdate {
 		lastCookieUpdateAtMs: body.lastCookieUpdateAtMs,
 		lastAutoLoginAtMs: body.lastAutoLoginAtMs,
 		authFailureCount: body.authFailureCount,
-		notificationState: body.notificationState,
+		notificationState: browserNotificationState(body.notificationState),
 		failureCode: body.failureCode,
 		nowMs: Date.now(),
 	};

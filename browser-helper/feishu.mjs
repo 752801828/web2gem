@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 
 const RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
+const MAX_RESPONSE_BYTES = 64 * 1_024;
 const ALERT_STATES = new Set([
 	"login_required",
 	"manual_action_required",
@@ -87,10 +88,49 @@ async function deliver(url, body, fetchImpl, sleep) {
 			await sleep(RETRY_DELAYS_MS[attempt]);
 			continue;
 		}
-		if (response.ok) return;
+		if (response.ok) {
+			if (await feishuAccepted(response)) return;
+			deliveryFailed();
+		}
 		if (response.status < 500 || attempt === RETRY_DELAYS_MS.length)
 			deliveryFailed();
 		await sleep(RETRY_DELAYS_MS[attempt]);
+	}
+}
+
+async function feishuAccepted(response) {
+	if (
+		!/^application\/json(?:\s*;|$)/i.test(
+			response.headers.get("content-type") || "",
+		) ||
+		!response.body
+	)
+		return false;
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder("utf-8", { fatal: true });
+	let bytes = 0;
+	let text = "";
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			bytes += value.byteLength;
+			if (bytes > MAX_RESPONSE_BYTES) {
+				await reader.cancel();
+				return false;
+			}
+			text += decoder.decode(value, { stream: true });
+		}
+		text += decoder.decode();
+		const result = JSON.parse(text);
+		return (
+			result !== null &&
+			typeof result === "object" &&
+			!Array.isArray(result) &&
+			result.code === 0
+		);
+	} catch {
+		return false;
 	}
 }
 

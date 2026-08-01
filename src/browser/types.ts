@@ -33,6 +33,25 @@ export const BROWSER_STATES = [
 
 export type BrowserState = (typeof BROWSER_STATES)[number];
 
+export const BROWSER_NOTIFICATION_STATES = [
+	"login_required",
+	"manual_action_required",
+	"error",
+	"ready",
+] as const;
+
+export type BrowserNotificationState =
+	(typeof BROWSER_NOTIFICATION_STATES)[number];
+
+export function browserNotificationState(
+	value: unknown,
+): BrowserNotificationState | null {
+	return typeof value === "string" &&
+		(BROWSER_NOTIFICATION_STATES as readonly string[]).includes(value)
+		? (value as BrowserNotificationState)
+		: null;
+}
+
 export function browserState(value: unknown): BrowserState {
 	return typeof value === "string" &&
 		(BROWSER_STATES as readonly string[]).includes(value)
@@ -53,6 +72,7 @@ export type BrowserScheduleAccount = {
 	accountId: string;
 	label: string | null;
 	status: BrowserAccountStatus;
+	notificationState: BrowserNotificationState | null;
 	authFailureCount: number;
 	autoLoginAttemptDate: string | null;
 	autoLoginAttemptCount: number;
@@ -64,7 +84,7 @@ export type BrowserStatusUpdate = {
 	lastCookieUpdateAtMs: number | null;
 	lastAutoLoginAtMs: number | null;
 	authFailureCount: number;
-	notificationState: string | null;
+	notificationState: BrowserNotificationState | null;
 	failureCode: string | null;
 	nowMs: number;
 };

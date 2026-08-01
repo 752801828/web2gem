@@ -165,6 +165,21 @@ describe("SQL browser account store", () => {
 							auth_failure_count: 0,
 							auto_login_attempt_date: null,
 							auto_login_attempt_count: 0,
+							notification_state: "manual_action_required",
+						},
+						{
+							account_id: "account-b",
+							label: "Unsafe notification fixture",
+							credentials_configured: 0,
+							browser_state: "error",
+							last_check_at_ms: null,
+							last_cookie_update_at_ms: null,
+							last_auto_login_at_ms: null,
+							failure_code: null,
+							auth_failure_count: 0,
+							auto_login_attempt_date: null,
+							auto_login_attempt_count: 0,
+							notification_state: "token=must-not-project",
 						},
 					],
 				},
@@ -174,6 +189,9 @@ describe("SQL browser account store", () => {
 
 		assert.equal(result[0]?.accountId, "account-a");
 		assert.equal(result[0]?.status.credentialsConfigured, false);
+		assert.equal(result[0]?.notificationState, "manual_action_required");
+		assert.equal(result[1]?.notificationState, null);
+		assert.match(db.records[0]?.sql || "", /b\.notification_state/);
 		assert.doesNotMatch(
 			db.records[0]?.sql || "",
 			/b\.(?:credential_ciphertext|credential_nonce|login_email_hash)\s*(?:,|\bAS\b)|cookie_header|cookie_hash/i,
@@ -184,7 +202,7 @@ describe("SQL browser account store", () => {
 		);
 		assert.doesNotMatch(
 			JSON.stringify(result),
-			/ciphertext|nonce|emailHash|cookieHeader|cookieHash|internalToken/,
+			/ciphertext|nonce|emailHash|cookieHeader|cookieHash|internalToken|must-not-project/,
 		);
 		db.assertDrained();
 	});
@@ -293,7 +311,7 @@ describe("SQL browser account store", () => {
 					11,
 					12,
 					2,
-					"sent",
+					"error",
 					"x".repeat(128),
 					13,
 				],
@@ -306,7 +324,7 @@ describe("SQL browser account store", () => {
 			lastCookieUpdateAtMs: 11,
 			lastAutoLoginAtMs: 12,
 			authFailureCount: 2,
-			notificationState: "sent",
+			notificationState: "error",
 			failureCode: "x".repeat(200),
 			nowMs: 13,
 		});

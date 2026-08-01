@@ -5,7 +5,7 @@ import type {
 	BrowserStatusUpdate,
 	EncryptedBrowserCredentials,
 } from "./types";
-import { browserState } from "./types";
+import { browserNotificationState, browserState } from "./types";
 
 type SqlResult<T = unknown> = { results?: T[]; meta?: unknown };
 type SqlPreparedStatementLike = {
@@ -33,6 +33,7 @@ type ScheduleRow = StatusRow & {
 	auth_failure_count: number;
 	auto_login_attempt_date: string | null;
 	auto_login_attempt_count: number;
+	notification_state: unknown;
 };
 
 type CredentialRow = {
@@ -78,6 +79,7 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
           COALESCE(b.browser_state, 'idle') AS browser_state,
           b.last_check_at_ms, b.last_cookie_update_at_ms,
           b.last_auto_login_at_ms, b.failure_code,
+          b.notification_state,
           COALESCE(b.auth_failure_count, 0) AS auth_failure_count,
           b.auto_login_attempt_date,
           COALESCE(b.auto_login_attempt_count, 0) AS auto_login_attempt_count
@@ -91,6 +93,7 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
 			accountId: row.account_id,
 			label: row.label,
 			status: statusFromRow(row),
+			notificationState: browserNotificationState(row.notification_state),
 			authFailureCount: row.auth_failure_count,
 			autoLoginAttemptDate: row.auto_login_attempt_date,
 			autoLoginAttemptCount: row.auto_login_attempt_count,

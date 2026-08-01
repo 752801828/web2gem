@@ -13,7 +13,26 @@ describe("private web2gem client", () => {
 	test("uses Bearer auth, exact routes, JSON bodies, timeouts, and no redirects", async () => {
 		const requests: Array<{ url: string; init: RequestInit }> = [];
 		const responses = [
-			{ accounts: [] },
+			{
+				accounts: [
+					{
+						id: "account-a",
+						label: "Primary",
+						status: {
+							credentialsConfigured: true,
+							state: "ready",
+							lastCheckAtMs: 1,
+							lastCookieUpdateAtMs: 2,
+							lastAutoLoginAtMs: 3,
+							failureCode: null,
+						},
+						authFailureCount: 0,
+						autoLoginAttemptDate: "2026-08-01",
+						autoLoginAttemptCount: 1,
+						notificationState: "ready",
+					},
+				],
+			},
 			{ acquired: true },
 			{ released: true },
 			{
@@ -33,7 +52,7 @@ describe("private web2gem client", () => {
 				});
 			},
 		});
-		await client.listAccounts();
+		assert.equal((await client.listAccounts())[0]?.notificationState, "ready");
 		assert.equal(await client.acquireLease("account a", "owner", 30), true);
 		await client.releaseLease("account a", "owner");
 		await client.getEncryptedCredentials("account a");
@@ -121,6 +140,14 @@ describe("private web2gem client", () => {
 			),
 			new Response("x".repeat(65 * 1024), {
 				headers: { "content-type": "application/json" },
+			}),
+			Response.json({
+				accounts: [
+					{
+						id: "account-a",
+						notificationState: privateValue,
+					},
+				],
 			}),
 		]) {
 			const client = createWeb2gemClient(CONFIG, {

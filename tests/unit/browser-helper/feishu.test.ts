@@ -60,7 +60,9 @@ describe("Feishu browser notifications", () => {
 					bodies.push(JSON.parse(String(init?.body)));
 					attempts++;
 					if (attempts === 1) throw new Error("network secret detail");
-					return new Response("", { status: attempts < 4 ? 503 : 200 });
+					return attempts < 4
+						? new Response("", { status: 503 })
+						: Response.json({ code: 0, msg: "success" });
 				},
 				client: {
 					async patchState(accountId: string, state: unknown) {
@@ -105,6 +107,49 @@ describe("Feishu browser notifications", () => {
 				{ ...STATE, notificationState: "manual_action_required" },
 			],
 		]);
+	});
+
+	test("rejects HTTP 200 Feishu business failures without persisting dedupe state", async () => {
+		let attempts = 0;
+		let patches = 0;
+		const notifier = createFeishuNotifier(
+			{ feishu: FEISHU, novncPublicUrl: "http://127.0.0.1:6080/vnc.html" },
+			{
+				clock: () => 0,
+				sleep: async () => {
+					throw new Error("business failures must not retry");
+				},
+				async fetch() {
+					attempts++;
+					return Response.json({
+						code: 19_001,
+						msg: "private upstream business detail",
+					});
+				},
+				client: {
+					async patchState() {
+						patches++;
+					},
+				},
+			},
+		);
+
+		let error: unknown;
+		try {
+			await notifier.notifyTransition({
+				accountId: "account-a",
+				label: "Primary",
+				previousNotificationState: null,
+				failureCategory: "captcha",
+				stateUpdate: STATE,
+			});
+		} catch (caught) {
+			error = caught;
+		}
+		assert.equal(attempts, 1);
+		assert.equal(patches, 0);
+		assert.match(String(error), /Feishu notification delivery failed/);
+		assert.doesNotMatch(String(error), /19001|private upstream/i);
 	});
 
 	test("does not retry 4xx or persist failed/deduplicated delivery", async () => {

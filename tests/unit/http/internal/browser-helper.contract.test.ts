@@ -2,6 +2,7 @@ import { describe, test } from "vitest";
 import { handleApplicationRequest } from "../../../../src/app";
 import type {
 	BrowserAccountStore,
+	BrowserNotificationState,
 	BrowserStatusUpdate,
 	EncryptedBrowserCredentials,
 } from "../../../../src/browser/types";
@@ -19,6 +20,7 @@ class FakeBrowserStore implements BrowserAccountStore {
 	calls: string[] = [];
 	statusUpdates: BrowserStatusUpdate[] = [];
 	failureCode: string | null = null;
+	notificationState: BrowserNotificationState | null = "manual_action_required";
 	credentials: EncryptedBrowserCredentials | null = {
 		version: 1,
 		ciphertext: "encrypted-credentials",
@@ -44,6 +46,7 @@ class FakeBrowserStore implements BrowserAccountStore {
 				authFailureCount: 0,
 				autoLoginAttemptDate: "2026-08-01",
 				autoLoginAttemptCount: 1,
+				notificationState: this.notificationState,
 			},
 		];
 	}
@@ -181,6 +184,8 @@ describe("private browser-helper HTTP contract", () => {
 	test("lists only safe enabled-account schedule fields", async () => {
 		const store = new FakeBrowserStore();
 		store.failureCode = "SQL token=private-cookie";
+		(store as unknown as { notificationState: string }).notificationState =
+			"token=private-notification";
 		const response = await request(
 			"/internal/browser/accounts",
 			{},
@@ -204,12 +209,13 @@ describe("private browser-helper HTTP contract", () => {
 					authFailureCount: 0,
 					autoLoginAttemptDate: "2026-08-01",
 					autoLoginAttemptCount: 1,
+					notificationState: null,
 				},
 			],
 		});
 		assert.doesNotMatch(
 			JSON.stringify(body),
-			/cookieHeader|cookieHash|ciphertext|nonce|emailHash|internalToken/i,
+			/cookieHeader|cookieHash|ciphertext|nonce|emailHash|internalToken|private-notification/i,
 		);
 	});
 
@@ -306,7 +312,7 @@ describe("private browser-helper HTTP contract", () => {
 			lastCookieUpdateAtMs: 11,
 			lastAutoLoginAtMs: null,
 			authFailureCount: 2,
-			notificationState: "sent",
+			notificationState: "error",
 			failureCode: "login_failed_2",
 		};
 		const response = await request(
@@ -326,6 +332,8 @@ describe("private browser-helper HTTP contract", () => {
 		for (const body of [
 			{ ...validBody, failureCode: "UPPERCASE" },
 			{ ...validBody, failureCode: "x".repeat(65) },
+			{ ...validBody, notificationState: "sent" },
+			{ ...validBody, notificationState: "token=private" },
 			{ ...validBody, extra: "secret" },
 		]) {
 			const invalid = await request(
