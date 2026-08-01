@@ -101,4 +101,56 @@ describe("browser helper Chromium lifecycle", () => {
 		release();
 		await assert.rejects(first, /launch failed/);
 	});
+
+	test("shares one concurrent close and unlocks only after it succeeds", async () => {
+		let closeCalls = 0;
+		let finishClose!: () => void;
+		const closing = new Promise<void>((resolve) => {
+			finishClose = resolve;
+		});
+		const lifecycle = createChromiumLifecycle({
+			browserType: {
+				launchPersistentContext: async () => ({
+					cookies: async () => [],
+					close: async () => {
+						closeCalls += 1;
+						await closing;
+					},
+				}),
+			},
+		});
+		await lifecycle.startHeadless("account-a");
+		const first = lifecycle.close();
+		const second = lifecycle.close();
+		await Promise.resolve();
+		assert.equal(closeCalls, 1);
+		finishClose();
+		await Promise.all([first, second]);
+		await lifecycle.startHeadless("account-b");
+	});
+
+	test("retains the profile lock when context close fails", async () => {
+		let launches = 0;
+		const lifecycle = createChromiumLifecycle({
+			browserType: {
+				launchPersistentContext: async () => {
+					launches += 1;
+					return {
+						cookies: async () => [],
+						close: async () => {
+							throw new Error("close failed");
+						},
+					};
+				},
+			},
+		});
+		await lifecycle.startHeadless("account-a");
+		await assert.rejects(lifecycle.close(), /close failed/);
+		await assert.rejects(
+			lifecycle.startVisible("account-b"),
+			/browser context is already active/,
+		);
+		await assert.rejects(lifecycle.close(), /close failed/);
+		assert.equal(launches, 1);
+	});
 });

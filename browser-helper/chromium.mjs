@@ -29,6 +29,7 @@ export function createChromiumLifecycle({
 	proxy,
 } = {}) {
 	let activeContext = null;
+	let closePromise = null;
 
 	async function start(accountId, headless) {
 		if (activeContext) throw new Error("browser context is already active");
@@ -60,13 +61,15 @@ export function createChromiumLifecycle({
 			return (await activeContext).cookies(GEMINI_ORIGIN);
 		},
 		async close() {
+			if (closePromise) return closePromise;
 			if (!activeContext) return;
 			const context = activeContext;
-			try {
+			closePromise = (async () => {
 				await (await context).close();
-			} finally {
 				if (activeContext === context) activeContext = null;
-			}
+				closePromise = null;
+			})();
+			return closePromise;
 		},
 	};
 }

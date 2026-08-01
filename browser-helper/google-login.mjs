@@ -5,8 +5,7 @@ const GEMINI_ORIGIN = "https://gemini.google.com";
 const ACCOUNTS_ORIGIN = "https://accounts.google.com";
 const GOOGLE_ORIGIN = "https://www.google.com";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const REJECTION_SELECTOR =
-	'[aria-live="assertive"], [role="alert"], [data-error-code]';
+const STRUCTURED_ERROR_SELECTOR = "[data-error-code]";
 const CHALLENGES = [
 	"captcha",
 	"passkey",
@@ -30,16 +29,24 @@ const SELECTORS = {
 		'[data-challengetype="4"], [data-challengetype="33"], [aria-label*="device" i]',
 };
 
+export class BrowserMaintenanceError extends Error {
+	constructor(code) {
+		super("browser maintenance navigation failed");
+		this.name = "BrowserMaintenanceError";
+		this.code = code;
+	}
+}
+
 export async function classifyGooglePage(page) {
 	const adapter = asAdapter(page);
 	const url = safeUrl(adapter.url());
 	const routeState = stateFromUrl(url);
-	if (routeState) return routeState;
-	if (url?.origin === ACCOUNTS_ORIGIN) {
-		for (const state of CHALLENGES)
-			if (await adapter.visible(state)) return state;
-		for (const state of ["email", "password", "totp"])
-			if (await adapter.visible(state)) return state;
+	if (routeState && !["email", "password", "totp"].includes(routeState))
+		return routeState;
+	if (routeState) {
+		for (const challenge of CHALLENGES)
+			if (await adapter.visible(challenge)) return challenge;
+		if (await adapter.visible(routeState)) return routeState;
 	}
 	if (
 		url?.origin === GEMINI_ORIGIN &&
@@ -55,6 +62,7 @@ export async function runGoogleLogin({
 	totpCodes,
 	nowSeconds = Math.floor(Date.now() / 1_000),
 	serverDate,
+	stateReadyAttempts = 20,
 }) {
 	const adapter = asAdapter(page);
 	let automaticLoginUsed = false;
@@ -63,8 +71,12 @@ export async function runGoogleLogin({
 	let codes;
 	try {
 		await adapter.gotoGemini();
+	} catch {
+		throw new BrowserMaintenanceError("navigation_failed");
+	}
+	try {
 		for (let transitions = 0; transitions < 16; transitions += 1) {
-			const state = await classifyGooglePage(adapter);
+			const state = await readyGoogleState(adapter, stateReadyAttempts);
 			if (CHALLENGES.includes(state)) return { ok: false, code: state };
 			if (state === "unknown") return { ok: false, code: "unknown_page" };
 			if (state === "authenticated")
@@ -103,7 +115,10 @@ export async function runGoogleLogin({
 	return { ok: false, code: "login_failed" };
 }
 
-export function createPlaywrightPageAdapter(page) {
+export function createPlaywrightPageAdapter(
+	page,
+	{ submissionPolls = 100, submissionPollMs = 100 } = {},
+) {
 	let submission = null;
 	return {
 		url: () => page.url(),
@@ -117,64 +132,71 @@ export function createPlaywrightPageAdapter(page) {
 				.catch(() => false);
 		},
 		gotoGemini: () => page.goto(GEMINI_URL, { waitUntil: "domcontentloaded" }),
+		waitForStateReady: () => page.waitForTimeout(250),
 		async fillAndSubmit(state, value) {
-			const control = page.locator(SELECTORS[state]).first();
-			submission = {
-				state,
-				url: page.url(),
-				visibleStates: await semanticVisibility(page),
-				rejection: await visibleRejectionText(page),
-			};
-			await control.fill(value);
-			await control.press("Enter");
+			if (submission)
+				throw new Error("browser form submission state is invalid");
+			const initialUrl = trustedSubmissionUrl(page.url(), state);
+			const control = await page.locator(SELECTORS[state]).first().elementHandle();
+			if (!control) throw untrustedSubmission();
+			try {
+				trustedSubmissionUrl(page.url(), state);
+				const formAction = await control.evaluate(
+					(element) => element.form?.action ?? "",
+				);
+				if (
+					formAction &&
+					safeUrl(new URL(formAction, initialUrl).href)?.origin !== ACCOUNTS_ORIGIN
+				)
+					throw untrustedSubmission();
+				if (!(await control.isVisible())) throw untrustedSubmission();
+				await control.fill(value);
+				trustedSubmissionUrl(page.url(), state);
+				if (!(await control.evaluate((element) => element.isConnected)))
+					throw untrustedSubmission();
+				submission = {
+					state,
+					url: initialUrl,
+					control,
+					visibleStates: await semanticVisibility(page),
+					rejection:
+						state === "totp"
+							? await structuredRejectionBaseline(control)
+							: { error: null },
+				};
+				await control.press("Enter");
+			} catch {
+				if (submission?.control === control) {
+					const failed = submission;
+					submission = null;
+					await disposeSubmission(failed);
+				} else await control.dispose().catch(() => undefined);
+				throw untrustedSubmission();
+			}
 		},
 		async waitForPageChange(state) {
 			if (!submission || submission.state !== state)
 				throw new Error("browser form submission state is invalid");
+			const active = submission;
 			try {
-				const result = await page.waitForFunction(
-					({
-						initialUrl,
-						selectors,
-						visibleStates,
-						rejectionSelector,
-						rejection,
-					}) => {
-						const visible = (element) =>
-							Boolean(element && element.getClientRects().length > 0);
-						if (location.href !== initialUrl) return "changed";
-						for (const [candidate, selector] of Object.entries(selectors))
-							if (
-								visible(document.querySelector(selector)) !==
-								Boolean(visibleStates[candidate])
-							)
-								return "changed";
-						const currentRejection = [...document.querySelectorAll(rejectionSelector)]
-							.filter(visible)
-							.map((element) => element.textContent?.trim() ?? "")
-							.filter(Boolean)
-							.join("\n")
-							.slice(0, 4_096);
-						return currentRejection && currentRejection !== rejection
-							? "rejected"
-							: false;
-					},
-					{
-						initialUrl: submission.url,
-						selectors: SELECTORS,
-						visibleStates: submission.visibleStates,
-						rejectionSelector: REJECTION_SELECTOR,
-						rejection: submission.rejection,
-					},
-					{ timeout: 10_000, polling: 100 },
-				);
-				const value = await result.jsonValue();
-				await result.dispose();
-				return value;
+				for (let attempt = 0; attempt < submissionPolls; attempt += 1) {
+					if (page.url() !== active.url) return "changed";
+					const visibleStates = await semanticVisibility(page);
+					if (!sameVisibility(active.visibleStates, visibleStates)) return "changed";
+					if (
+						state === "totp" &&
+						(await structuredRejectionChanged(active.control, active.rejection))
+					)
+						return "rejected";
+					await page.waitForTimeout(submissionPollMs);
+				}
+				return "timeout";
 			} catch (error) {
-				if (page.url() !== submission.url) return "changed";
-				if (error?.name === "TimeoutError") return "timeout";
+				if (page.url() !== active.url) return "changed";
 				throw error;
+			} finally {
+				await disposeSubmission(active);
+				if (submission === active) submission = null;
 			}
 		},
 		cookies: () => page.context().cookies("https://gemini.google.com"),
@@ -222,7 +244,28 @@ function stateFromUrl(url) {
 	if (/\/challenge\/(?:recovery|kpe)(?:\/|$)/.test(value)) return "recovery";
 	if (/\/challenge\/(?:dp|device)(?:\/|$)/.test(value))
 		return "device_confirmation";
+	if (/\/challenge\/pwd(?:\/|$)/.test(value)) return "password";
+	if (/\/challenge\/totp(?:\/|$)/.test(value)) return "totp";
+	if (value.includes("/challenge/")) return "unknown";
+	if (/\/signin\/identifier(?:\/|$)/.test(value)) return "email";
 	return null;
+}
+
+async function readyGoogleState(adapter, attempts) {
+	if (!Number.isSafeInteger(attempts) || attempts < 0 || attempts > 40)
+		return "unknown";
+	for (let attempt = 0; ; attempt += 1) {
+		const state = await classifyGooglePage(adapter);
+		if (state !== "unknown" || !isTrustedPendingUrl(adapter.url())) return state;
+		if (attempt >= attempts) return "unknown";
+		await adapter.waitForStateReady();
+	}
+}
+
+function isTrustedPendingUrl(value) {
+	const url = safeUrl(value);
+	if (url?.origin === GEMINI_ORIGIN) return true;
+	return ["email", "password", "totp"].includes(stateFromUrl(url));
 }
 
 function loginTotpCodes(credentials, supplied, nowSeconds, serverDate) {
@@ -266,17 +309,6 @@ function reliableEmail(value) {
 	return typeof value === "string" && value.length <= 320 && EMAIL_PATTERN.test(value.trim());
 }
 
-async function visibleRejectionText(page) {
-	return page.locator(REJECTION_SELECTOR).evaluateAll((elements) =>
-		elements
-			.filter((element) => element.getClientRects().length > 0)
-			.map((element) => element.textContent?.trim() ?? "")
-			.filter(Boolean)
-			.join("\n")
-			.slice(0, 4_096),
-	);
-}
-
 async function semanticVisibility(page) {
 	return Object.fromEntries(
 		await Promise.all(
@@ -290,4 +322,84 @@ async function semanticVisibility(page) {
 			]),
 		),
 	);
+}
+
+function trustedSubmissionUrl(value, state) {
+	const url = safeUrl(value);
+	if (url?.origin !== ACCOUNTS_ORIGIN || stateFromUrl(url) !== state)
+		throw untrustedSubmission();
+	return url.href;
+}
+
+function untrustedSubmission() {
+	return new Error("browser submission is not trusted");
+}
+
+function sameVisibility(left, right) {
+	return Object.keys(SELECTORS).every(
+		(state) => Boolean(left[state]) === Boolean(right[state]),
+	);
+}
+
+async function structuredRejectionBaseline(control) {
+	const error = await submissionErrorElement(control);
+	return {
+		ariaInvalid: await control.getAttribute("aria-invalid"),
+		error,
+		errorVisible: error ? await error.isVisible().catch(() => false) : false,
+		errorCode: error
+			? await error.getAttribute("data-error-code").catch(() => null)
+			: null,
+	};
+}
+
+async function structuredRejectionChanged(control, baseline) {
+	const ariaInvalid = await control.getAttribute("aria-invalid");
+	if (baseline.ariaInvalid !== "true" && ariaInvalid === "true") return true;
+	const current = await submissionErrorElement(control);
+	if (!current) return false;
+	try {
+		if (!(await current.isVisible().catch(() => false))) return false;
+		if (!baseline.error) return true;
+		let same = false;
+		try {
+			same = await current.evaluate(
+				(element, previous) => element === previous,
+				baseline.error,
+			);
+		} catch {
+			same = false;
+		}
+		if (!same || !baseline.errorVisible) return true;
+		const code = await current
+			.getAttribute("data-error-code")
+			.catch(() => null);
+		return Boolean(code && code !== baseline.errorCode);
+	} finally {
+		await current.dispose().catch(() => undefined);
+	}
+}
+
+async function submissionErrorElement(control) {
+	const handle = await control.evaluateHandle(
+		(element, selector) => {
+			const described = (element.getAttribute("aria-describedby") ?? "")
+				.split(/\s+/)
+				.filter(Boolean)
+				.map((id) => document.getElementById(id));
+			return (
+				described.find(Boolean) ?? element.form?.querySelector(selector) ?? null
+			);
+		},
+		STRUCTURED_ERROR_SELECTOR,
+	);
+	const element = handle.asElement();
+	if (element) return element;
+	await handle.dispose();
+	return null;
+}
+
+async function disposeSubmission(submission) {
+	await submission.rejection.error?.dispose().catch(() => undefined);
+	await submission.control.dispose().catch(() => undefined);
 }

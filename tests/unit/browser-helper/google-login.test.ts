@@ -2,8 +2,12 @@ import { describe, test } from "vitest";
 import { assert } from "../assertions.js";
 
 const modulePath: string = "../../../browser-helper/google-login.mjs";
-const { classifyGooglePage, createPlaywrightPageAdapter, runGoogleLogin } =
-	await import(modulePath);
+const {
+	BrowserMaintenanceError,
+	classifyGooglePage,
+	createPlaywrightPageAdapter,
+	runGoogleLogin,
+} = await import(modulePath);
 
 type State =
 	| "authenticated"
@@ -108,6 +112,24 @@ describe("bounded Google login", () => {
 		}
 	});
 
+	test("denies unknown challenge routes before inspecting form controls", async () => {
+		for (const route of ["selection", "otp", "unexpected"]) {
+			const page = scriptedPage(["totp"]);
+			let waits = 0;
+			page.url = () =>
+				`https://accounts.google.com/v3/signin/challenge/${route}`;
+			page.waitForStateReady = async () => {
+				waits += 1;
+			};
+			assert.deepEqual(
+				await runGoogleLogin({ page, credentials, totpCodes: ["111111"] }),
+				{ ok: false, code: "unknown_page" },
+			);
+			assert.equal(page.submissions.length, 0);
+			assert.equal(waits, 0);
+		}
+	});
+
 	test("never submits credentials to an unexpected hostname", async () => {
 		for (const state of ["email", "password", "totp"] as const) {
 			const page = scriptedPage([state]);
@@ -118,6 +140,96 @@ describe("bounded Google login", () => {
 			);
 			assert.equal(page.submissions.length, 0);
 		}
+	});
+
+	test("binds submission to the classified trusted document", async () => {
+		let currentUrl = urls.email;
+		let fills = 0;
+		let submits = 0;
+		const element = {
+			isVisible: async () => true,
+			evaluate: async (callback: (value: unknown) => unknown) =>
+				callback({ form: { action: "https://evil.example/steal" } }),
+			fill: async () => {
+				fills += 1;
+			},
+			press: async () => {
+				submits += 1;
+			},
+			dispose: async () => undefined,
+		};
+		const adapter = createPlaywrightPageAdapter({
+			url: () => currentUrl,
+			locator: (selector: string) => {
+				const locator = {
+					first: () => locator,
+					isVisible: async () => selector.includes('input[type="email"]'),
+					fill: element.fill,
+					press: element.press,
+					elementHandle: async () => element,
+				};
+				return locator;
+			},
+		});
+
+		assert.equal(await classifyGooglePage(adapter), "email");
+		currentUrl = "https://evil.example/phishing";
+		await assert.rejects(
+			adapter.fillAndSubmit("email", credentials.email),
+			/browser submission is not trusted/,
+		);
+		assert.equal(fills, 0);
+		assert.equal(submits, 0);
+
+		currentUrl = urls.email;
+		await assert.rejects(
+			adapter.fillAndSubmit("email", credentials.email),
+			/browser submission is not trusted/,
+		);
+		assert.equal(fills, 0);
+		assert.equal(submits, 0);
+	});
+
+	test("cleans bound handles when form submission throws", async () => {
+		let failPress = true;
+		let disposals = 0;
+		const control = {
+			isVisible: async () => true,
+			evaluate: async (callback: (value: unknown) => unknown) =>
+				callback({ form: { action: urls.email }, isConnected: true }),
+			fill: async () => undefined,
+			press: async () => {
+				if (failPress) throw new Error("detached with private page detail");
+			},
+			dispose: async () => {
+				disposals += 1;
+			},
+		};
+		const adapter = createPlaywrightPageAdapter(
+			{
+				url: () => urls.email,
+				locator: (selector: string) => {
+					const locator = {
+						first: () => locator,
+						isVisible: async () => selector.includes('input[type="email"]'),
+						elementHandle: async () => control,
+					};
+					return locator;
+				},
+				waitForTimeout: async () => undefined,
+			},
+			{ submissionPolls: 1, submissionPollMs: 0 },
+		);
+		await assert.rejects(
+			adapter.fillAndSubmit("email", credentials.email),
+			/browser submission is not trusted/,
+		);
+		assert.equal(disposals, 1);
+
+		failPress = false;
+		await adapter.fillAndSubmit("email", credentials.email);
+		assert.equal(await adapter.waitForPageChange("email"), "timeout");
+		assert.equal(disposals, 2);
 	});
 
 	test("requires exact HTTPS origins before trusting login or Gemini state", async () => {
@@ -191,25 +303,115 @@ describe("bounded Google login", () => {
 		assert.deepEqual(page.submissions, [["totp", "111111"]]);
 	});
 
+	test("uses structured TOTP rejection events, not unrelated alerts", async () => {
+		type ErrorNode = { code: string; text: string };
+		let currentError: ErrorNode | null = null;
+		let createStructuredError = true;
+		let unrelatedAlertChanges = 0;
+		const queriedSelectors: string[] = [];
+		const errorHandle = (node: ErrorNode) => ({
+			node,
+			isVisible: async () => true,
+			getAttribute: async (name: string) =>
+				name === "data-error-code" ? node.code : null,
+			evaluate: async (
+				callback: (value: ErrorNode, previous: ErrorNode) => unknown,
+				previous: { node: ErrorNode },
+			) => callback(node, previous.node),
+			dispose: async () => undefined,
+		});
+		const controlHandle = () => ({
+			isVisible: async () => true,
+			getAttribute: async (name: string) =>
+				name === "aria-invalid" ? "false" : null,
+			evaluate: async (callback: (value: unknown) => unknown) =>
+				callback({
+					form: { action: urls.totp },
+					isConnected: true,
+				}),
+			evaluateHandle: async () => {
+				const element = currentError ? errorHandle(currentError) : null;
+				return {
+					asElement: () => element,
+					dispose: async () => undefined,
+				};
+			},
+			fill: async () => undefined,
+			press: async () => {
+				if (createStructuredError)
+					currentError = { code: "invalid_totp", text: "same error" };
+				else unrelatedAlertChanges += 1;
+			},
+			dispose: async () => undefined,
+		});
+		const adapter = createPlaywrightPageAdapter(
+			{
+				url: () => urls.totp,
+				locator: (selector: string) => {
+					queriedSelectors.push(selector);
+					const locator = {
+						first: () => locator,
+						isVisible: async () => selector.includes('input[name="totpPin"]'),
+						elementHandle: async () => controlHandle(),
+					};
+					return locator;
+				},
+				waitForTimeout: async () => undefined,
+			},
+			{ submissionPolls: 1, submissionPollMs: 0 },
+		);
+
+		await adapter.fillAndSubmit("totp", "111111");
+		assert.equal(await adapter.waitForPageChange("totp"), "rejected");
+		await adapter.fillAndSubmit("totp", "222222");
+		assert.equal(await adapter.waitForPageChange("totp"), "rejected");
+
+		createStructuredError = false;
+		currentError = null;
+		await adapter.fillAndSubmit("totp", "333333");
+		assert.equal(await adapter.waitForPageChange("totp"), "timeout");
+		assert.equal(unrelatedAlertChanges, 1);
+		assert.equal(
+			queriedSelectors.some(
+				(selector) =>
+					selector.includes('[role="alert"]') || selector.includes("aria-live"),
+			),
+			false,
+		);
+	});
+
 	test("accepts context destruction only when navigation changed the URL", async () => {
 		let currentUrl = urls.email;
 		let navigateOnSubmit = true;
-		const locator = {
-			first: () => locator,
-			isVisible: async () => false,
-			evaluateAll: async () => "",
+		const control = {
+			isVisible: async () => true,
+			evaluate: async (callback: (element: unknown) => unknown) =>
+				callback({ form: { action: urls.email }, isConnected: true }),
 			fill: async () => undefined,
 			press: async () => {
 				if (navigateOnSubmit) currentUrl = urls.password;
 			},
+			dispose: async () => undefined,
 		};
-		const adapter = createPlaywrightPageAdapter({
-			url: () => currentUrl,
-			locator: () => locator,
-			waitForFunction: async () => {
-				throw new Error("Execution context was destroyed");
+		const adapter = createPlaywrightPageAdapter(
+			{
+				url: () => currentUrl,
+				locator: (selector: string) => {
+					const locator = {
+						first: () => locator,
+						isVisible: async () =>
+							selector.includes('input[type="email"]') ||
+							selector.includes('input[type="password"]'),
+						elementHandle: async () => control,
+					};
+					return locator;
+				},
+				waitForTimeout: async () => {
+					throw new Error("Execution context was destroyed");
+				},
 			},
-		});
+			{ submissionPolls: 1 },
+		);
 
 		await adapter.fillAndSubmit("email", credentials.email);
 		assert.equal(await adapter.waitForPageChange("email"), "changed");
@@ -219,6 +421,82 @@ describe("bounded Google login", () => {
 			adapter.waitForPageChange("password"),
 			/Execution context was destroyed/,
 		);
+	});
+
+	test("rethrows initial navigation failures as redacted maintenance errors", async () => {
+		const leaked = "proxy-password-should-not-leak";
+		let error: unknown;
+		try {
+			await runGoogleLogin({
+				page: {
+					gotoGemini: async () => {
+						throw new Error(leaked);
+					},
+				},
+				credentials,
+				totpCodes: [],
+			});
+		} catch (caught) {
+			error = caught;
+		}
+		assert.equal(error instanceof BrowserMaintenanceError, true);
+		assert.equal((error as { code?: string }).code, "navigation_failed");
+		assert.doesNotMatch(String(error), new RegExp(leaked));
+	});
+
+	test("waits a bounded time for trusted route controls to become ready", async () => {
+		let rendered = false;
+		let waits = 0;
+		let state: State = "password";
+		const page = {
+			gotoGemini: async () => undefined,
+			url: () => urls[state],
+			visible: async (candidate: State) => rendered && candidate === state,
+			waitForStateReady: async () => {
+				waits += 1;
+				if (waits === 2) rendered = true;
+			},
+			fillAndSubmit: async () => {
+				state = "authenticated";
+			},
+			waitForPageChange: async () => "changed",
+			cookies: async () => [
+				{ name: "__Secure-1PSID", value: "psid-value" },
+				{ name: "__Secure-1PSIDTS", value: "psidts-value" },
+			],
+			observedEmail: async () => "owner@example.com",
+		};
+		assert.equal(
+			(
+				await runGoogleLogin({
+					page,
+					credentials,
+					totpCodes: [],
+					stateReadyAttempts: 3,
+				})
+			).ok,
+			true,
+		);
+		assert.equal(waits, 2);
+
+		rendered = false;
+		waits = 0;
+		state = "password";
+		assert.deepEqual(
+			await runGoogleLogin({
+				page: {
+					...page,
+					waitForStateReady: async () => {
+						waits += 1;
+					},
+				},
+				credentials,
+				totpCodes: [],
+				stateReadyAttempts: 3,
+			}),
+			{ ok: false, code: "unknown_page" },
+		);
+		assert.equal(waits, 3);
 	});
 
 	test("does not resubmit a stuck email or password state", async () => {
