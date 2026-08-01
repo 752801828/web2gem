@@ -295,7 +295,7 @@ export async function handleApplicationRequest(
 		return completed;
 	};
 
-	if (method === "OPTIONS") {
+	if (method === "OPTIONS" && !isBrowserHelperPath(path)) {
 		return new Response(null, {
 			status: 204,
 			headers: corsHeaders(request),

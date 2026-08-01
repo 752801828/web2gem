@@ -81,7 +81,11 @@ export async function handleBrowserHelperRequest(
 					id: account.accountId,
 					label: account.label,
 					status: {
-						...account.status,
+						credentialsConfigured: account.status.credentialsConfigured,
+						state: account.status.state,
+						lastCheckAtMs: account.status.lastCheckAtMs,
+						lastCookieUpdateAtMs: account.status.lastCookieUpdateAtMs,
+						lastAutoLoginAtMs: account.status.lastAutoLoginAtMs,
 						failureCode:
 							typeof account.status.failureCode === "string" &&
 							FAILURE_CODE.test(account.status.failureCode)
@@ -105,7 +109,12 @@ export async function handleBrowserHelperRequest(
 					"browser_account_not_found",
 					"browser account credentials not found",
 				);
-			return jsonResponse(credentials);
+			return jsonResponse({
+				version: credentials.version,
+				ciphertext: credentials.ciphertext,
+				nonce: credentials.nonce,
+				emailHash: credentials.emailHash,
+			});
 		}
 
 		const body = await readBody(request);

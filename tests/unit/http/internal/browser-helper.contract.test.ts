@@ -39,6 +39,7 @@ class FakeBrowserStore implements BrowserAccountStore {
 					lastCookieUpdateAtMs: 11,
 					lastAutoLoginAtMs: 12,
 					failureCode: this.failureCode,
+					cookieHeader: "must-not-leak",
 				},
 				authFailureCount: 0,
 				autoLoginAttemptDate: "2026-08-01",
@@ -233,8 +234,18 @@ describe("private browser-helper HTTP contract", () => {
 	});
 
 	test("returns encrypted credential fields without decrypting them", async () => {
+		const store = new FakeBrowserStore();
+		store.credentials = {
+			version: 1,
+			ciphertext: "encrypted-credentials",
+			nonce: "encrypted-nonce",
+			emailHash: "email-hash",
+			plaintextPassword: "must-not-leak",
+		} as EncryptedBrowserCredentials;
 		const response = await request(
 			"/internal/browser/accounts/account-a/credentials",
+			{},
+			env(store),
 		);
 		assert.equal(response.status, 200);
 		assert.deepEqual(await response.json(), {
@@ -242,6 +253,23 @@ describe("private browser-helper HTTP contract", () => {
 			ciphertext: "encrypted-credentials",
 			nonce: "encrypted-nonce",
 			emailHash: "email-hash",
+		});
+	});
+
+	test("rejects OPTIONS on private routes through internal authentication", async () => {
+		const response = await handleApplicationRequest(
+			new Request("https://worker.example/internal/browser/accounts", {
+				method: "OPTIONS",
+			}),
+			env(),
+			{ waitUntil() {} },
+		);
+		assert.equal(response.status, 401);
+		assert.deepEqual(await response.json(), {
+			error: {
+				code: "invalid_browser_helper_token",
+				message: "unauthorized",
+			},
 		});
 	});
 
