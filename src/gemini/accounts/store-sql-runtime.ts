@@ -2,7 +2,6 @@ import type { GeminiPublicFamily } from "../../models";
 import {
 	boundedGeminiAccountPageLimit,
 	GEMINI_DURABLE_ACCOUNT_ISSUES,
-	isSqlUniqueConstraintError,
 	normalizeGeminiCookieHeader,
 	resultChanged,
 	sha256Hex,
@@ -463,37 +462,41 @@ export class SqlGeminiAccountStoreBase {
 		const duplicateId = await this.findAccountIdByCookieHash(cookieHash);
 		if (duplicateId && duplicateId !== accountId)
 			return { changed: false, reason: "duplicate_cookie" };
-		try {
-			await this.runMutationWithPoolVersion(
-				this.db
-					.prepare(`
+		if (!this.db.guardedBatch)
+			throw new Error("Refreshed cookie write requires guarded SQL batch");
+		const guard = this.db
+			.prepare(`
 							UPDATE OR IGNORE gemini_accounts
 							SET cookie_header = ?, cookie_hash = ?,
 								last_refresh_at_ms = ?, last_refresh_attempt_at_ms = ?,
 								last_refresh_success_at_ms = ?, updated_at_ms = ?
 							WHERE id = ? AND cookie_hash = ? AND identity_hash = ?
+							RETURNING cookie_hash, identity_hash
         `)
-					.bind(
-						cookieHeader,
-						cookieHash,
-						update.refreshedAtMs,
-						update.nowMs,
-						update.refreshedAtMs,
-						update.nowMs,
-						accountId,
-						update.expectedCookieHash,
-						update.expectedIdentityHash,
-					),
+			.bind(
+				cookieHeader,
+				cookieHash,
+				update.refreshedAtMs,
 				update.nowMs,
+				update.refreshedAtMs,
+				update.nowMs,
+				accountId,
+				update.expectedCookieHash,
+				update.expectedIdentityHash,
 			);
-		} catch (error) {
-			if (!isSqlUniqueConstraintError(error)) throw error;
-			return { changed: false, reason: "duplicate_cookie" };
-		}
-		const current = await this.getAccountForRefresh(accountId);
-		return current?.cookie_hash === cookieHash
-			? { changed: true }
-			: { changed: false, reason: "conflict" };
+		const result = await this.db.guardedBatch(guard, [
+			this.poolVersionIncrementStatement(update.nowMs),
+		]);
+		if (!result.committed) return { changed: false, reason: "conflict" };
+		const returned = result.results[0]?.results?.[0] as
+			| { cookie_hash?: unknown; identity_hash?: unknown }
+			| undefined;
+		if (
+			returned?.cookie_hash !== cookieHash ||
+			returned.identity_hash !== update.expectedIdentityHash
+		)
+			throw new Error("Refreshed cookie atomic result is invalid");
+		return { changed: true };
 	}
 
 	async writeAccountProbe(

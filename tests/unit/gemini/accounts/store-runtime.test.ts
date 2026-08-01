@@ -373,7 +373,7 @@ describe("SQL Gemini account runtime store", () => {
 				result: null,
 			},
 			{
-				sql: /UPDATE OR IGNORE gemini_accounts SET cookie_header = \?, cookie_hash = \?, last_refresh_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \? AND cookie_hash = \? AND identity_hash = \?/,
+				sql: /UPDATE OR IGNORE gemini_accounts SET cookie_header = \?, cookie_hash = \?, last_refresh_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \? AND cookie_hash = \? AND identity_hash = \? RETURNING cookie_hash, identity_hash/,
 				binds: [
 					nextCookie,
 					nextHash,
@@ -386,15 +386,12 @@ describe("SQL Gemini account runtime store", () => {
 					"identity-first",
 				],
 				operation: "batch",
-				result: mutationResult(),
+				result: {
+					...mutationResult(),
+					results: [{ cookie_hash: nextHash, identity_hash: "identity-first" }],
+				},
 			},
-			poolVersionExpectation(3000),
-			{
-				sql: "SELECT id, cookie_header, cookie_hash, identity_hash, last_refresh_success_at_ms FROM gemini_accounts WHERE id = ? LIMIT 1",
-				binds: ["first"],
-				operation: "first",
-				result: { ...accountSqlRow("first"), cookie_hash: nextHash },
-			},
+			poolVersionExpectation(3000, "unconditional"),
 		]);
 
 		assert.deepEqual(
@@ -408,6 +405,7 @@ describe("SQL Gemini account runtime store", () => {
 			{ changed: true },
 		);
 		db.assertBatches([[1, 2]]);
+		assert.equal(db.records.length, 3);
 		db.assertDrained();
 	});
 

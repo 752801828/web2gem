@@ -406,6 +406,40 @@ describe("verified browser candidate cookies", () => {
 		}
 	});
 
+	test("regular refresh reports its own atomic result without a post-commit account read", async () => {
+		const db = sqliteModule.createSqliteBinding({
+			path: ":memory:",
+			busyTimeoutMs: 1000,
+		});
+		try {
+			const oldHash = await sha256Hex(OLD_COOKIE);
+			const identityHash = await identityHashFromCookie(OLD_COOKIE);
+			await db
+				.prepare(`INSERT INTO gemini_accounts (
+					id, cookie_header, cookie_hash, identity_hash, created_at_ms, updated_at_ms
+				) VALUES (?, ?, ?, ?, ?, ?)`)
+				.bind("atomic-refresh", OLD_COOKIE, oldHash, identityHash, 1, 1)
+				.run();
+			const nextCookie =
+				"__Secure-1PSID=old-psid; __Secure-1PSIDTS=atomic-next";
+			assert.deepEqual(
+				await new SqlGeminiAccountStore(db).writeRefreshedCookie(
+					"atomic-refresh",
+					{
+						expectedCookieHash: oldHash,
+						expectedIdentityHash: identityHash,
+						cookieHeader: nextCookie,
+						refreshedAtMs: NOW,
+						nowMs: NOW,
+					},
+				),
+				{ changed: true },
+			);
+		} finally {
+			db.close();
+		}
+	});
+
 	test("production pool factory owns the real verifier default and supports a test seam", async () => {
 		assert.equal(DEFAULT_CANDIDATE_COOKIE_VERIFIER, verifyGeminiAccount);
 		const calls: string[] = [];
