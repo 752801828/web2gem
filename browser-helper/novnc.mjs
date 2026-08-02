@@ -41,36 +41,76 @@ export function createNoVncLifecycle(config, dependencies = {}) {
 	const setMode = dependencies.chmod || chmod;
 	const remove = dependencies.rm || rm;
 	const waitReady = dependencies.waitReady || defaultWaitReady;
-	const stopProcess = dependencies.stopProcess || terminate;
+	const stopProcess = dependencies.stopProcess || terminateProcess;
 	const processEnvironment = displayEnvironment(dependencies.env || process.env);
 	let active = [];
+	let running = false;
+	let failed = false;
+	let stoppingStack = false;
+	let failureController = null;
+	let cleanupPromise = null;
 	let starting = null;
 	let stopping = null;
 
 	async function cleanup() {
-		const processes = active;
-		active = [];
-		for (const process of [...processes].reverse()) {
-			try {
-				await stopProcess(process.child);
-			} catch {
-				// Continue stopping the remainder of the display stack.
+		if (cleanupPromise) return cleanupPromise;
+		const attempt = (async () => {
+			stoppingStack = true;
+			running = false;
+			const processes = active;
+			active = [];
+			for (const process of processes) process.removeMonitor?.();
+			for (const process of [...processes].reverse()) {
+				try {
+					await stopProcess(process.child);
+				} catch {
+					// Continue stopping the remainder of the display stack.
+				}
 			}
-		}
+			try {
+				await remove(PASSWORD_PATH, { force: true });
+			} catch {
+				// Password cleanup is best effort after all readers have stopped.
+			}
+			stoppingStack = false;
+		})();
+		cleanupPromise = attempt;
 		try {
-			await remove(PASSWORD_PATH, { force: true });
-		} catch {
-			// Password cleanup is best effort after all readers have stopped.
+			await attempt;
+		} finally {
+			if (cleanupPromise === attempt) cleanupPromise = null;
 		}
+	}
+
+	function markFailed() {
+		if (stoppingStack || failed) return;
+		failed = true;
+		running = false;
+		failureController?.abort(new Error("browser display stack failed"));
+		cleanup().catch(() => undefined);
+	}
+
+	function monitor(entry) {
+		const failedProcess = () => markFailed();
+		entry.child.once("error", failedProcess);
+		entry.child.once("exit", failedProcess);
+		entry.removeMonitor = () => {
+			entry.child.off("error", failedProcess);
+			entry.child.off("exit", failedProcess);
+		};
 	}
 
 	return Object.freeze({
 		async start() {
 			if (stopping) await stopping;
-			if (active.length) return;
+			if (cleanupPromise) await cleanupPromise;
+			if (running && !failed)
+				return Object.freeze({ failureSignal: failureController.signal });
 			if (starting) return starting;
 			const attempt = (async () => {
 				try {
+					failed = false;
+					failureController = new AbortController();
 					await makeDirectory(path.dirname(PASSWORD_PATH), {
 						recursive: true,
 						mode: 0o700,
@@ -82,9 +122,18 @@ export function createNoVncLifecycle(config, dependencies = {}) {
 							stdio: "ignore",
 							env: processEnvironment,
 						});
-						active.push({ name: spec.name, child });
+						const entry = { name: spec.name, child, removeMonitor: null };
+						active.push(entry);
 						await waitReady(spec.name, child);
+						if (failureController.signal.aborted)
+							throw new Error("display process exited");
+						monitor(entry);
+						if (child.exitCode !== null) markFailed();
+						if (failureController.signal.aborted)
+							throw new Error("display process exited");
 					}
+					running = true;
+					return Object.freeze({ failureSignal: failureController.signal });
 				} catch {
 					await cleanup();
 					throw new Error("browser display stack failed");
@@ -92,7 +141,7 @@ export function createNoVncLifecycle(config, dependencies = {}) {
 			})();
 			starting = attempt;
 			try {
-				await attempt;
+				return await attempt;
 			} finally {
 				if (starting === attempt) starting = null;
 			}
@@ -180,18 +229,35 @@ function connect(port) {
 	});
 }
 
-async function terminate(child) {
+export async function terminateProcess(child, options = {}) {
 	if (!child || child.exitCode !== null) return;
-	await new Promise((resolve) => {
-		let timer;
-		const done = () => {
-			if (timer) clearTimeout(timer);
-			resolve();
-		};
-		child.once("exit", done);
-		if (!child.kill("SIGTERM")) return done();
-		timer = setTimeout(() => {
-			if (child.exitCode === null) child.kill("SIGKILL");
-		}, 5_000);
+	const sleep = options.sleep || delay;
+	if (await signalAndWait(child, "SIGTERM", 5_000, sleep)) return;
+	await signalAndWait(child, "SIGKILL", 1_000, sleep);
+}
+
+async function signalAndWait(child, signal, timeoutMs, sleep) {
+	if (child.exitCode !== null) return true;
+	let onExit;
+	let onError;
+	const exited = new Promise((resolve) => {
+		onExit = () => resolve(true);
+		onError = () => resolve(true);
+		child.once("exit", onExit);
+		child.once("error", onError);
 	});
+	try {
+		if (!child.kill(signal)) return true;
+		return await Promise.race([
+			exited,
+			Promise.resolve(sleep(timeoutMs)).then(() => false),
+		]);
+	} finally {
+		child.off("exit", onExit);
+		child.off("error", onError);
+	}
+}
+
+function delay(milliseconds) {
+	return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

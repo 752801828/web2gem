@@ -256,6 +256,45 @@ describe("browser maintenance scheduler", () => {
 		assert.deepEqual(handled, ["account-a"]);
 	});
 
+	test("cancels a pending visible job before it reaches its display hook", async () => {
+		let releaseActive!: () => void;
+		const waiting = new Promise<void>((resolve) => {
+			releaseActive = resolve;
+		});
+		const handled: string[] = [];
+		const queue = createMaintenanceQueue(async ({ accountId }: Job) => {
+			handled.push(accountId);
+			if (accountId === "active") await waiting;
+		});
+		const active = queue.enqueue({ accountId: "active", mode: "scheduled" });
+		const cancelled = new AbortController();
+		const pending = queue.enqueue({
+			accountId: "pending",
+			mode: "visible",
+			signal: cancelled.signal,
+		});
+		cancelled.abort();
+		assert.deepEqual(await pending, { skipped: true });
+		releaseActive();
+		await active;
+		assert.deepEqual(handled, ["active"]);
+	});
+
+	test("starts the display only after lease acquisition and before visible Chromium", async () => {
+		const active = fixture({
+			schedulerDependencies: {
+				async beforeVisibleStart() {
+					active.calls.push(["display"]);
+					return { failureSignal: new AbortController().signal };
+				},
+			},
+		});
+		await active.scheduler.enqueue({ accountId: "account-a", mode: "visible" });
+		const names = active.calls.map(([name]) => name);
+		assert.equal(names.indexOf("acquire") < names.indexOf("display"), true);
+		assert.equal(names.indexOf("display") < names.indexOf("visible"), true);
+	});
+
 	test("does not lose work enqueued while the previous worker is settling", async () => {
 		const order: string[] = [];
 		const queue = createMaintenanceQueue(async ({ accountId }: Job) => {

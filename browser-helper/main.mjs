@@ -49,6 +49,8 @@ export function createBrowserHelperProcess(config, masterKey, dependencies = {})
 			decryptBrowserCredentials(masterKey, accountId, envelope),
 		runLogin: (input) =>
 			input.mode === "visible" ? sessions.hold(input, login) : login(input),
+		beforeVisibleStart: (accountId, signal) =>
+			sessions.beforeVisibleStart(accountId, signal),
 	});
 	const profiles = (dependencies.createProfiles || createProfileStore)(
 		{ profilesRoot: "/profiles" },
@@ -67,7 +69,7 @@ export function createBrowserHelperProcess(config, masterKey, dependencies = {})
 		stopping = (async () => {
 			let firstError;
 			try {
-				await server.stop();
+				server.beginStop();
 			} catch (error) {
 				firstError = error;
 			}
@@ -82,6 +84,11 @@ export function createBrowserHelperProcess(config, masterKey, dependencies = {})
 				} catch (error) {
 					firstError ??= error;
 				}
+			try {
+				await server.drain();
+			} catch (error) {
+				firstError ??= error;
+			}
 			if (firstError) throw firstError;
 		})();
 		return stopping;

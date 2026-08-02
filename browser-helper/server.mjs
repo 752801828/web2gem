@@ -78,6 +78,8 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 	const { scheduler, novnc } = dependencies || {};
 	const setTimer = dependencies?.setTimer || setTimeout;
 	const clearTimer = dependencies?.clearTimer || clearTimeout;
+	const setSubmissionTimer = dependencies?.setSubmissionTimer || setTimeout;
+	const clearSubmissionTimer = dependencies?.clearSubmissionTimer || clearTimeout;
 	const prepareVisiblePage =
 		dependencies?.prepareVisiblePage ||
 		((page) => page.goto("https://gemini.google.com/app", { waitUntil: "domcontentloaded" }));
@@ -86,7 +88,9 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 		!scheduler ||
 		!novnc ||
 		!Number.isSafeInteger(config?.visibleIdleTimeoutSec) ||
-		config.visibleIdleTimeoutSec < 1
+		config.visibleIdleTimeoutSec < 1 ||
+		!Number.isSafeInteger(config?.visibleSubmissionTimeoutSec ?? 180) ||
+		(config.visibleSubmissionTimeoutSec ?? 180) < 1
 	)
 		throw new Error("invalid visible session configuration");
 	let active = null;
@@ -100,8 +104,30 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 		}, config.visibleIdleTimeoutSec * 1_000);
 	}
 
+	function armSubmissionWatchdog(session) {
+		if (session.submissionTimer !== null)
+			clearSubmissionTimer(session.submissionTimer);
+		session.submissionTimer = setSubmissionTimer(() => {
+			session.submissionTimer = null;
+			session.submitting = false;
+			if (session.idleExpired) session.stop.resolve();
+			else armIdle(session);
+		}, (config.visibleSubmissionTimeoutSec ?? 180) * 1_000);
+	}
+
+	function endSubmission(session) {
+		if (session.submissionTimer !== null)
+			clearSubmissionTimer(session.submissionTimer);
+		session.submissionTimer = null;
+		session.submitting = false;
+		if (session.idleExpired) session.stop.resolve();
+		else armIdle(session);
+	}
+
 	async function finalize(session) {
 		if (session.timer !== null) clearTimer(session.timer);
+		if (session.submissionTimer !== null)
+			clearSubmissionTimer(session.submissionTimer);
 		try {
 			await session.cleanupActivity?.();
 		} catch {
@@ -127,6 +153,7 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 				jobReady: deferred(),
 				job: null,
 				timer: null,
+				submissionTimer: null,
 				submitting: false,
 				idleExpired: false,
 				cleanupActivity: null,
@@ -134,17 +161,8 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 			active = session;
 			const callerAbort = abortRace(signal);
 			try {
-				const starting = Promise.resolve(novnc.start());
-				const startOutcome = await Promise.race([
-					starting.then(() => "started"),
-					callerAbort.promise.then(() => "abort"),
-				]);
-				if (startOutcome === "abort") {
-					await starting.catch(() => undefined);
-					throw new ControlError(499, "request_aborted");
-				}
 				const rawJob = Promise.resolve(
-					scheduler.enqueue({ accountId, mode: "visible" }),
+					scheduler.enqueue({ accountId, mode: "visible", signal }),
 				);
 				session.job = rawJob.finally(() => finalize(session));
 				session.jobReady.resolve();
@@ -169,6 +187,17 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 				callerAbort.dispose();
 			}
 		},
+		async beforeVisibleStart(accountId, signal) {
+			const session = active;
+			if (!session || session.accountId !== accountId || signal?.aborted)
+				throw new Error("visible browser session cancelled");
+			const started = await novnc.start();
+			if (signal?.aborted) {
+				await novnc.stop();
+				throw new Error("visible browser session cancelled");
+			}
+			return started;
+		},
 		async hold(input, finalCheck) {
 			const session = active;
 			if (
@@ -181,7 +210,7 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 			session.cleanupActivity = await trackActivity(input.page, {
 				activity() {
 					if (active !== session || session.stop.settled) return;
-					session.submitting = false;
+					if (session.submitting) return;
 					session.idleExpired = false;
 					armIdle(session);
 				},
@@ -190,12 +219,11 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 					session.submitting = true;
 					session.idleExpired = false;
 					armIdle(session);
+					armSubmissionWatchdog(session);
 				},
 				submissionEnd() {
 					if (active !== session || session.stop.settled) return;
-					session.submitting = false;
-					if (session.idleExpired) session.stop.resolve();
-					else armIdle(session);
+					endSubmission(session);
 				},
 			});
 			try {
@@ -274,7 +302,10 @@ export function createProfileStore(config, dependencies) {
 export function createHelperControlServer(config, dependencies = {}) {
 	const handler = createControlRequestHandler(config, dependencies);
 	const createServer = dependencies.createServer || http.createServer;
-	const server = createServer(async (incoming, outgoing) => {
+	const sleep = dependencies.sleep || delay;
+	const drainTimeoutMs = dependencies.drainTimeoutMs || 5_000;
+	const forceCloseTimeoutMs = dependencies.forceCloseTimeoutMs || 1_000;
+	const server = createServer({ maxHeaderSize: 16 * 1_024 }, async (incoming, outgoing) => {
 		const disconnected = new AbortController();
 		const onAborted = () => disconnected.abort();
 		const onClosed = () => {
@@ -289,16 +320,34 @@ export function createHelperControlServer(config, dependencies = {}) {
 				disconnected.signal,
 			);
 			const response = await handler(request);
-			outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-			outgoing.end(Buffer.from(await response.arrayBuffer()));
+			if (!outgoing.destroyed && !outgoing.headersSent)
+				outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+			if (!outgoing.destroyed && !outgoing.writableEnded)
+				outgoing.end(Buffer.from(await response.arrayBuffer()));
 		} catch {
-			outgoing.writeHead(500, { "content-type": "application/json" });
-			outgoing.end('{"error":{"code":"internal_error"}}');
+			try {
+				if (!outgoing.destroyed && !outgoing.headersSent)
+					outgoing.writeHead(500, { "content-type": "application/json" });
+				if (!outgoing.destroyed && !outgoing.writableEnded)
+					outgoing.end('{"error":{"code":"internal_error"}}');
+			} catch {
+				outgoing.destroy();
+			}
 		} finally {
 			incoming.off("aborted", onAborted);
 			outgoing.off("close", onClosed);
 		}
 	});
+	server.maxHeadersCount = 100;
+	server.headersTimeout = 10_000;
+	server.requestTimeout = 15_000;
+	let closing = null;
+	const beginStop = () => {
+		if (closing) return;
+		closing = new Promise((resolve, reject) =>
+			server.close((error) => (error ? reject(error) : resolve())),
+		);
+	};
 	return Object.freeze({
 		start() {
 			return new Promise((resolve, reject) => {
@@ -309,10 +358,12 @@ export function createHelperControlServer(config, dependencies = {}) {
 				});
 			});
 		},
-		stop() {
-			return new Promise((resolve, reject) =>
-				server.close((error) => (error ? reject(error) : resolve())),
-			);
+		beginStop,
+		async drain() {
+			beginStop();
+			if (await settledWithin(closing, drainTimeoutMs, sleep)) return;
+			server.closeAllConnections?.();
+			await settledWithin(closing, forceCloseTimeoutMs, sleep);
 		},
 	});
 }
@@ -464,7 +515,21 @@ function incomingRequest(incoming, port, signal) {
 	});
 }
 
-async function installPageActivityTracking(page, hooks) {
+async function settledWithin(promise, milliseconds, sleep) {
+	return Promise.race([
+		promise.then(
+			() => true,
+			() => true,
+		),
+		Promise.resolve(sleep(milliseconds)).then(() => false),
+	]);
+}
+
+function delay(milliseconds) {
+	return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function installPageActivityTracking(page, hooks) {
 	const binding = "__web2gemBrowserActivity";
 	await page.exposeBinding(binding, (_source, event) => {
 		if (event === "activity") hooks.activity();
@@ -489,5 +554,12 @@ async function installPageActivityTracking(page, hooks) {
 	await page.evaluate(install, binding);
 	const submissionEnd = () => hooks.submissionEnd();
 	page.on("domcontentloaded", submissionEnd);
-	return () => page.off("domcontentloaded", submissionEnd);
+	const navigated = (frame) => {
+		if (frame === page.mainFrame()) hooks.submissionEnd();
+	};
+	page.on("framenavigated", navigated);
+	return () => {
+		page.off("domcontentloaded", submissionEnd);
+		page.off("framenavigated", navigated);
+	};
 }

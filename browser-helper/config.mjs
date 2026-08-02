@@ -44,6 +44,12 @@ export function loadBrowserHelperConfig(sourceEnv = process.env) {
 				60,
 				86_400,
 			),
+			visibleSubmissionTimeoutSec: integer(
+				sourceEnv.BROWSER_VISIBLE_SUBMISSION_TIMEOUT_SEC,
+				180,
+				30,
+				600,
+			),
 			controlPort: integer(
 				sourceEnv.BROWSER_HELPER_CONTROL_PORT,
 				6_081,

@@ -9,6 +9,7 @@ const {
 	createControlRequestHandler,
 	createProfileStore,
 	createVisibleSessionCoordinator,
+	installPageActivityTracking,
 } = await import(modulePath);
 
 const TOKEN = "test-control-token";
@@ -157,19 +158,22 @@ describe("visible browser sessions", () => {
 		const calls: string[] = [];
 		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
 		const scheduler = {
-			enqueue: async (job: { accountId: string; mode: string }) =>
-				coordinator.hold(
+			enqueue: async (job: { accountId: string; mode: string }) => {
+				const signal = new AbortController().signal;
+				await coordinator.beforeVisibleStart(job.accountId, signal);
+				return coordinator.hold(
 					{
 						accountId: job.accountId,
 						page: {},
 						mode: job.mode,
-						signal: new AbortController().signal,
+						signal,
 					},
 					async () => {
 						calls.push("final-check");
 						return { ok: false, code: "login_failed" };
 					},
-				),
+				);
+			},
 		};
 		coordinator = createVisibleSessionCoordinator(
 			{ visibleIdleTimeoutSec: 60 },
@@ -207,8 +211,12 @@ describe("visible browser sessions", () => {
 			{ visibleIdleTimeoutSec: 60 },
 			{
 				scheduler: {
-					enqueue: (job: { accountId: string; mode: string }) =>
-						coordinator.hold(
+					async enqueue(job: { accountId: string; mode: string }) {
+						await coordinator.beforeVisibleStart(
+							job.accountId,
+							controller.signal,
+						);
+						return coordinator.hold(
 							{
 								accountId: job.accountId,
 								page: {},
@@ -218,7 +226,8 @@ describe("visible browser sessions", () => {
 							async () => {
 								finalChecks += 1;
 							},
-						),
+						);
+					},
 				},
 				novnc: { start: async () => undefined, stop: async () => undefined },
 				setTimer: () => ({}) as ReturnType<typeof setTimeout>,
@@ -245,16 +254,22 @@ describe("visible browser sessions", () => {
 			{ visibleIdleTimeoutSec: 60 },
 			{
 				scheduler: {
-					enqueue: (job: { accountId: string; mode: string }) =>
-						coordinator.hold(
+					async enqueue(job: {
+						accountId: string;
+						mode: string;
+						signal?: AbortSignal;
+					}) {
+						await coordinator.beforeVisibleStart(job.accountId, job.signal);
+						return coordinator.hold(
 							{
 								accountId: job.accountId,
 								page: {},
 								mode: job.mode,
-								signal: new AbortController().signal,
+								signal: job.signal,
 							},
 							async () => ({ ok: false, code: "login_failed" }),
-						),
+						);
+					},
 				},
 				novnc: { start: async () => undefined, stop: async () => undefined },
 				prepareVisiblePage: async () => preparing,
@@ -275,25 +290,29 @@ describe("visible browser sessions", () => {
 		const timers: Array<() => void> = [];
 		const cleared: unknown[] = [];
 		let hooks: Record<string, () => void> | undefined;
+		const submissionTimers: Array<() => void> = [];
 		let finalChecks = 0;
 		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
 		coordinator = createVisibleSessionCoordinator(
 			{ visibleIdleTimeoutSec: 60 },
 			{
 				scheduler: {
-					enqueue: (job: { accountId: string; mode: string }) =>
-						coordinator.hold(
+					async enqueue(job: { accountId: string; mode: string }) {
+						const signal = new AbortController().signal;
+						await coordinator.beforeVisibleStart(job.accountId, signal);
+						return coordinator.hold(
 							{
 								accountId: job.accountId,
 								page: {},
 								mode: job.mode,
-								signal: new AbortController().signal,
+								signal,
 							},
 							async () => {
 								finalChecks += 1;
 								return { ok: false, code: "login_failed" };
 							},
-						),
+						);
+					},
 				},
 				novnc: { start: async () => undefined, stop: async () => undefined },
 				prepareVisiblePage: async () => undefined,
@@ -308,6 +327,11 @@ describe("visible browser sessions", () => {
 				clearTimer(timer: unknown) {
 					cleared.push(timer);
 				},
+				setSubmissionTimer(callback: () => void) {
+					submissionTimers.push(callback);
+					return callback;
+				},
+				clearSubmissionTimer: () => undefined,
 			},
 		);
 		await coordinator.open("account-a");
@@ -322,12 +346,45 @@ describe("visible browser sessions", () => {
 		assert.equal(finalChecks, 0);
 		assert.equal(coordinator.isActive("account-a"), true);
 		hooks?.activity();
-		assert.equal(timers.length, 4);
+		assert.equal(timers.length, 3);
 		assert.equal(coordinator.isActive("account-a"), true);
-		timers.at(-1)?.();
+		assert.equal(submissionTimers.length, 1);
+		submissionTimers[0]?.();
 		await coordinator.waitForIdle();
 		assert.equal(finalChecks, 1);
 		assert.equal(coordinator.isActive("account-a"), false);
+	});
+
+	test("ends submission protection on main-frame navigation", async () => {
+		const events = new Map<string, (...args: unknown[]) => void>();
+		let bindingCallback:
+			| ((_source: unknown, event: string) => void)
+			| undefined;
+		const page = {
+			exposeBinding: async (
+				_name: string,
+				callback: (_source: unknown, event: string) => void,
+			) => {
+				bindingCallback = callback;
+			},
+			addInitScript: async () => undefined,
+			evaluate: async () => undefined,
+			on(name: string, callback: (...args: unknown[]) => void) {
+				events.set(name, callback);
+			},
+			off: () => undefined,
+			mainFrame: () => page,
+		};
+		const calls: string[] = [];
+		const cleanup = await installPageActivityTracking(page, {
+			activity: () => calls.push("activity"),
+			submissionStart: () => calls.push("start"),
+			submissionEnd: () => calls.push("end"),
+		});
+		bindingCallback?.({}, "submission-start");
+		events.get("framenavigated")?.(page);
+		assert.deepEqual(calls, ["start", "end"]);
+		await cleanup();
 	});
 });
 

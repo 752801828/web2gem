@@ -44,6 +44,7 @@ export function createMaintenanceQueue(handler) {
 	function enqueue(input) {
 		const job = validJob(input);
 		if (!accepting) return Promise.resolve({ skipped: true });
+		if (job.signal?.aborted) return Promise.resolve({ skipped: true });
 		if (reservations.has(job.accountId)) return Promise.resolve({ skipped: true });
 		if (
 			active?.accountId === job.accountId &&
@@ -54,7 +55,13 @@ export function createMaintenanceQueue(handler) {
 		if (!queued) {
 			queued = deferredJob(job, sequence++);
 			pending.set(job.accountId, queued);
-		} else if (PRIORITY[job.mode] > PRIORITY[queued.mode]) queued.mode = job.mode;
+			watchPendingAbort(queued);
+		} else if (PRIORITY[job.mode] > PRIORITY[queued.mode]) {
+			queued.mode = job.mode;
+			queued.signal = job.signal;
+			queued.disposeAbort?.();
+			watchPendingAbort(queued);
+		}
 		startWorker();
 		return queued.promise;
 	}
@@ -74,9 +81,14 @@ export function createMaintenanceQueue(handler) {
 					PRIORITY[right.mode] - PRIORITY[left.mode] || left.sequence - right.sequence,
 			)[0];
 			pending.delete(next.accountId);
+			next.disposeAbort?.();
 			active = next;
 			try {
-				const result = await handler({ accountId: next.accountId, mode: next.mode });
+				const result = await handler({
+					accountId: next.accountId,
+					mode: next.mode,
+					signal: next.signal,
+				});
 				next.resolve(result);
 			} catch (error) {
 				next.reject(error);
@@ -84,6 +96,19 @@ export function createMaintenanceQueue(handler) {
 				active = null;
 			}
 		}
+	}
+
+	function watchPendingAbort(job) {
+		if (!job.signal) return;
+		const abort = () => {
+			if (pending.get(job.accountId) !== job) return;
+			pending.delete(job.accountId);
+			job.disposeAbort?.();
+			job.resolve({ skipped: true });
+		};
+		job.signal.addEventListener("abort", abort, { once: true });
+		job.disposeAbort = () => job.signal.removeEventListener("abort", abort);
+		if (job.signal.aborted) abort();
 	}
 
 	return Object.freeze({
@@ -118,7 +143,10 @@ export function createMaintenanceQueue(handler) {
 		},
 		async stop() {
 			accepting = false;
-			for (const job of pending.values()) job.resolve({ skipped: true });
+			for (const job of pending.values()) {
+				job.disposeAbort?.();
+				job.resolve({ skipped: true });
+			}
 			pending.clear();
 			while (worker) await worker;
 		},
@@ -139,6 +167,7 @@ export function createBrowserScheduler(config, dependencies) {
 		clearTimer = clearTimeout,
 		setLeaseTimer = setTimeout,
 		clearLeaseTimer = clearTimeout,
+		beforeVisibleStart = async () => null,
 		onOperationalError = () => undefined,
 	} = dependencies || {};
 	if (
@@ -195,6 +224,7 @@ export function createBrowserScheduler(config, dependencies) {
 	}
 
 	async function maintain(job) {
+		if (job.signal?.aborted) return { skipped: true };
 		const account = await accountFor(job.accountId);
 		if (!account) return { skipped: true };
 		let leased = false;
@@ -206,6 +236,13 @@ export function createBrowserScheduler(config, dependencies) {
 		let leaseCycle = null;
 		let candidateCommitted = false;
 		const jobAbort = new AbortController();
+		const cancelJob = () =>
+			jobAbort.abort(new BrowserMaintenanceError("job_cancelled"));
+		if (job.signal) {
+			job.signal.addEventListener("abort", cancelJob, { once: true });
+			if (job.signal.aborted) cancelJob();
+		}
+		let removeDisplayFailure = null;
 		const closeBrowserOnce = async () => {
 			if (!opened || browserClosed) return;
 			browserClosed = true;
@@ -217,6 +254,10 @@ export function createBrowserScheduler(config, dependencies) {
 		};
 		const assertLeaseActive = () => {
 			if (leaseLost) throw new BrowserMaintenanceError("lease_lost");
+			if (jobAbort.signal.aborted)
+				throw jobAbort.signal.reason instanceof Error
+					? jobAbort.signal.reason
+					: new BrowserMaintenanceError("job_cancelled");
 		};
 		const armLeaseHeartbeat = () => {
 			if (!leased || leaseLost || leaseHeartbeatStopped) return;
@@ -264,6 +305,19 @@ export function createBrowserScheduler(config, dependencies) {
 				}),
 			);
 			assertLeaseActive();
+			if (job.mode === "visible") {
+				const display = await beforeVisibleStart(account.id, jobAbort.signal);
+				const failureSignal = display?.failureSignal;
+				if (failureSignal) {
+					const displayFailed = () =>
+						jobAbort.abort(new BrowserMaintenanceError("display_failed"));
+					failureSignal.addEventListener("abort", displayFailed, { once: true });
+					removeDisplayFailure = () =>
+						failureSignal.removeEventListener("abort", displayFailed);
+					if (failureSignal.aborted) displayFailed();
+				}
+				assertLeaseActive();
+			}
 			const context = await (job.mode === "visible"
 				? browser.startVisible(account.id)
 				: browser.startHeadless(account.id));
@@ -402,7 +456,11 @@ export function createBrowserScheduler(config, dependencies) {
 				);
 				return { ready: true };
 			}
-			if (leased && !leaseLost) {
+			if (
+				leased &&
+				!leaseLost &&
+				jobAbort.signal.reason?.code !== "job_cancelled"
+			) {
 				const code =
 					error instanceof BrowserMaintenanceError
 						? safeFailureCode(error.code)
@@ -420,6 +478,9 @@ export function createBrowserScheduler(config, dependencies) {
 			}
 			return { ready: false };
 		} finally {
+			removeDisplayFailure?.();
+			if (job.signal)
+				job.signal.removeEventListener("abort", cancelJob);
 			await stopLeaseHeartbeat();
 			await closeBrowserOnce();
 			if (leased) {
@@ -549,10 +610,12 @@ function validJob(input) {
 		!input ||
 		typeof input.accountId !== "string" ||
 		!input.accountId ||
-		!MODES.has(input.mode)
+		!MODES.has(input.mode) ||
+		(input.signal !== undefined &&
+			typeof input.signal?.addEventListener !== "function")
 	)
 		throw new Error("invalid browser maintenance job");
-	return { accountId: input.accountId, mode: input.mode };
+	return { accountId: input.accountId, mode: input.mode, signal: input.signal };
 }
 
 function deferredJob(job, sequence) {

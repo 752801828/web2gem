@@ -49,8 +49,11 @@ describe("browser helper process composition", () => {
 					async start() {
 						calls.push("http-start");
 					},
-					async stop() {
-						calls.push("http-stop");
+					beginStop() {
+						calls.push("http-begin-stop");
+					},
+					async drain() {
+						calls.push("http-drain");
 					},
 				}),
 			},
@@ -60,12 +63,73 @@ describe("browser helper process composition", () => {
 		assert.deepEqual(calls, [
 			"scheduler-start",
 			"http-start",
-			"http-stop",
+			"http-begin-stop",
 			"visible-stop-request",
 			"scheduler-stop",
 			"chromium-stop",
 			"novnc-stop",
+			"http-drain",
 		]);
+	});
+
+	test("does not deadlock shutdown on a stuck HTTP request", async () => {
+		const calls: string[] = [];
+		let releaseDrain!: () => void;
+		const draining = new Promise<void>((resolve) => {
+			releaseDrain = resolve;
+		});
+		const processLifecycle = createBrowserHelperProcess(
+			{
+				internalToken: "test-internal-token",
+				novncPassword: "test-novnc-password",
+				visibleIdleTimeoutSec: 60,
+			},
+			new Uint8Array(32),
+			{
+				env: {},
+				createClient: () => ({}),
+				createBrowser: () => ({ close: async () => calls.push("chromium") }),
+				createNoVnc: () => ({ stop: async () => calls.push("novnc") }),
+				createSessions: () => ({
+					hold: async () => undefined,
+					isActive: () => false,
+					requestStop: () => calls.push("session"),
+				}),
+				createNotifier: () => ({}),
+				createScheduler: () => ({
+					start: async () => undefined,
+					stop: async () => calls.push("scheduler"),
+					reserve: () => () => undefined,
+				}),
+				createProfiles: () => ({}),
+				createServer: () => ({
+					start: async () => undefined,
+					beginStop: () => calls.push("http-begin"),
+					async drain() {
+						calls.push("http-drain");
+						await draining;
+					},
+				}),
+			},
+		);
+		await processLifecycle.start();
+		let finished = false;
+		const stopping = processLifecycle.stop().then(() => {
+			finished = true;
+		});
+		for (let index = 0; index < 10 && calls.length < 6; index += 1)
+			await Promise.resolve();
+		assert.deepEqual(calls, [
+			"http-begin",
+			"session",
+			"scheduler",
+			"chromium",
+			"novnc",
+			"http-drain",
+		]);
+		assert.equal(finished, false);
+		releaseDrain();
+		await stopping;
 	});
 
 	test("rejects a missing master key without exposing configuration", () => {

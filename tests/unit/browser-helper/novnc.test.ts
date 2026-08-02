@@ -3,7 +3,7 @@ import { describe, test } from "vitest";
 import { assert } from "../assertions.js";
 
 const modulePath: string = "../../../browser-helper/novnc.mjs";
-const { createNoVncLifecycle } = await import(modulePath);
+const { createNoVncLifecycle, terminateProcess } = await import(modulePath);
 
 function fixture(options: { failReadyAt?: string } = {}) {
 	const calls: unknown[][] = [];
@@ -123,5 +123,40 @@ describe("noVNC process lifecycle", () => {
 		);
 		await active.lifecycle.stop();
 		assert.equal(active.calls.filter(([name]) => name === "kill").length, 2);
+	});
+
+	test("finishes termination after SIGKILL even when a child never emits exit", async () => {
+		const child = Object.assign(new EventEmitter(), {
+			exitCode: null,
+			signals: [] as string[],
+			kill(signal: string) {
+				this.signals.push(signal);
+				return true;
+			},
+		});
+		await terminateProcess(child, { sleep: async () => undefined });
+		assert.deepEqual(child.signals, ["SIGTERM", "SIGKILL"]);
+		assert.equal(child.listenerCount("exit"), 0);
+		assert.equal(child.listenerCount("error"), 0);
+	});
+
+	test("marks the stack failed and cleans up after a post-readiness process exit", async () => {
+		const active = fixture();
+		const started = await active.lifecycle.start();
+		assert.equal(started.failureSignal.aborted, false);
+		active.processes[1].exitCode = 1;
+		active.processes[1].emit("exit", 1, null);
+		for (
+			let index = 0;
+			index < 20 && !started.failureSignal.aborted;
+			index += 1
+		)
+			await Promise.resolve();
+		assert.equal(started.failureSignal.aborted, true);
+		await active.lifecycle.stop();
+		assert.equal(
+			active.calls.filter(([name]) => name === "kill").length >= 2,
+			true,
+		);
 	});
 });

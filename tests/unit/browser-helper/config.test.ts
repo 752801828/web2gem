@@ -21,6 +21,7 @@ describe("browser helper configuration", () => {
 		assert.equal(config.checkJitterSec, 3_600);
 		assert.equal(config.autoLoginMaxAttemptsPerDay, 2);
 		assert.equal(config.visibleIdleTimeoutSec, 1_800);
+		assert.equal(config.visibleSubmissionTimeoutSec, 180);
 		assert.equal(config.controlPort, 6_081);
 		assert.equal(config.maxClockSkewSec, 120);
 		assert.equal(config.novncPassword, "test-novnc-password");
@@ -56,6 +57,7 @@ describe("browser helper configuration", () => {
 			{ ...REQUIRED, BROWSER_CHECK_JITTER_SEC: "3601" },
 			{ ...REQUIRED, BROWSER_AUTLOGIN_MAX_ATTEMPTS_PER_DAY: "3" },
 			{ ...REQUIRED, BROWSER_VISIBLE_IDLE_TIMEOUT_SEC: "59" },
+			{ ...REQUIRED, BROWSER_VISIBLE_SUBMISSION_TIMEOUT_SEC: "29" },
 			{ ...REQUIRED, BROWSER_HELPER_CONTROL_PORT: "65536" },
 			{ ...REQUIRED, BROWSER_MAX_CLOCK_SKEW_SEC: "301" },
 			{
