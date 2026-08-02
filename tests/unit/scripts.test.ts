@@ -489,6 +489,37 @@ describe("quality scripts", () => {
 		}
 	});
 	test("keeps Docker packaging contracts for smoke, compose, and image runtime files", async () => {
+		const smokeModulePath: string = "../../scripts/docker-smoke.mjs";
+		const smoke = (await import(smokeModulePath)) as {
+			smokeResourceNames(
+				pid: number,
+				nonce: string,
+			): { project: string; webImage: string; helperImage: string };
+			assertLoopbackPort(raw: string, expectedContainerPort: number): number;
+			assertSmokeRedacted(logs: string, secrets: readonly string[]): void;
+		};
+		assert.deepEqual(smoke.smokeResourceNames(42, "AB-cd!12"), {
+			project: "web2gem-smoke-42-abcd12",
+			webImage: "web2gem:smoke-42-abcd12",
+			helperImage: "web2gem-browser-helper:smoke-42-abcd12",
+		});
+		assert.equal(smoke.assertLoopbackPort("127.0.0.1:6080", 6080), 6080);
+		assert.throws(
+			() => smoke.assertLoopbackPort("0.0.0.0:6080", 6080),
+			/was not mapped to loopback/,
+		);
+		assert.throws(
+			() => smoke.assertSmokeRedacted("log leaked-value", ["leaked-value"]),
+			/exposed a secret/,
+		);
+		const smokeSource = await readFile("scripts/docker-smoke.mjs", "utf8");
+		assert.doesNotMatch(
+			smokeSource,
+			/["']down["'][^\n]*(?:["']-v["']|--volumes)/,
+		);
+		assert.match(smokeSource, /\$\{names\.project\}_web2gem-data/);
+		assert.match(smokeSource, /\$\{names\.project\}_browser-profiles/);
+
 		await withTempDir(async (dir) => {
 			const result = await runNodeScript("scripts/docker-smoke.mjs", null, {
 				PATH: dir,
@@ -879,10 +910,11 @@ describe("quality scripts", () => {
 			assert.doesNotMatch(readme, /Vitest V8 text/);
 		}
 		assert.match(vitestConfig, /reporter:\s*\["lcov", "json-summary"\]/);
-		assert.match(
-			vitestConfig,
-			/include:\s*\["tests\/unit\/\*\*\/\*\.test\.\{ts,tsx\}"\]/,
-		);
+		for (const pattern of ["unit", "integration"])
+			assert.match(
+				vitestConfig,
+				new RegExp(`tests/${pattern}/\\*\\*/\\*\\.test\\.\\{ts,tsx\\}`),
+			);
 		assert.match(vitestConfig, /fileParallelism:\s*true/);
 		assert.match(vitestConfig, /pool:\s*"threads"/);
 		assert.doesNotMatch(vitestConfig, /isolate:\s*false/);

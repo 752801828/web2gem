@@ -28,7 +28,10 @@ export default defineConfig({
 		},
 		environment: "node",
 		fileParallelism: true,
-		include: ["tests/unit/**/*.test.{ts,tsx}"],
+		include: [
+			"tests/unit/**/*.test.{ts,tsx}",
+			"tests/integration/**/*.test.{ts,tsx}",
+		],
 		pool: "threads",
 		testTimeout: 30000,
 	},
