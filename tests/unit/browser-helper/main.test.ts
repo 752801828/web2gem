@@ -5,10 +5,10 @@ const modulePath: string = "../../../browser-helper/main.mjs";
 const { createBrowserHelperProcess } = await import(modulePath);
 
 describe("browser helper process composition", () => {
-	test("uses sanitized ALL_PROXY settings for Chromium", () => {
+	test("uses sanitized HTTP proxy settings for Chromium", () => {
 		for (const [key, proxyUrl] of [
-			["ALL_PROXY", "socks5://proxy-user:proxy-pass@proxy.test:1080"],
-			["all_proxy", "http://proxy-user:proxy-pass@proxy.test:8080"],
+			["HTTPS_PROXY", "http://proxy-user:proxy-pass@proxy.test:8443"],
+			["HTTP_PROXY", "http://proxy-user:proxy-pass@proxy.test:8080"],
 		] as const) {
 			let browserOptions: Record<string, unknown> | undefined;
 			createBrowserHelperProcess(
@@ -50,9 +50,10 @@ describe("browser helper process composition", () => {
 				},
 			);
 			assert.deepEqual(browserOptions?.proxy, {
-				server: proxyUrl.startsWith("socks5:")
-					? "socks5://proxy.test:1080"
-					: "http://proxy.test:8080",
+				server:
+					key === "HTTPS_PROXY"
+						? "http://proxy.test:8443"
+						: "http://proxy.test:8080",
 				username: "proxy-user",
 				password: "proxy-pass",
 			});

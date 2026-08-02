@@ -34,7 +34,6 @@ COPY --chown=browser:browser package.json ./package.json
 COPY --chown=browser:browser browser-helper ./browser-helper
 COPY --chown=browser:browser server/secrets.mjs ./server/secrets.mjs
 
-USER browser
 EXPOSE 6080 6081
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "--use-env-proxy", "browser-helper/main.mjs"]
+CMD ["node", "--use-env-proxy", "browser-helper/entrypoint.mjs"]

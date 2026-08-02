@@ -587,7 +587,7 @@ describe("quality scripts", () => {
 			(compose.match(/target:\s*web2gem_master_key/g) || []).length,
 			2,
 		);
-		assert.equal((compose.match(/mode:\s*0444/g) || []).length, 2);
+		assert.equal((compose.match(/mode:\s*0400/g) || []).length, 2);
 		assert.match(
 			compose,
 			/file:\s*"\$\{WEB2GEM_MASTER_KEY_FILE:-\.\/secrets\/web2gem_master_key\}"/,
@@ -604,7 +604,7 @@ describe("quality scripts", () => {
 		for (const service of [web2gemService, helperService]) {
 			assert.match(
 				service,
-				/NO_PROXY:\s*"\$\{NO_PROXY:-[^}]*web2gem[^}]*browser-helper[^}]*127\.0\.0\.1[^}]*localhost[^}]*\}"/,
+				/NO_PROXY:[^\n]*web2gem[^\n]*browser-helper[^\n]*127\.0\.0\.1[^\n]*localhost/,
 			);
 		}
 
@@ -634,14 +634,18 @@ describe("quality scripts", () => {
 			runtimePackages,
 		);
 		assert.match(helperDockerfile, /rm -rf \/var\/lib\/apt\/lists\/\*/);
-		assert.match(helperDockerfile, /^USER browser$/m);
+		assert.doesNotMatch(helperDockerfile, /^USER\s+/m);
 		assert.match(helperDockerfile, /\/profiles/);
 		assert.match(helperDockerfile, /\/run\/browser-helper/);
 		assert.match(helperDockerfile, /pnpm install --prod --frozen-lockfile/);
 		assert.match(helperDockerfile, /ENTRYPOINT \["\/usr\/bin\/tini", "--"\]/);
 		assert.match(
 			helperDockerfile,
-			/CMD \["node", "--use-env-proxy", "browser-helper\/main\.mjs"\]/,
+			/CMD \["node", "--use-env-proxy", "browser-helper\/entrypoint\.mjs"\]/,
+		);
+		assert.match(
+			helperDockerfile,
+			/COPY --chown=browser:browser browser-helper/,
 		);
 		assert.match(helperMain, /from "\.\.\/server\/secrets\.mjs"/);
 		assert.match(
@@ -683,11 +687,16 @@ describe("quality scripts", () => {
 			deploymentFiles,
 			/(?:BROWSER_HELPER_INTERNAL_TOKEN|NOVNC_PASSWORD|FEISHU_WEBHOOK_URL|FEISHU_SIGNING_SECRET):\s*"(?!\$\{)[^"\n]+"/,
 		);
+		assert.doesNotMatch(deploymentFiles, /ALL_PROXY/);
+		assert.doesNotMatch(helperMain, /ALL_PROXY|all_proxy/);
+		assert.doesNotMatch(dockerEnv, /^ALL_PROXY=/m);
+		assert.match(dockerEnv, /VNC[^\n]*first 8 characters/i);
+		assert.match(dockerEnv, /random[^\n]*loopback/i);
 	});
 	test("derives public noVNC URLs from NOVNC_PORT in rendered Compose", async () => {
 		await withTempFile(
 			"browser-helper.env",
-			"NOVNC_PORT=6099\n",
+			"NOVNC_PORT=6099\nNO_PROXY=corp.example\n",
 			async (envPath) => {
 				const render = async () => {
 					const result = await runExecutable(
@@ -702,7 +711,7 @@ describe("quality scripts", () => {
 							"--format",
 							"json",
 						],
-						["NOVNC_PORT", "NOVNC_PUBLIC_URL"],
+						["NOVNC_PORT", "NOVNC_PUBLIC_URL", "NO_PROXY"],
 					);
 					if (result.missing) return null;
 					assert.equal(result.code, 0, result.stderr);
@@ -728,6 +737,10 @@ describe("quality scripts", () => {
 							"environment",
 						);
 						assert.equal(environment.NOVNC_PUBLIC_URL, publicUrl);
+						assert.equal(
+							environment.NO_PROXY,
+							"corp.example,web2gem,browser-helper,127.0.0.1,localhost,::1",
+						);
 					}
 				};
 
@@ -736,7 +749,7 @@ describe("quality scripts", () => {
 				assertRendered(derived, "http://127.0.0.1:6099/vnc.html");
 				await writeFile(
 					envPath,
-					"NOVNC_PORT=6099\nNOVNC_PUBLIC_URL=http://localhost:6099/custom.html\n",
+					"NOVNC_PORT=6099\nNO_PROXY=corp.example\nNOVNC_PUBLIC_URL=http://localhost:6099/custom.html\n",
 					"utf8",
 				);
 				const overridden = await render();
@@ -779,6 +792,7 @@ describe("quality scripts", () => {
 			"runtime",
 			"*.sqlite",
 			"*.sqlite-*",
+			".worktrees",
 		]) {
 			assert.equal(
 				dockerExcluded.has(pattern),

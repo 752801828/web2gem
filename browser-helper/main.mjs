@@ -136,9 +136,7 @@ function proxyFromEnvironment(env) {
 		env.HTTPS_PROXY ||
 		env.https_proxy ||
 		env.HTTP_PROXY ||
-		env.http_proxy ||
-		env.ALL_PROXY ||
-		env.all_proxy;
+		env.http_proxy;
 	if (!value) return undefined;
 	try {
 		const url = new URL(value);

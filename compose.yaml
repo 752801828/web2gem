@@ -38,14 +38,13 @@ services:
       NODE_USE_ENV_PROXY: "${NODE_USE_ENV_PROXY:-1}"
       HTTP_PROXY: "${HTTP_PROXY:-}"
       HTTPS_PROXY: "${HTTPS_PROXY:-}"
-      ALL_PROXY: "${ALL_PROXY:-}"
-      NO_PROXY: "${NO_PROXY:-web2gem,browser-helper,127.0.0.1,localhost,::1}"
+      NO_PROXY: "${NO_PROXY:+${NO_PROXY},}web2gem,browser-helper,127.0.0.1,localhost,::1"
     volumes:
       - web2gem-data:/data
     secrets:
       - source: web2gem_master_key
         target: web2gem_master_key
-        mode: 0444
+        mode: 0400
     healthcheck:
       test:
         - CMD
@@ -92,14 +91,13 @@ services:
       NODE_USE_ENV_PROXY: "${NODE_USE_ENV_PROXY:-1}"
       HTTP_PROXY: "${HTTP_PROXY:-}"
       HTTPS_PROXY: "${HTTPS_PROXY:-}"
-      ALL_PROXY: "${ALL_PROXY:-}"
-      NO_PROXY: "${NO_PROXY:-web2gem,browser-helper,127.0.0.1,localhost,::1}"
+      NO_PROXY: "${NO_PROXY:+${NO_PROXY},}web2gem,browser-helper,127.0.0.1,localhost,::1"
     volumes:
       - browser-profiles:/profiles
     secrets:
       - source: web2gem_master_key
         target: web2gem_master_key
-        mode: 0444
+        mode: 0400
     healthcheck:
       test:
         - CMD

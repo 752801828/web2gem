@@ -4,6 +4,7 @@
 .agents
 .codex
 .cursor
+.worktrees
 .trellis
 node_modules
 dist
