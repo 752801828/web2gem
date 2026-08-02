@@ -64,6 +64,34 @@ describe("browser helper process composition", () => {
 		}
 	});
 
+	test("rejects socks5 URLs from HTTP proxy variables without exposing credentials", () => {
+		for (const key of ["HTTP_PROXY", "HTTPS_PROXY"] as const) {
+			let caught: unknown;
+			try {
+				createBrowserHelperProcess(
+					{
+						internalToken: "test-internal-token",
+						novncPassword: "test-novnc-password",
+						visibleIdleTimeoutSec: 60,
+					},
+					new Uint8Array(32),
+					{
+						env: {
+							[key]: "socks5://private-user:private-pass@proxy.test:1080",
+						},
+						createClient: () => ({}),
+					},
+				);
+			} catch (error) {
+				caught = error;
+			}
+			assert.equal(caught instanceof Error, true);
+			const message = caught instanceof Error ? caught.message : String(caught);
+			assert.equal(message, "invalid browser helper proxy configuration");
+			assert.doesNotMatch(message, /private-user|private-pass|proxy\.test/);
+		}
+	});
+
 	test("starts scheduler before HTTP and shuts down in the required safe order", async () => {
 		const calls: string[] = [];
 		const processLifecycle = createBrowserHelperProcess(

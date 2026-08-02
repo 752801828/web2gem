@@ -140,7 +140,7 @@ function proxyFromEnvironment(env) {
 	if (!value) return undefined;
 	try {
 		const url = new URL(value);
-		if (!['http:', 'https:', 'socks5:'].includes(url.protocol)) throw new Error();
+		if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
 		const username = decodeURIComponent(url.username);
 		const password = decodeURIComponent(url.password);
 		url.username = "";
