@@ -25,6 +25,7 @@ type ScriptResult = {
 	stdout: string;
 	stderr: string;
 };
+type ExecutableResult = ScriptResult & { missing: boolean };
 type AsyncPathCallback = (path: string) => Promise<void>;
 type AsyncDirCallback = (path: string) => Promise<void>;
 
@@ -36,7 +37,6 @@ const DOCKER_ONLY_ENV_KEYS = [
 	"SQLITE_PATH",
 	"SQLITE_BUSY_TIMEOUT_MS",
 	"NOVNC_PORT",
-	"BROWSER_HELPER_INTERNAL_URL",
 	"BROWSER_HELPER_INTERNAL_TOKEN",
 	"NOVNC_PASSWORD",
 	"NOVNC_PUBLIC_URL",
@@ -47,7 +47,6 @@ const DOCKER_ONLY_ENV_KEYS = [
 	"BROWSER_VISIBLE_IDLE_TIMEOUT_SEC",
 	"BROWSER_VISIBLE_SUBMISSION_TIMEOUT_SEC",
 	"BROWSER_AUTLOGIN_MAX_ATTEMPTS_PER_DAY",
-	"BROWSER_HELPER_CONTROL_PORT",
 	"BROWSER_MAX_CLOCK_SKEW_SEC",
 ];
 function coverageEntry(linePct = 100, branchPct = 100): CoverageEntry {
@@ -144,6 +143,30 @@ function runNodeScript(
 			(error, stdout, stderr) => {
 				done({
 					code: error && typeof error.code === "number" ? error.code : 0,
+					stdout,
+					stderr,
+				});
+			},
+		);
+	});
+}
+function runExecutable(
+	executable: string,
+	args: readonly string[],
+	unsetEnv: readonly string[] = [],
+): Promise<ExecutableResult> {
+	return new Promise<ExecutableResult>((done) => {
+		const env = { ...process.env };
+		for (const key of unsetEnv) delete env[key];
+		execFile(
+			executable,
+			[...args],
+			{ cwd: process.cwd(), env },
+			(error, stdout, stderr) => {
+				const code = (error as NodeJS.ErrnoException | null)?.code;
+				done({
+					code: typeof code === "number" ? code : error ? -1 : 0,
+					missing: code === "ENOENT",
 					stdout,
 					stderr,
 				});
@@ -533,9 +556,18 @@ describe("quality scripts", () => {
 			]);
 		const web2gemService = composeServiceBlock(compose, "web2gem");
 		const helperService = composeServiceBlock(compose, "browser-helper");
+		const servicesSection = compose.slice(
+			compose.indexOf("services:"),
+			compose.indexOf("\nvolumes:"),
+		);
 
-		assert.match(compose, /^\s{2}web2gem:\s*$/m);
-		assert.match(compose, /^\s{2}browser-helper:\s*$/m);
+		assert.deepEqual(
+			Array.from(
+				servicesSection.matchAll(/^ {2}([a-z0-9-]+):\s*$/gm),
+				(match) => match[1],
+			),
+			["web2gem", "browser-helper"],
+		);
 		assert.match(compose, /127\.0\.0\.1:\$\{NOVNC_PORT:-6080\}:6080/);
 		assert.equal((compose.match(/^\s{4}ports:\s*$/gm) || []).length, 2);
 		assert.match(
@@ -563,6 +595,12 @@ describe("quality scripts", () => {
 		assert.match(helperService, /healthcheck:/);
 		assert.match(helperService, /fetch\('http:\/\/127\.0\.0\.1:'/);
 		assert.match(helperService, /'\/health'/);
+		assert.match(
+			web2gemService,
+			/BROWSER_HELPER_INTERNAL_URL:\s*"http:\/\/browser-helper:6081"/,
+		);
+		assert.match(helperService, /BROWSER_HELPER_CONTROL_PORT:\s*"6081"/);
+		assert.match(helperService, /expose:\s*\n\s*- "6081"/);
 		for (const service of [web2gemService, helperService]) {
 			assert.match(
 				service,
@@ -617,7 +655,6 @@ describe("quality scripts", () => {
 		);
 
 		for (const key of [
-			"BROWSER_HELPER_INTERNAL_URL",
 			"BROWSER_HELPER_INTERNAL_TOKEN",
 			"NOVNC_PASSWORD",
 			"NOVNC_PUBLIC_URL",
@@ -628,10 +665,86 @@ describe("quality scripts", () => {
 			"BROWSER_VISIBLE_IDLE_TIMEOUT_SEC",
 			"BROWSER_VISIBLE_SUBMISSION_TIMEOUT_SEC",
 			"BROWSER_AUTLOGIN_MAX_ATTEMPTS_PER_DAY",
-			"BROWSER_HELPER_CONTROL_PORT",
 			"BROWSER_MAX_CLOCK_SKEW_SEC",
 		])
 			assert.match(dockerEnv, new RegExp(`^${key}=$`, "m"));
+		for (const internalOnly of [
+			"BROWSER_HELPER_INTERNAL_URL",
+			"BROWSER_HELPER_CONTROL_PORT",
+		])
+			assert.doesNotMatch(dockerEnv, new RegExp(`^${internalOnly}=`, "m"));
+
+		const deploymentFiles = `${helperDockerfile}\n${compose}`;
+		assert.doesNotMatch(
+			deploymentFiles,
+			/open-apis\/bot\/v2\/hook\/[A-Za-z0-9-]{20,}/,
+		);
+		assert.doesNotMatch(
+			deploymentFiles,
+			/(?:BROWSER_HELPER_INTERNAL_TOKEN|NOVNC_PASSWORD|FEISHU_WEBHOOK_URL|FEISHU_SIGNING_SECRET):\s*"(?!\$\{)[^"\n]+"/,
+		);
+	});
+	test("derives public noVNC URLs from NOVNC_PORT in rendered Compose", async () => {
+		await withTempFile(
+			"browser-helper.env",
+			"NOVNC_PORT=6099\n",
+			async (envPath) => {
+				const render = async () => {
+					const result = await runExecutable(
+						"docker",
+						[
+							"compose",
+							"--env-file",
+							envPath,
+							"--file",
+							join(process.cwd(), "compose.yaml"),
+							"config",
+							"--format",
+							"json",
+						],
+						["NOVNC_PORT", "NOVNC_PUBLIC_URL"],
+					);
+					if (result.missing) return null;
+					assert.equal(result.code, 0, result.stderr);
+					return requiredRecord(JSON.parse(result.stdout), "Compose config");
+				};
+				const assertRendered = (config: UnknownRecord, publicUrl: string) => {
+					const services = requiredRecord(config.services, "Compose services");
+					const helper = requiredRecord(
+						services["browser-helper"],
+						"browser-helper",
+					);
+					const web2gem = requiredRecord(services.web2gem, "web2gem");
+					const ports = helper.ports;
+					assert.equal(Array.isArray(ports), true);
+					const noVncPort = requiredRecord(
+						(ports as unknown[])[0],
+						"noVNC port",
+					);
+					assert.equal(String(noVncPort.published), "6099");
+					for (const service of [web2gem, helper]) {
+						const environment = requiredRecord(
+							service.environment,
+							"environment",
+						);
+						assert.equal(environment.NOVNC_PUBLIC_URL, publicUrl);
+					}
+				};
+
+				const derived = await render();
+				if (!derived) return;
+				assertRendered(derived, "http://127.0.0.1:6099/vnc.html");
+				await writeFile(
+					envPath,
+					"NOVNC_PORT=6099\nNOVNC_PUBLIC_URL=http://localhost:6099/custom.html\n",
+					"utf8",
+				);
+				const overridden = await render();
+				if (!overridden)
+					throw new Error("Docker disappeared during Compose test");
+				assertRendered(overridden, "http://localhost:6099/custom.html");
+			},
+		);
 	});
 	test("keeps env secret templates trackable in docker and git ignore files", async () => {
 		const dockerPatterns = parseIgnorePatterns(

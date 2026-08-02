@@ -5,6 +5,64 @@ const modulePath: string = "../../../browser-helper/main.mjs";
 const { createBrowserHelperProcess } = await import(modulePath);
 
 describe("browser helper process composition", () => {
+	test("uses sanitized ALL_PROXY settings for Chromium", () => {
+		for (const [key, proxyUrl] of [
+			["ALL_PROXY", "socks5://proxy-user:proxy-pass@proxy.test:1080"],
+			["all_proxy", "http://proxy-user:proxy-pass@proxy.test:8080"],
+		] as const) {
+			let browserOptions: Record<string, unknown> | undefined;
+			createBrowserHelperProcess(
+				{
+					internalToken: "test-internal-token",
+					novncPassword: "test-novnc-password",
+					visibleIdleTimeoutSec: 60,
+				},
+				new Uint8Array(32),
+				{
+					env: {
+						[key]: proxyUrl,
+						BROWSER_HELPER_INTERNAL_TOKEN: "must-not-enter-proxy",
+						NOVNC_PASSWORD: "must-not-enter-proxy",
+					},
+					createClient: () => ({}),
+					createBrowser: (options: Record<string, unknown>) => {
+						browserOptions = options;
+						return { close: async () => undefined };
+					},
+					createNoVnc: () => ({ stop: async () => undefined }),
+					createSessions: () => ({
+						hold: async () => undefined,
+						isActive: () => false,
+						requestStop: () => undefined,
+					}),
+					createNotifier: () => ({}),
+					createScheduler: () => ({
+						start: async () => undefined,
+						stop: async () => undefined,
+						reserve: () => () => undefined,
+					}),
+					createProfiles: () => ({}),
+					createServer: () => ({
+						start: async () => undefined,
+						beginStop: () => undefined,
+						drain: async () => undefined,
+					}),
+				},
+			);
+			assert.deepEqual(browserOptions?.proxy, {
+				server: proxyUrl.startsWith("socks5:")
+					? "socks5://proxy.test:1080"
+					: "http://proxy.test:8080",
+				username: "proxy-user",
+				password: "proxy-pass",
+			});
+			assert.doesNotMatch(
+				JSON.stringify(browserOptions?.proxy),
+				/must-not-enter-proxy/,
+			);
+		}
+	});
+
 	test("starts scheduler before HTTP and shuts down in the required safe order", async () => {
 		const calls: string[] = [];
 		const processLifecycle = createBrowserHelperProcess(

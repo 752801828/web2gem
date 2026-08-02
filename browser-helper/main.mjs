@@ -132,7 +132,13 @@ export async function main(options = {}) {
 }
 
 function proxyFromEnvironment(env) {
-	const value = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
+	const value =
+		env.HTTPS_PROXY ||
+		env.https_proxy ||
+		env.HTTP_PROXY ||
+		env.http_proxy ||
+		env.ALL_PROXY ||
+		env.all_proxy;
 	if (!value) return undefined;
 	try {
 		const url = new URL(value);
