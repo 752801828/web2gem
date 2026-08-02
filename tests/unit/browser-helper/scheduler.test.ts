@@ -167,7 +167,13 @@ function fixture(options: Record<string, unknown> = {}) {
 				};
 			},
 			async runLogin(input: Record<string, unknown>) {
-				calls.push(["login", Boolean(input.credentials), input.mode]);
+				calls.push([
+					"login",
+					Boolean(input.credentials),
+					input.mode,
+					input.accountId,
+					input.signal,
+				]);
 				if (typeof options.runLogin === "function")
 					return (options.runLogin as (value: unknown) => unknown)(input);
 				if (input.credentials && typeof input.beforeSubmit === "function")
@@ -738,9 +744,18 @@ describe("browser maintenance scheduler", () => {
 			accountId: "account-a",
 			mode: "visible",
 		});
-		for (let index = 0; index < 20 && !heartbeat; index += 1)
+		for (
+			let index = 0;
+			index < 20 &&
+			(!heartbeat || !active.calls.some(([name]) => name === "login"));
+			index += 1
+		)
 			await Promise.resolve();
 		assert.equal(typeof heartbeat, "function");
+		assert.equal(
+			active.calls.some(([name]) => name === "login"),
+			true,
+		);
 		heartbeat?.();
 		for (
 			let index = 0;
@@ -759,6 +774,10 @@ describe("browser maintenance scheduler", () => {
 		);
 		assert.equal(active.calls.filter(([name]) => name === "patch").length, 1);
 		assert.equal(active.calls.filter(([name]) => name === "close").length, 1);
+		const loginSignal = active.calls.find(([name]) => name === "login")?.[4] as
+			| AbortSignal
+			| undefined;
+		assert.equal(loginSignal?.aborted, true);
 		assert.deepEqual(
 			active.calls
 				.filter(([name]) => name === "release")

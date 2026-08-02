@@ -7,6 +7,7 @@ const { loadBrowserHelperConfig } = await import(configModulePath);
 const REQUIRED = {
 	WEB2GEM_INTERNAL_URL: "http://web2gem:52389",
 	BROWSER_HELPER_INTERNAL_TOKEN: "test-internal-token",
+	NOVNC_PASSWORD: "test-novnc-password",
 };
 
 describe("browser helper configuration", () => {
@@ -22,6 +23,7 @@ describe("browser helper configuration", () => {
 		assert.equal(config.visibleIdleTimeoutSec, 1_800);
 		assert.equal(config.controlPort, 6_081);
 		assert.equal(config.maxClockSkewSec, 120);
+		assert.equal(config.novncPassword, "test-novnc-password");
 		assert.equal(config.web2gemInternalUrl, "http://web2gem:52389/");
 		assert.equal(config.novncPublicUrl, "http://127.0.0.1:6080/vnc.html");
 		assert.equal(config.feishu, null);

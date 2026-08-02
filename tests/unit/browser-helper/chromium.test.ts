@@ -44,6 +44,12 @@ describe("browser helper Chromium lifecycle", () => {
 			},
 			profilesRoot: path.resolve("profiles"),
 			proxy: { server: "http://proxy.invalid:7897" },
+			env: {
+				PATH: "/usr/bin",
+				LANG: "C.UTF-8",
+				NOVNC_PASSWORD: "must-not-reach-browser",
+				BROWSER_HELPER_INTERNAL_TOKEN: "must-not-reach-browser",
+			},
 		});
 
 		assert.equal(await lifecycle.startHeadless("account-a"), context);
@@ -52,6 +58,11 @@ describe("browser helper Chromium lifecycle", () => {
 		assert.equal(launches[0]?.[1].headless, true);
 		assert.deepEqual(launches[0]?.[1].proxy, {
 			server: "http://proxy.invalid:7897",
+		});
+		assert.deepEqual(launches[0]?.[1].env, {
+			PATH: "/usr/bin",
+			LANG: "C.UTF-8",
+			DISPLAY: ":99",
 		});
 		const args = launches[0]?.[1].args as string[];
 		assert.equal(args.includes("--no-first-run"), true);

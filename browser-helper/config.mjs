@@ -8,6 +8,7 @@ export function loadBrowserHelperConfig(sourceEnv = process.env) {
 		const internalToken = requiredSecret(
 			sourceEnv.BROWSER_HELPER_INTERNAL_TOKEN,
 		);
+		const novncPassword = requiredSecret(sourceEnv.NOVNC_PASSWORD);
 		const novncPublicUrl = publicNovncUrl(
 			stringValue(sourceEnv.NOVNC_PUBLIC_URL) ||
 				"http://127.0.0.1:6080/vnc.html",
@@ -18,6 +19,7 @@ export function loadBrowserHelperConfig(sourceEnv = process.env) {
 		return Object.freeze({
 			web2gemInternalUrl,
 			internalToken,
+			novncPassword,
 			checkIntervalSec: integer(
 				sourceEnv.BROWSER_CHECK_INTERVAL_SEC,
 				21_600,

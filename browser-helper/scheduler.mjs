@@ -86,6 +86,9 @@ export function createMaintenanceQueue(handler) {
 
 	return Object.freeze({
 		enqueue,
+		isBusy(accountId) {
+			return active?.accountId === accountId || pending.has(accountId);
+		},
 		async waitForIdle() {
 			while (worker) await worker;
 		},
@@ -178,6 +181,7 @@ export function createBrowserScheduler(config, dependencies) {
 		let leaseTimer = null;
 		let leaseCycle = null;
 		let candidateCommitted = false;
+		const jobAbort = new AbortController();
 		const closeBrowserOnce = async () => {
 			if (!opened || browserClosed) return;
 			browserClosed = true;
@@ -206,6 +210,7 @@ export function createBrowserScheduler(config, dependencies) {
 					}
 					if (leaseLost) {
 						safeOperationalError(onOperationalError, "lease_lost");
+						jobAbort.abort(new BrowserMaintenanceError("lease_lost"));
 						await closeBrowserOnce();
 						return;
 					}
@@ -242,8 +247,10 @@ export function createBrowserScheduler(config, dependencies) {
 			assertLeaseActive();
 			const page = await activePage(context);
 			let result = await runLogin({
+				accountId: account.id,
 				page,
 				mode: job.mode,
+				signal: jobAbort.signal,
 				credentials: undefined,
 				nowSeconds: Math.floor(nowMs / 1_000),
 				serverDate: client.serverDate,
@@ -263,8 +270,10 @@ export function createBrowserScheduler(config, dependencies) {
 					const envelope = await client.getEncryptedCredentials(account.id);
 					const credentials = decryptCredentials(account.id, envelope);
 					result = await runLogin({
+						accountId: account.id,
 						page,
 						mode: job.mode,
+						signal: jobAbort.signal,
 						credentials,
 						nowSeconds: Math.floor(nowMs / 1_000),
 						serverDate: client.serverDate,
@@ -427,6 +436,7 @@ export function createBrowserScheduler(config, dependencies) {
 
 	return Object.freeze({
 		enqueue: queue.enqueue,
+		isBusy: queue.isBusy,
 		scan,
 		waitForIdle: queue.waitForIdle,
 		async start() {

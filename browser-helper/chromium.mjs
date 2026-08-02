@@ -27,7 +27,9 @@ export function createChromiumLifecycle({
 	profilesRoot = "/profiles",
 	executablePath = "/usr/bin/chromium",
 	proxy,
+	env = process.env,
 } = {}) {
+	const browserEnv = safeBrowserEnvironment(env);
 	let activeContext = null;
 	let closePromise = null;
 
@@ -40,6 +42,7 @@ export function createChromiumLifecycle({
 					executablePath,
 					headless,
 					proxy,
+					env: browserEnv,
 					args: [...CONTAINER_ARGS],
 				},
 			),
@@ -75,5 +78,31 @@ export function createChromiumLifecycle({
 				if (closePromise === attempt) closePromise = null;
 			}
 		},
+	};
+}
+
+function safeBrowserEnvironment(source) {
+	const allowed = [
+		"PATH",
+		"HOME",
+		"LANG",
+		"LANGUAGE",
+		"LC_ALL",
+		"LC_CTYPE",
+		"TZ",
+		"TMPDIR",
+		"TMP",
+		"TEMP",
+		"SSL_CERT_FILE",
+		"SSL_CERT_DIR",
+		"NODE_EXTRA_CA_CERTS",
+	];
+	return {
+		...Object.fromEntries(
+			allowed
+				.filter((key) => typeof source?.[key] === "string")
+				.map((key) => [key, source[key]]),
+		),
+		DISPLAY: ":99",
 	};
 }
