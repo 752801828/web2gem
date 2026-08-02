@@ -1,14 +1,35 @@
 import type { JSX } from "preact";
-import { resolveConfirmation } from "../session";
 import { tr } from "../i18n";
 import { destructiveConfirmationText } from "../logic";
+import { resolveConfirmation } from "../session";
 import { confirmationDraft } from "../state";
 import { DialogSurface } from "./DialogSurface";
 
 export function ConfirmationModal(): JSX.Element | null {
 	const draft = confirmationDraft.value;
 	if (!draft) return null;
-	const copy = destructiveConfirmationText(draft.count, draft.targetLabel);
+	const copy =
+		draft.action === "delete"
+			? destructiveConfirmationText(draft.count, draft.targetLabel)
+			: {
+					title: tr(
+						draft.action === "clear_browser_credentials"
+							? "Clear browser credentials title"
+							: "Delete browser profile title",
+					),
+					description: `${tr("Browser destructive target", {
+						label: draft.accountLabel,
+					})}. ${tr(
+						draft.action === "clear_browser_credentials"
+							? "Clear browser credentials description"
+							: "Delete browser profile description",
+					)}`,
+					confirmLabel: tr(
+						draft.action === "clear_browser_credentials"
+							? "Clear credentials"
+							: "Delete browser profile",
+					),
+				};
 	return (
 		<DialogSurface
 			labelledBy="confirm-title"

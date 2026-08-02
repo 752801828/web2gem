@@ -17,6 +17,39 @@ const stateSchema = v.union([
 
 const nullableNumber = v.nullable(v.number());
 
+const browserStateSchema = v.union([
+	v.literal("idle"),
+	v.literal("checking"),
+	v.literal("ready"),
+	v.literal("login_required"),
+	v.literal("manual_action_required"),
+	v.literal("error"),
+]);
+
+const browserStatusSchema = v.strictObject({
+	credentialsConfigured: v.boolean(),
+	state: browserStateSchema,
+	lastCheckAtMs: nullableNumber,
+	lastCookieUpdateAtMs: nullableNumber,
+	lastAutoLoginAtMs: nullableNumber,
+	failureCode: v.nullable(v.string()),
+});
+
+const browserAdminStatusSchema = v.strictObject({
+	credentialsConfigured: v.boolean(),
+	status: v.strictObject({
+		state: browserStateSchema,
+		lastCheckAtMs: nullableNumber,
+		lastCookieUpdateAtMs: nullableNumber,
+		lastAutoLoginAtMs: nullableNumber,
+		failureCode: v.nullable(v.string()),
+	}),
+});
+
+const browserOpenSchema = v.strictObject({ url: v.string() });
+const browserStoppedSchema = v.strictObject({ stopped: v.boolean() });
+const browserProfileDeletedSchema = v.strictObject({ deleted: v.boolean() });
+
 const accountSchema = v.strictObject({
 	id: v.string(),
 	label: v.nullable(v.string()),
@@ -31,6 +64,7 @@ const accountSchema = v.strictObject({
 	last_refresh_success_at_ms: nullableNumber,
 	created_at_ms: v.number(),
 	updated_at_ms: v.number(),
+	browser: browserStatusSchema,
 });
 
 const statsSchema = v.strictObject({
@@ -92,6 +126,9 @@ const modelRoutingSchema = v.strictObject({
 
 export type GeminiAccountIssue = v.InferOutput<typeof issueSchema>;
 export type GeminiAccountState = v.InferOutput<typeof stateSchema>;
+export type BrowserState = v.InferOutput<typeof browserStateSchema>;
+export type BrowserAccountStatus = v.InferOutput<typeof browserStatusSchema>;
+export type BrowserAdminStatus = v.InferOutput<typeof browserAdminStatusSchema>;
 export type GeminiAccount = v.InferOutput<typeof accountSchema>;
 export type AccountStats = v.InferOutput<typeof statsSchema>;
 export type MutationError = v.InferOutput<typeof mutationErrorSchema>;
@@ -122,4 +159,30 @@ export function parseModelRoutingOverview(
 	if (!parsed.success)
 		throw new Error("admin model routing response is invalid");
 	return parsed.output;
+}
+
+export function parseBrowserAdminStatus(value: unknown): BrowserAdminStatus {
+	const parsed = v.safeParse(browserAdminStatusSchema, value);
+	if (!parsed.success)
+		throw new Error("admin browser status response is invalid");
+	return parsed.output;
+}
+
+export function parseBrowserOpen(value: unknown): { url: string } {
+	const parsed = v.safeParse(browserOpenSchema, value);
+	if (!parsed.success)
+		throw new Error("admin browser open response is invalid");
+	return parsed.output;
+}
+
+export function parseBrowserStopped(value: unknown): void {
+	const parsed = v.safeParse(browserStoppedSchema, value);
+	if (!parsed.success || !parsed.output.stopped)
+		throw new Error("admin browser stop response is invalid");
+}
+
+export function parseBrowserProfileDeleted(value: unknown): void {
+	const parsed = v.safeParse(browserProfileDeletedSchema, value);
+	if (!parsed.success || !parsed.output.deleted)
+		throw new Error("admin browser profile response is invalid");
 }

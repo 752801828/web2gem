@@ -1,6 +1,14 @@
 import { useComputed } from "@preact/signals";
 import type { JSX } from "preact";
-import { openEdit, runAction } from "../actions";
+import {
+	checkBrowserForAccount,
+	clearBrowserLogin,
+	deleteBrowserProfile,
+	openBrowserCredentials,
+	openBrowserForAccount,
+	openEdit,
+	runAction,
+} from "../actions";
 import { tr } from "../i18n";
 import { Icon } from "../icons";
 import {
@@ -8,9 +16,43 @@ import {
 	accountDisplayName,
 	identifier,
 	identifierKey,
+	relativeTime,
 } from "../logic";
 import { rowBusy } from "../state";
 import type { AccountAction, GeminiAccount } from "../types";
+
+export function BrowserAccountSummary({
+	account,
+}: {
+	account: GeminiAccount;
+}): JSX.Element {
+	return (
+		<div class="browser-summary">
+			<div class="browser-summary-badges">
+				<span
+					class={`badge ${
+						account.browser.credentialsConfigured
+							? "browser-configured"
+							: "browser-unconfigured"
+					}`}
+				>
+					{tr(
+						account.browser.credentialsConfigured
+							? "Configured"
+							: "Not configured",
+					)}
+				</span>
+				<span class={`badge browser-state-${account.browser.state}`}>
+					{tr(account.browser.state)}
+				</span>
+			</div>
+			<span class="row-sub">
+				{tr("Last browser check")}:{" "}
+				{relativeTime(account.browser.lastCheckAtMs)}
+			</span>
+		</div>
+	);
+}
 
 export function AccountActions({
 	account,
@@ -42,6 +84,42 @@ export function AccountActions({
 					{tr("More")}
 				</summary>
 				<div class="action-menu-items">
+					<button
+						type="button"
+						disabled={!!busy}
+						onClick={() => openBrowserCredentials(account)}
+					>
+						{tr("Configure login")}
+					</button>
+					<button
+						type="button"
+						disabled={!!busy || !account.browser.credentialsConfigured}
+						onClick={() => void clearBrowserLogin(account)}
+					>
+						{tr("Clear credentials")}
+					</button>
+					<button
+						type="button"
+						disabled={!!busy || !account.enabled}
+						onClick={() => void checkBrowserForAccount(account)}
+					>
+						{tr("Check now")}
+					</button>
+					<button
+						type="button"
+						disabled={!!busy || !account.enabled}
+						onClick={() => void openBrowserForAccount(account)}
+					>
+						{tr("Open browser")}
+					</button>
+					<button
+						type="button"
+						disabled={!!busy}
+						class="danger"
+						onClick={() => void deleteBrowserProfile(account)}
+					>
+						{tr("Delete browser profile")}
+					</button>
 					<button
 						type="button"
 						disabled={!!busy}

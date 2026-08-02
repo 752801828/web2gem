@@ -5,7 +5,7 @@ import { statusLabel, tr } from "../i18n";
 import { accountDisplayName, identifierKey, relativeTime } from "../logic";
 import { accounts, loading, rowBusy, selected } from "../state";
 import type { GeminiAccount } from "../types";
-import { AccountActions } from "./AccountActions";
+import { AccountActions, BrowserAccountSummary } from "./AccountActions";
 import { accountIdentity, issueSummary, toggleSelected } from "./cells";
 
 const AccountCard = memo(function AccountCardView({
@@ -43,6 +43,7 @@ const AccountCard = memo(function AccountCardView({
 					{statusLabel(account.state)}
 				</span>
 			</div>
+			<BrowserAccountSummary account={account} />
 			<dl class="account-facts">
 				<div>
 					<dt>{tr("Last used")}</dt>

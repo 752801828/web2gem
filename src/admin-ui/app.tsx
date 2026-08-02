@@ -1,18 +1,19 @@
 import type { JSX } from "preact";
 import { useEffect } from "preact/hooks";
 import { loadAccounts } from "./actions";
-import { restoreAdminKey } from "./session";
+import { BrowserCredentialsModal } from "./components/BrowserCredentialsModal";
 import { ConfirmationModal } from "./components/ConfirmationModal";
 import { EditModal } from "./components/EditModal";
+import { tr } from "./i18n";
 import { AuthPanel } from "./sections/AuthPanel";
 import { ImportPanel } from "./sections/ImportPanel";
-import { OverviewSection } from "./sections/OverviewSection";
 import { ModelRoutingSection } from "./sections/ModelRoutingSection";
+import { OverviewSection } from "./sections/OverviewSection";
 import { Toasts } from "./sections/Toasts";
 import { Topbar } from "./sections/Topbar";
 import { Workspace } from "./sections/Workspace";
-import { tr } from "./i18n";
-import { adminKey, connectionVerified } from "./state";
+import { restoreAdminKey } from "./session";
+import { adminKey, browserCredentialsDraft, connectionVerified } from "./state";
 
 export function App(): JSX.Element {
 	useEffect(() => {
@@ -41,6 +42,7 @@ export function App(): JSX.Element {
 				) : null}
 			</main>
 			<EditModal />
+			{browserCredentialsDraft.value ? <BrowserCredentialsModal /> : null}
 			<ConfirmationModal />
 			<Toasts />
 		</>

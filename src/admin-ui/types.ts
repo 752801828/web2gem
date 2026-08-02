@@ -3,6 +3,9 @@ import type { ModelRoutingRoute } from "./schemas";
 export type {
 	AccountOverview,
 	AccountStats,
+	BrowserAccountStatus,
+	BrowserAdminStatus,
+	BrowserState,
 	GeminiAccount,
 	GeminiAccountIssue,
 	GeminiAccountState,
@@ -15,6 +18,12 @@ export type {
 } from "./schemas";
 
 export type AccountIdentifier = { id: string };
+
+export type BrowserCredentialsInput = {
+	email: string;
+	password: string;
+	totpSecret: string;
+};
 
 export type AccountAction = "enable" | "disable" | "delete" | "refresh";
 

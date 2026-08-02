@@ -54,6 +54,14 @@ export function uiAccount(
 		last_refresh_success_at_ms: null,
 		created_at_ms: 1000,
 		updated_at_ms: 1000,
+		browser: {
+			credentialsConfigured: false,
+			state: "idle",
+			lastCheckAtMs: null,
+			lastCookieUpdateAtMs: null,
+			lastAutoLoginAtMs: null,
+			failureCode: null,
+		},
 		...overrides,
 	};
 }

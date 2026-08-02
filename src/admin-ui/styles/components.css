@@ -165,6 +165,34 @@ td.empty {
 	background: var(--info-soft);
 	color: var(--info);
 }
+.browser-summary {
+	display: grid;
+	min-width: 150px;
+	gap: 5px;
+}
+.browser-summary-badges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+}
+.browser-configured,
+.browser-state-ready {
+	border-color: color-mix(in srgb, var(--success) 32%, var(--line));
+	background: var(--success-soft);
+	color: var(--success);
+}
+.browser-state-checking {
+	border-color: color-mix(in srgb, var(--info) 32%, var(--line));
+	background: var(--info-soft);
+	color: var(--info);
+}
+.browser-state-login_required,
+.browser-state-manual_action_required,
+.browser-state-error {
+	border-color: color-mix(in srgb, var(--danger) 32%, var(--line));
+	background: var(--danger-soft);
+	color: var(--danger);
+}
 
 /* Model route ordering */
 .model-route-list {
@@ -286,7 +314,7 @@ td.empty {
 	top: calc(100% + 5px);
 	right: 0;
 	display: grid;
-	width: 148px;
+	width: 210px;
 	gap: 2px;
 	border: 1px solid var(--line);
 	border-radius: var(--radius-md);
@@ -336,6 +364,9 @@ td.empty {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 6px;
+	margin-top: var(--space-3);
+}
+.account-card > .browser-summary {
 	margin-top: var(--space-3);
 }
 .account-facts {

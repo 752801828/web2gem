@@ -73,6 +73,44 @@ const zh = {
 	"Current issue": "当前问题",
 	"Last refresh": "最近刷新",
 	"Status checked": "状态检查",
+	Browser: "浏览器",
+	"Browser login": "浏览器登录",
+	"Configure login": "配置登录",
+	"Clear credentials": "清除登录凭据",
+	"Check now": "立即检查",
+	"Open browser": "打开浏览器",
+	"Delete browser profile": "删除浏览器 Profile",
+	"Not configured": "未配置",
+	"Last browser check": "最近浏览器检查",
+	"Browser credentials saved": "浏览器登录凭据已保存",
+	"Failed to save browser credentials": "浏览器登录凭据保存失败",
+	"Browser credentials cleared": "浏览器登录凭据已清除",
+	"Failed to clear browser credentials": "浏览器登录凭据清除失败",
+	"Browser check queued": "浏览器检查已排队",
+	"Failed to queue browser check": "浏览器检查排队失败",
+	"Browser profile deleted": "浏览器 Profile 已删除",
+	"Failed to delete browser profile": "浏览器 Profile 删除失败",
+	"Browser popup was blocked": "浏览器弹出窗口被拦截",
+	"Stop visible browser confirmation":
+		"已有其他账号的浏览器会话正在运行。是否先停止它再重试？",
+	"Failed to stop visible browser": "可见浏览器停止失败",
+	"Failed to open browser": "浏览器打开失败",
+	"Opening browser": "正在打开浏览器",
+	"Browser waiting message": "正在等待安全的 noVNC 会话…",
+	"Browser credential help": "凭据会加密保存，仅供 Docker 内的自动登录使用。",
+	Email: "电子邮箱",
+	Password: "密码",
+	"Authenticator seed": "身份验证器密钥",
+	"Authenticator seed help":
+		"请填写 Base32 身份验证器密钥，不是当前的 6 位验证码。",
+	"Leave configured fields blank": "已配置的字段留空即保留原值。",
+	"Save login": "保存登录凭据",
+	"Clear browser credentials title": "清除浏览器登录凭据？",
+	"Clear browser credentials description":
+		"这会删除加密登录凭据，不会删除已保存的 CK 或浏览器 Profile。",
+	"Delete browser profile title": "删除浏览器 Profile？",
+	"Delete browser profile description":
+		"这会删除持久化的浏览器 Profile。SQLite 中的 CK 和加密登录凭据会保留。",
 	Actions: "操作",
 	More: "更多",
 	Rename: "重命名",
@@ -148,6 +186,12 @@ const zh = {
 	user_action: "需人工处理",
 	location: "地区或 IP 受限",
 	transient: "暂时失败",
+	idle: "空闲",
+	checking: "检查中",
+	ready: "就绪",
+	login_required: "需要登录",
+	manual_action_required: "需要人工处理",
+	error: "错误",
 	"selected account(s)": "所选账号",
 	"loaded account(s)": "当前加载的账号",
 } as const;
@@ -186,6 +230,7 @@ type TranslationTemplateParameters = {
 	"Selected count": { count: number };
 	"Cookie value required": { name: string };
 	"Cookie value only": { name: string };
+	"Browser destructive target": { label: string };
 };
 
 const templateEn = {
@@ -215,6 +260,7 @@ const templateEn = {
 	"Selected count": "{count} Selected",
 	"Cookie value required": "{name} is required",
 	"Cookie value only": "{name} must be a value only",
+	"Browser destructive target": "Account “{label}”",
 } as const;
 
 const templateZh: Record<keyof typeof templateEn, string> = {
@@ -244,6 +290,7 @@ const templateZh: Record<keyof typeof templateEn, string> = {
 	"Selected count": "已选择 {count} 个",
 	"Cookie value required": "需要填写 {name}",
 	"Cookie value only": "{name} 只能填写值本身",
+	"Browser destructive target": "账号“{label}”",
 };
 
 type TranslationTemplateKey = keyof typeof templateEn;
@@ -299,6 +346,10 @@ const actionKeys = {
 	enable: "Enable",
 	disable: "Disable",
 	delete: "Delete",
+	browser_credentials: "Browser login",
+	browser_check: "Check now",
+	browser_open: "Open browser",
+	browser_profile: "Delete browser profile",
 } as const satisfies Record<string, TranslationKey>;
 
 export function localActionLabel(action: string, sentence = false): string {

@@ -5,9 +5,9 @@ import { AccountRows } from "../components/AccountRows";
 import { tr } from "../i18n";
 import { Icon } from "../icons";
 import { identifier, identifierKey } from "../logic";
-import { hasFilters } from "../state";
 import {
 	accounts,
+	hasFilters,
 	loading,
 	nextCursor,
 	pageIndex,
@@ -78,6 +78,7 @@ export function Workspace(): JSX.Element {
 							<th>{tr("Current issue")}</th>
 							<th>{tr("Last refresh")}</th>
 							<th>{tr("Status checked")}</th>
+							<th>{tr("Browser")}</th>
 							<th>{tr("Actions")}</th>
 						</tr>
 					</thead>

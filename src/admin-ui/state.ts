@@ -19,12 +19,23 @@ export const accountStates = [
 ] as const satisfies readonly GeminiAccountState[];
 
 type ToastItem = { id: number; message: string; kind?: "error" };
-type ConfirmationDraft = {
-	action: "delete";
-	count: number;
-	targetLabel: string;
-};
+type ConfirmationDraft =
+	| {
+			action: "delete";
+			count: number;
+			targetLabel: string;
+	  }
+	| {
+			action: "clear_browser_credentials" | "delete_browser_profile";
+			accountId: string;
+			accountLabel: string;
+	  };
 type EditDraft = { key: string; label: string };
+type BrowserCredentialsDraft = {
+	accountId: string;
+	accountLabel: string;
+	credentialsConfigured: boolean;
+};
 
 export function emptyModelRoutingDrafts(): Record<
 	ModelFamily,
@@ -47,6 +58,7 @@ type ProtectedAdminState = {
 	accountStats: AccountStats | null;
 	loading: boolean;
 	editDraft: EditDraft | null;
+	browserCredentialsDraft: BrowserCredentialsDraft | null;
 	importBusy: boolean;
 	editBusy: boolean;
 	batchBusy: string;
@@ -70,6 +82,7 @@ export function createProtectedAdminState(): ProtectedAdminState {
 		accountStats: null,
 		loading: false,
 		editDraft: null,
+		browserCredentialsDraft: null,
 		importBusy: false,
 		editBusy: false,
 		batchBusy: "",
@@ -99,6 +112,9 @@ export const pageIndex = signal(initialProtectedState.pageIndex);
 export const nextCursor = signal(initialProtectedState.nextCursor);
 export const toastItems = signal<ToastItem[]>([]);
 export const editDraft = signal(initialProtectedState.editDraft);
+export const browserCredentialsDraft = signal(
+	initialProtectedState.browserCredentialsDraft,
+);
 export const importLabel = signal("");
 export const importPsid = signal("");
 export const importPsidts = signal("");

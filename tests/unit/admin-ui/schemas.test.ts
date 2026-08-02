@@ -26,6 +26,22 @@ describe("admin UI response schemas", () => {
 			() =>
 				parseOverview({
 					...overview,
+					items: [
+						{
+							...account,
+							browser: {
+								...account.browser,
+								credential_ciphertext: "secret",
+							},
+						},
+					],
+				}),
+			/admin account overview response is invalid/,
+		);
+		assert.throws(
+			() =>
+				parseOverview({
+					...overview,
 					items: [{ ...account, cookie_hash: "secret" }],
 				}),
 			/admin account overview response is invalid/,

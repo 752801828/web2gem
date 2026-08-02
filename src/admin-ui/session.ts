@@ -6,6 +6,7 @@ import {
 	adminKey,
 	authExpanded,
 	batchBusy,
+	browserCredentialsDraft,
 	confirmationDraft,
 	connectionVerified,
 	createProtectedAdminState,
@@ -129,6 +130,7 @@ export function invalidateAdminSession(): void {
 	pageIndex.value = reset.pageIndex;
 	nextCursor.value = reset.nextCursor;
 	editDraft.value = reset.editDraft;
+	browserCredentialsDraft.value = reset.browserCredentialsDraft;
 	confirmationDraft.value = reset.confirmationDraft;
 	loading.value = reset.loading;
 	modelRoutingLoading.value = reset.modelRoutingLoading;
@@ -229,6 +231,18 @@ export function confirmDeletion(
 ): Promise<boolean> {
 	resolveConfirmation(false);
 	confirmationDraft.value = { action: "delete", count, targetLabel };
+	return new Promise((resolve) => {
+		confirmationResolver = resolve;
+	});
+}
+
+export function confirmBrowserDestructiveAction(
+	action: "clear_browser_credentials" | "delete_browser_profile",
+	accountId: string,
+	accountLabel: string,
+): Promise<boolean> {
+	resolveConfirmation(false);
+	confirmationDraft.value = { action, accountId, accountLabel };
 	return new Promise((resolve) => {
 		confirmationResolver = resolve;
 	});

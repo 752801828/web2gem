@@ -1,4 +1,8 @@
 import {
+	parseBrowserAdminStatus,
+	parseBrowserOpen,
+	parseBrowserProfileDeleted,
+	parseBrowserStopped,
 	parseModelRoutingOverview,
 	parseMutation,
 	parseOverview,
@@ -7,10 +11,12 @@ import type {
 	AccountAction,
 	AccountIdentifier,
 	AccountOverview,
+	BrowserAdminStatus,
+	BrowserCredentialsInput,
 	GeminiAccountState,
 	ModelFamily,
-	ModelRoutingOverview,
 	ModelRouteTuple,
+	ModelRoutingOverview,
 	MutationResult,
 } from "./types";
 
@@ -49,6 +55,10 @@ type UpdateInput = { id: string; label: string | null };
 
 function accountResourcePath(id: string): string {
 	return `${API_PATH}/${encodeURIComponent(id)}`;
+}
+
+function accountBrowserPath(id: string, action: string): string {
+	return `${accountResourcePath(id)}/browser/${action}`;
 }
 
 function mergeMutationResults(
@@ -176,6 +186,72 @@ export async function resetModelRoutePriority(
 	return parseModelRoutingOverview(
 		await request(session, `${MODEL_ROUTING_API_PATH}/${family}`, {
 			method: "DELETE",
+		}),
+	);
+}
+
+export async function configureBrowserCredentials(
+	session: AdminApiSession,
+	accountId: string,
+	credentials: BrowserCredentialsInput,
+): Promise<BrowserAdminStatus> {
+	return parseBrowserAdminStatus(
+		await request(session, accountBrowserPath(accountId, "credentials"), {
+			method: "PUT",
+			body: credentials,
+		}),
+	);
+}
+
+export async function clearBrowserCredentials(
+	session: AdminApiSession,
+	accountId: string,
+): Promise<BrowserAdminStatus> {
+	return parseBrowserAdminStatus(
+		await request(session, accountBrowserPath(accountId, "credentials"), {
+			method: "DELETE",
+		}),
+	);
+}
+
+export async function checkBrowserNow(
+	session: AdminApiSession,
+	accountId: string,
+): Promise<BrowserAdminStatus> {
+	return parseBrowserAdminStatus(
+		await request(session, accountBrowserPath(accountId, "check"), {
+			method: "POST",
+		}),
+	);
+}
+
+export async function openAccountBrowser(
+	session: AdminApiSession,
+	accountId: string,
+): Promise<{ url: string }> {
+	return parseBrowserOpen(
+		await request(session, accountBrowserPath(accountId, "open"), {
+			method: "POST",
+		}),
+	);
+}
+
+export async function stopAccountBrowser(
+	session: AdminApiSession,
+): Promise<void> {
+	parseBrowserStopped(
+		await request(session, "/admin/browser/stop", { method: "POST" }),
+	);
+}
+
+export async function deleteAccountBrowserProfile(
+	session: AdminApiSession,
+	accountId: string,
+): Promise<void> {
+	parseBrowserProfileDeleted(
+		await request(session, accountBrowserPath(accountId, "profile"), {
+			method: "DELETE",
+			body: { confirmAccountId: accountId },
 		}),
 	);
 }

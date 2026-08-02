@@ -23,8 +23,9 @@ export function withAdminWindow<T>(
 export function withAdminEnvironment<T>(
 	fetchImpl: unknown,
 	run: AsyncRun<T>,
+	overrides: Record<string, unknown> = {},
 ): Promise<T> {
-	return withAdminWindow(() => withAdminFetch(fetchImpl, run));
+	return withAdminWindow(() => withAdminFetch(fetchImpl, run), overrides);
 }
 
 export function createMemoryStorage(initial: Record<string, unknown> = {}) {
