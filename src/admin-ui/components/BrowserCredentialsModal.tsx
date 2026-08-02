@@ -23,11 +23,15 @@ export function createBrowserCredentialBuffer(): BrowserCredentialBuffer {
 	};
 }
 
-export function BrowserCredentialsModal(): JSX.Element | null {
+export function BrowserCredentialsModal({
+	buffer: providedBuffer,
+}: {
+	buffer?: BrowserCredentialBuffer;
+} = {}): JSX.Element | null {
 	const draft = browserCredentialsDraft.value;
 	const bufferRef = useRef<BrowserCredentialBuffer | null>(null);
 	bufferRef.current ??= createBrowserCredentialBuffer();
-	const buffer = bufferRef.current;
+	const buffer = providedBuffer || bufferRef.current;
 	const mounted = useRef(true);
 	const [, render] = useState(0);
 	const [busy, setBusy] = useState(false);
@@ -106,7 +110,9 @@ export function BrowserCredentialsModal(): JSX.Element | null {
 					<input
 						data-dialog-initial
 						type="email"
+						name="email"
 						autoComplete="username"
+						spellcheck={false}
 						required={!draft.credentialsConfigured}
 						value={buffer.values.email}
 						onInput={(event) =>
@@ -118,6 +124,7 @@ export function BrowserCredentialsModal(): JSX.Element | null {
 					{tr("Password")}
 					<input
 						type="password"
+						name="password"
 						autoComplete="current-password"
 						required={!draft.credentialsConfigured}
 						value={buffer.values.password}
@@ -133,6 +140,7 @@ export function BrowserCredentialsModal(): JSX.Element | null {
 					{tr("Authenticator seed")}
 					<input
 						type="password"
+						name="totpSecret"
 						autoComplete="one-time-code"
 						required={!draft.credentialsConfigured}
 						value={buffer.values.totpSecret}

@@ -62,6 +62,8 @@ export function AccountActions({
 	const key = identifierKey(account);
 	const busy = useComputed(() => rowBusy.value[key] || "").value;
 	const label = accountDisplayName(account);
+	const actionAriaLabel = (action: string): string =>
+		tr("Account action label", { action, label });
 	const run = (action: AccountAction): void => {
 		void runAction(action, [identifier(account)], {
 			scope: "row",
@@ -87,6 +89,7 @@ export function AccountActions({
 					<button
 						type="button"
 						disabled={!!busy}
+						aria-label={actionAriaLabel(tr("Configure login"))}
 						onClick={() => openBrowserCredentials(account)}
 					>
 						{tr("Configure login")}
@@ -94,6 +97,7 @@ export function AccountActions({
 					<button
 						type="button"
 						disabled={!!busy || !account.browser.credentialsConfigured}
+						aria-label={actionAriaLabel(tr("Clear credentials"))}
 						onClick={() => void clearBrowserLogin(account)}
 					>
 						{tr("Clear credentials")}
@@ -101,6 +105,7 @@ export function AccountActions({
 					<button
 						type="button"
 						disabled={!!busy || !account.enabled}
+						aria-label={actionAriaLabel(tr("Check now"))}
 						onClick={() => void checkBrowserForAccount(account)}
 					>
 						{tr("Check now")}
@@ -108,6 +113,7 @@ export function AccountActions({
 					<button
 						type="button"
 						disabled={!!busy || !account.enabled}
+						aria-label={actionAriaLabel(tr("Open browser"))}
 						onClick={() => void openBrowserForAccount(account)}
 					>
 						{tr("Open browser")}
@@ -116,6 +122,7 @@ export function AccountActions({
 						type="button"
 						disabled={!!busy}
 						class="danger"
+						aria-label={actionAriaLabel(tr("Delete browser profile"))}
 						onClick={() => void deleteBrowserProfile(account)}
 					>
 						{tr("Delete browser profile")}
@@ -123,6 +130,7 @@ export function AccountActions({
 					<button
 						type="button"
 						disabled={!!busy}
+						aria-label={actionAriaLabel(tr("Rename"))}
 						onClick={() => openEdit(account)}
 					>
 						<Icon name="edit" />
@@ -131,6 +139,9 @@ export function AccountActions({
 					<button
 						type="button"
 						disabled={!!busy}
+						aria-label={actionAriaLabel(
+							tr(account.enabled ? "Disable" : "Enable"),
+						)}
 						onClick={() => run(account.enabled ? "disable" : "enable")}
 					>
 						{tr(account.enabled ? "Disable" : "Enable")}
@@ -139,6 +150,7 @@ export function AccountActions({
 						type="button"
 						disabled={!!busy}
 						class="danger"
+						aria-label={actionAriaLabel(tr("Delete"))}
 						onClick={() => run("delete")}
 					>
 						<Icon name="trash" />

@@ -63,7 +63,7 @@ type ProtectedAdminState = {
 	editBusy: boolean;
 	batchBusy: string;
 	rowBusy: Record<string, string>;
-	operationBusyKeys: Set<string>;
+	operationBusyKeys: Map<string, string>;
 	confirmationDraft: ConfirmationDraft | null;
 	authExpanded: boolean;
 	modelRouting: ModelRoutingOverview | null;
@@ -87,7 +87,7 @@ export function createProtectedAdminState(): ProtectedAdminState {
 		editBusy: false,
 		batchBusy: "",
 		rowBusy: {},
-		operationBusyKeys: new Set(),
+		operationBusyKeys: new Map(),
 		confirmationDraft: null,
 		authExpanded: true,
 		modelRouting: null,
@@ -141,19 +141,31 @@ export const modelRoutingDrafts = signal(
 	initialProtectedState.modelRoutingDrafts,
 );
 
-export function claimAccountOperation(keys: readonly string[]): boolean {
+export type AccountOperationClaim = {
+	owner: string;
+	keys: readonly string[];
+};
+
+let accountOperationOwner = 0;
+
+export function claimAccountOperation(
+	keys: readonly string[],
+): AccountOperationClaim | null {
 	const uniqueKeys = [...new Set(keys.filter(Boolean))];
-	if (uniqueKeys.some((key) => operationBusyKeys.value.has(key))) return false;
-	operationBusyKeys.value = new Set([
+	if (uniqueKeys.some((key) => operationBusyKeys.value.has(key))) return null;
+	const owner = `account-operation-${++accountOperationOwner}`;
+	operationBusyKeys.value = new Map([
 		...operationBusyKeys.value,
-		...uniqueKeys,
+		...uniqueKeys.map((key) => [key, owner] as const),
 	]);
-	return true;
+	return { owner, keys: uniqueKeys };
 }
 
-export function releaseAccountOperation(keys: readonly string[]): void {
-	const next = new Set(operationBusyKeys.value);
-	for (const key of keys) next.delete(key);
+export function releaseAccountOperation(claim: AccountOperationClaim): void {
+	const next = new Map(operationBusyKeys.value);
+	for (const key of claim.keys) {
+		if (next.get(key) === claim.owner) next.delete(key);
+	}
 	operationBusyKeys.value = next;
 }
 

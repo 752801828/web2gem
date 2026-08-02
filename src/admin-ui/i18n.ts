@@ -231,6 +231,7 @@ type TranslationTemplateParameters = {
 	"Cookie value required": { name: string };
 	"Cookie value only": { name: string };
 	"Browser destructive target": { label: string };
+	"Account action label": { action: string; label: string };
 };
 
 const templateEn = {
@@ -261,6 +262,7 @@ const templateEn = {
 	"Cookie value required": "{name} is required",
 	"Cookie value only": "{name} must be a value only",
 	"Browser destructive target": "Account “{label}”",
+	"Account action label": "{action} account “{label}”",
 } as const;
 
 const templateZh: Record<keyof typeof templateEn, string> = {
@@ -291,6 +293,7 @@ const templateZh: Record<keyof typeof templateEn, string> = {
 	"Cookie value required": "需要填写 {name}",
 	"Cookie value only": "{name} 只能填写值本身",
 	"Browser destructive target": "账号“{label}”",
+	"Account action label": "对账号“{label}”执行{action}",
 };
 
 type TranslationTemplateKey = keyof typeof templateEn;

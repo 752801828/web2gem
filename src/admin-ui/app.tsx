@@ -21,6 +21,7 @@ export function App(): JSX.Element {
 		if (adminKey.value) void loadAccounts("reset", true);
 	}, []);
 	const connected = connectionVerified.value;
+	const credentialsDraft = browserCredentialsDraft.value;
 
 	return (
 		<>
@@ -42,7 +43,9 @@ export function App(): JSX.Element {
 				) : null}
 			</main>
 			<EditModal />
-			{browserCredentialsDraft.value ? <BrowserCredentialsModal /> : null}
+			{credentialsDraft ? (
+				<BrowserCredentialsModal key={credentialsDraft.accountId} />
+			) : null}
 			<ConfirmationModal />
 			<Toasts />
 		</>

@@ -240,7 +240,8 @@ export async function runAction(
 	const keys = identifiers.map((item) => item.id);
 	const loadGeneration = currentAccountLoadGeneration();
 	if (!isCurrentAccountLoad(session, loadGeneration)) return;
-	if (!claimAccountOperation(keys)) {
+	const claim = claimAccountOperation(keys);
+	if (!claim) {
 		showToast(tr("Account operation already in progress"), "error");
 		return;
 	}
@@ -269,7 +270,7 @@ export async function runAction(
 			await loadAccounts();
 		}
 	} finally {
-		releaseAccountOperation(keys);
+		releaseAccountOperation(claim);
 		if (isCurrentAdminSession(session)) {
 			if (rowScoped) {
 				const next = { ...rowBusy.value };
@@ -296,7 +297,8 @@ export async function submitEdit(event: Event): Promise<void> {
 	}
 	const loadGeneration = currentAccountLoadGeneration();
 	if (!isCurrentAccountLoad(session, loadGeneration)) return;
-	if (!claimAccountOperation([account.id])) {
+	const claim = claimAccountOperation([account.id]);
+	if (!claim) {
 		showToast(tr("Account operation already in progress"), "error");
 		return;
 	}
@@ -325,7 +327,7 @@ export async function submitEdit(event: Event): Promise<void> {
 			await loadAccounts();
 		}
 	} finally {
-		releaseAccountOperation([account.id]);
+		releaseAccountOperation(claim);
 		if (isCurrentAdminSession(session)) editBusy.value = false;
 	}
 }
@@ -414,7 +416,8 @@ export async function openBrowserForAccount(
 		popup.close();
 		return;
 	}
-	if (!claimAccountOperation([account.id])) {
+	const claim = claimAccountOperation([account.id]);
+	if (!claim) {
 		popup.close();
 		showToast(tr("Account operation already in progress"), "error");
 		return;
@@ -423,11 +426,8 @@ export async function openBrowserForAccount(
 	try {
 		const outcome = await openBrowserAttempt(session, account, popup);
 		if (outcome !== "conflict") return;
-		popup.close();
-		if (!window.confirm(tr("Stop visible browser confirmation"))) return;
-		const retryPopup = openWaitingPopup();
-		if (!retryPopup) {
-			showToast(tr("Browser popup was blocked"), "error");
+		if (!window.confirm(tr("Stop visible browser confirmation"))) {
+			popup.close();
 			return;
 		}
 		const stopped = await runAdminSessionOperation(
@@ -436,16 +436,16 @@ export async function openBrowserForAccount(
 			{ fallbackMessage: tr("Failed to stop visible browser") },
 		);
 		if (!stopped.ok) {
-			retryPopup.close();
+			popup.close();
 			return;
 		}
-		const retried = await openBrowserAttempt(session, account, retryPopup);
+		const retried = await openBrowserAttempt(session, account, popup);
 		if (retried === "conflict") {
-			retryPopup.close();
+			popup.close();
 			showToast(tr("Failed to open browser"), "error");
 		}
 	} finally {
-		releaseAccountOperation([account.id]);
+		releaseAccountOperation(claim);
 		if (isCurrentAdminSession(session)) clearRowBusy(account.id);
 	}
 }
@@ -480,17 +480,16 @@ async function openBrowserAttempt(
 }
 
 function openWaitingPopup(): Window | null {
-	const popup = window.open("about:blank", "_blank", "noopener");
-	if (popup) writeWaitingPage(popup);
-	return popup;
-}
-
-function writeWaitingPage(popup: Window): void {
+	const popup = window.open("about:blank", "_blank");
+	if (!popup) return null;
 	try {
+		popup.opener = null;
 		popup.document.title = tr("Opening browser");
 		popup.document.body.textContent = tr("Browser waiting message");
+		return popup;
 	} catch {
-		// The blank tab is best effort; navigation still proceeds safely.
+		popup.close();
+		return null;
 	}
 }
 
@@ -502,11 +501,13 @@ function safeNoVncUrl(value: string): string {
 		throw new Error("unsafe browser URL");
 	}
 	const loopback = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+	const isLoopback = loopback.has(url.hostname.toLowerCase());
 	const sameHost =
 		url.hostname.toLowerCase() === window.location.hostname.toLowerCase();
 	if (
 		!(["http:", "https:"] as string[]).includes(url.protocol) ||
-		(!sameHost && !loopback.has(url.hostname.toLowerCase())) ||
+		(!sameHost && !isLoopback) ||
+		(!isLoopback && url.protocol !== "https:") ||
 		url.username ||
 		url.password ||
 		url.search ||
@@ -527,9 +528,10 @@ async function runBrowserStatusAction(
 		accountId,
 		busy,
 		request,
-		(result) => {
+		async (result) => {
 			updateBrowserStatus(accountId, result);
 			showToast(successMessage);
+			await loadAccounts();
 		},
 		fallbackMessage,
 	);
@@ -557,12 +559,13 @@ async function runBrowserOperation<T>(
 	accountId: string,
 	busy: string,
 	request: (session: AdminSession) => Promise<T>,
-	onSuccess: (value: T) => void,
+	onSuccess: (value: T) => void | Promise<void>,
 	fallbackMessage: string,
 ): Promise<boolean> {
 	const session = currentVerifiedAdminSession();
 	if (!session) return false;
-	if (!claimAccountOperation([accountId])) {
+	const claim = claimAccountOperation([accountId]);
+	if (!claim) {
 		showToast(tr("Account operation already in progress"), "error");
 		return false;
 	}
@@ -574,10 +577,10 @@ async function runBrowserOperation<T>(
 			{ fallbackMessage },
 		);
 		if (!operation.ok) return false;
-		onSuccess(operation.value);
+		await onSuccess(operation.value);
 		return true;
 	} finally {
-		releaseAccountOperation([accountId]);
+		releaseAccountOperation(claim);
 		if (isCurrentAdminSession(session)) clearRowBusy(accountId);
 	}
 }

@@ -4,6 +4,7 @@ import {
 	checkBrowserForAccount,
 	clearBrowserLogin,
 	deleteBrowserProfile,
+	loadAccounts,
 	openBrowserForAccount,
 } from "../../../src/admin-ui/actions";
 import { createBrowserCredentialBuffer } from "../../../src/admin-ui/components/BrowserCredentialsModal";
@@ -14,13 +15,15 @@ import {
 import {
 	confirmationDraft,
 	connectionVerified,
+	accounts,
+	loading,
 	rowBusy,
 	toastItems,
 } from "../../../src/admin-ui/state";
 import { deferred } from "../_support/deferred.js";
 import { assert } from "../assertions.js";
 import { withAdminEnvironment } from "./_support/environment.js";
-import { uiAccount } from "./_support/fixtures.js";
+import { uiAccount, uiAccountOverview } from "./_support/fixtures.js";
 import {
 	resetAccountViewState,
 	resetAdminSessionState,
@@ -28,6 +31,7 @@ import {
 
 type Popup = {
 	closed: boolean;
+	opener: unknown;
 	document: { title: string; body: { textContent: string | null } };
 	location: { href: string };
 	close(): void;
@@ -36,6 +40,7 @@ type Popup = {
 function popup(): Popup {
 	return {
 		closed: false,
+		opener: { unsafe: true },
 		document: { title: "", body: { textContent: null } },
 		location: { href: "about:blank" },
 		close() {
@@ -69,12 +74,14 @@ describe("admin UI browser actions", () => {
 				location: { hostname: "admin.example" },
 				open: (...args: unknown[]) => {
 					calls.push(args);
+					if (args[2] === "noopener") return null;
 					return opened;
 				},
 				confirm: () => false,
 			},
 		);
-		assert.deepEqual(calls, [["about:blank", "_blank", "noopener"]]);
+		assert.deepEqual(calls, [["about:blank", "_blank"]]);
+		assert.equal(opened.opener, null);
 		assert.match(opened.document.body.textContent || "", /waiting/i);
 		assert.equal(opened.location.href, "http://127.0.0.1:6080/vnc.html");
 		assert.equal(opened.closed, false);
@@ -108,7 +115,9 @@ describe("admin UI browser actions", () => {
 			"https://admin.example:6080/vnc.html?token=secret",
 			"https://admin.example:6080/vnc.html?view=fit",
 			"https://admin.example:6080/vnc.html#connected",
+			"http://admin.example:6080/vnc.html",
 		];
+		opened.push(popup());
 		let index = 0;
 		await withAdminEnvironment(
 			async () => Response.json({ url: urls[index++] }),
@@ -149,10 +158,9 @@ describe("admin UI browser actions", () => {
 		assert.equal(opened.closed, false);
 	});
 
-	test("stops a conflicting visible session only after confirmation, then retries", async () => {
-		const firstPopup = popup();
-		const secondPopup = popup();
-		const popups = [firstPopup, secondPopup];
+	test("securely reuses the controlled popup through conflict stop and retry", async () => {
+		const controlledPopup = popup();
+		let openCalls = 0;
 		const requests: string[] = [];
 		const stopStarted = deferred();
 		const stopResponse = deferred<Response>();
@@ -177,8 +185,12 @@ describe("admin UI browser actions", () => {
 					connectionVerified.value = true;
 					const opening = openBrowserForAccount(uiAccount({ label: "Alpha" }));
 					await stopStarted.promise;
-					assert.equal(popups.length, 0);
-					assert.match(secondPopup.document.body.textContent || "", /waiting/i);
+					assert.equal(openCalls, 1);
+					assert.equal(controlledPopup.opener, null);
+					assert.match(
+						controlledPopup.document.body.textContent || "",
+						/waiting/i,
+					);
 					assert.deepEqual(rowBusy.value, { "account-a": "browser_open" });
 					await checkBrowserForAccount(uiAccount({ id: "account-a" }));
 					assert.equal(requests.length, 2);
@@ -188,7 +200,10 @@ describe("admin UI browser actions", () => {
 				},
 				{
 					location: { hostname: "admin.example" },
-					open: () => popups.shift(),
+					open: () => {
+						openCalls++;
+						return controlledPopup;
+					},
 					confirm: () => {
 						confirmations++;
 						return true;
@@ -200,8 +215,11 @@ describe("admin UI browser actions", () => {
 			stopResponse.resolve(Response.json({ stopped: true }));
 		}
 		assert.equal(confirmations, 1);
-		assert.equal(firstPopup.closed, true);
-		assert.equal(secondPopup.location.href, "http://localhost:6080/vnc.html");
+		assert.equal(controlledPopup.closed, false);
+		assert.equal(
+			controlledPopup.location.href,
+			"http://localhost:6080/vnc.html",
+		);
 		assert.deepEqual(requests, [
 			"/admin/accounts/account-a/browser/open",
 			"/admin/browser/stop",
@@ -209,10 +227,8 @@ describe("admin UI browser actions", () => {
 		]);
 	});
 
-	test("closes the replacement waiting tab when stopping the active session fails", async () => {
-		const firstPopup = popup();
-		const secondPopup = popup();
-		const popups = [firstPopup, secondPopup];
+	test("closes the controlled waiting tab when stopping the active session fails", async () => {
+		const controlledPopup = popup();
 		let requests = 0;
 		await withAdminEnvironment(
 			async () => {
@@ -239,12 +255,11 @@ describe("admin UI browser actions", () => {
 			},
 			{
 				location: { hostname: "admin.example" },
-				open: () => popups.shift(),
+				open: () => controlledPopup,
 				confirm: () => true,
 			},
 		);
-		assert.equal(firstPopup.closed, true);
-		assert.equal(secondPopup.closed, true);
+		assert.equal(controlledPopup.closed, true);
 		assert.equal(requests, 2);
 	});
 
@@ -303,6 +318,65 @@ describe("admin UI browser actions", () => {
 		);
 	});
 
+	test("an authoritative reload after a browser mutation fences an older account load", async () => {
+		const oldLoadStarted = deferred();
+		const oldLoadResponse = deferred<Response>();
+		const requests: string[] = [];
+		try {
+			await withAdminEnvironment(
+				async (path: RequestInfo | URL) => {
+					requests.push(String(path));
+					if (requests.length === 1) {
+						oldLoadStarted.resolve();
+						return oldLoadResponse.promise;
+					}
+					if (String(path).endsWith("/browser/check"))
+						return Response.json({
+							credentialsConfigured: false,
+							status: {
+								state: "ready",
+								lastCheckAtMs: 20,
+								lastCookieUpdateAtMs: null,
+								lastAutoLoginAtMs: null,
+								failureCode: null,
+							},
+						});
+					return Response.json(
+						uiAccountOverview([
+							uiAccount({ label: "authoritative", updated_at_ms: 20 }),
+						]),
+					);
+				},
+				async () => {
+					updateAdminKey("admin-secret");
+					connectionVerified.value = true;
+					accounts.value = [uiAccount({ label: "initial" })];
+					const stale = loadAccounts();
+					await oldLoadStarted.promise;
+					await checkBrowserForAccount(uiAccount());
+					oldLoadResponse.resolve(
+						Response.json(
+							uiAccountOverview([
+								uiAccount({ label: "stale", updated_at_ms: 10 }),
+							]),
+						),
+					);
+					await stale;
+					assert.deepEqual(requests, [
+						"/admin/accounts?limit=200",
+						"/admin/accounts/account-a/browser/check",
+						"/admin/accounts?limit=200",
+					]);
+					assert.equal(accounts.value[0]?.label, "authoritative");
+					assert.equal(loading.value, false);
+				},
+			);
+		} finally {
+			oldLoadStarted.resolve();
+			oldLoadResponse.resolve(Response.json(uiAccountOverview()));
+		}
+	});
+
 	test("uses separate account-labelled confirmations for credentials and profile", async () => {
 		const requests: string[] = [];
 		await withAdminEnvironment(
@@ -352,6 +426,7 @@ describe("admin UI browser actions", () => {
 		);
 		assert.deepEqual(requests, [
 			"/admin/accounts/account-a/browser/credentials",
+			"/admin/accounts?limit=200",
 			"/admin/accounts/account-a/browser/profile",
 		]);
 	});
