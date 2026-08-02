@@ -35,6 +35,7 @@ export function jitteredDelayMs(intervalSec, jitterSec, random = Math.random) {
 export function createMaintenanceQueue(handler) {
 	if (typeof handler !== "function") throw new Error("invalid maintenance handler");
 	const pending = new Map();
+	const reservations = new Set();
 	let sequence = 0;
 	let active = null;
 	let worker = null;
@@ -43,6 +44,7 @@ export function createMaintenanceQueue(handler) {
 	function enqueue(input) {
 		const job = validJob(input);
 		if (!accepting) return Promise.resolve({ skipped: true });
+		if (reservations.has(job.accountId)) return Promise.resolve({ skipped: true });
 		if (
 			active?.accountId === job.accountId &&
 			PRIORITY[job.mode] <= PRIORITY[active.mode]
@@ -86,8 +88,30 @@ export function createMaintenanceQueue(handler) {
 
 	return Object.freeze({
 		enqueue,
+		reserve(accountId) {
+			if (
+				!accepting ||
+				typeof accountId !== "string" ||
+				!accountId ||
+				reservations.has(accountId) ||
+				active?.accountId === accountId ||
+				pending.has(accountId)
+			)
+				return null;
+			reservations.add(accountId);
+			let released = false;
+			return () => {
+				if (released) return;
+				released = true;
+				reservations.delete(accountId);
+			};
+		},
 		isBusy(accountId) {
-			return active?.accountId === accountId || pending.has(accountId);
+			return (
+				reservations.has(accountId) ||
+				active?.accountId === accountId ||
+				pending.has(accountId)
+			);
 		},
 		async waitForIdle() {
 			while (worker) await worker;
@@ -436,6 +460,7 @@ export function createBrowserScheduler(config, dependencies) {
 
 	return Object.freeze({
 		enqueue: queue.enqueue,
+		reserve: queue.reserve,
 		isBusy: queue.isBusy,
 		scan,
 		waitForIdle: queue.waitForIdle,

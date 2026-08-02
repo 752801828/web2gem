@@ -53,8 +53,8 @@ export function createBrowserHelperProcess(config, masterKey, dependencies = {})
 	const profiles = (dependencies.createProfiles || createProfileStore)(
 		{ profilesRoot: "/profiles" },
 		{
-			isBusy: (accountId) =>
-				sessions.isActive(accountId) || scheduler.isBusy(accountId),
+			reserve: (accountId) =>
+				sessions.isActive(accountId) ? null : scheduler.reserve(accountId),
 		},
 	);
 	const server = (dependencies.createServer || createHelperControlServer)(

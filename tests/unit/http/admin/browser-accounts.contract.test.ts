@@ -95,8 +95,8 @@ function fixture() {
 			async checkNow(accountId: string) {
 				helperCalls.push(`check:${accountId}`);
 			},
-			async openVisible(accountId: string) {
-				helperCalls.push(`open:${accountId}`);
+			async openVisible(accountId: string, signal?: AbortSignal) {
+				helperCalls.push(`open:${accountId}:${signal instanceof AbortSignal}`);
 				return { url: "http://127.0.0.1:6080/vnc.html" };
 			},
 			async stopVisible() {
@@ -303,7 +303,7 @@ describe("browser account admin contract", () => {
 		assert.equal(stop.status, 200);
 		assert.deepEqual(active.helperCalls, [
 			`check:${ACCOUNT_ID}`,
-			`open:${ACCOUNT_ID}`,
+			`open:${ACCOUNT_ID}:true`,
 			"stop",
 		]);
 	});

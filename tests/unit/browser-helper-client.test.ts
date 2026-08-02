@@ -156,6 +156,36 @@ describe("Docker browser-helper control client", () => {
 		assert.doesNotMatch(String(error), /private|session detail|token/i);
 	});
 
+	test("uses a separate bounded open timeout and propagates caller cancellation", async () => {
+		const timeouts: number[] = [];
+		const caller = new AbortController();
+		let observedSignal: AbortSignal | undefined;
+		const client = createBrowserHelperClient(ENV, {
+			timeoutMs: 15_000,
+			openTimeoutMs: 60_000,
+			timeoutSignal(milliseconds: number) {
+				timeouts.push(milliseconds);
+				return new AbortController().signal;
+			},
+			async fetch(_input: RequestInfo | URL, init?: RequestInit) {
+				observedSignal = init?.signal || undefined;
+				return new Promise<Response>((_resolve, reject) =>
+					observedSignal?.addEventListener(
+						"abort",
+						() => reject(new Error("private abort detail")),
+						{ once: true },
+					),
+				);
+			},
+		});
+		if (!client) throw new Error("expected browser helper client");
+		const opening = client.openVisible("account-a", caller.signal);
+		caller.abort();
+		await assert.rejects(opening, /browser helper is unavailable/);
+		assert.deepEqual(timeouts, [60_000]);
+		assert.equal(observedSignal?.aborted, true);
+	});
+
 	test("rejects public noVNC URLs containing credentials or tokens", () => {
 		for (const url of [
 			"http://user:password@127.0.0.1:6080/vnc.html",

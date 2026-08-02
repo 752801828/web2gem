@@ -59,7 +59,8 @@ export function createControlRequestHandler(config, dependencies) {
 				Promise.resolve(
 					scheduler.enqueue({ accountId, mode: "manual_check" }),
 				).catch(() => undefined);
-			} else if (route.action === "open") await sessions.open(accountId);
+			} else if (route.action === "open")
+				await sessions.open(accountId, request.signal);
 			else if (route.action === "stop") await sessions.stop();
 			else await profiles.remove(accountId);
 			return jsonResponse(200, { ok: true });
@@ -80,6 +81,7 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 	const prepareVisiblePage =
 		dependencies?.prepareVisiblePage ||
 		((page) => page.goto("https://gemini.google.com/app", { waitUntil: "domcontentloaded" }));
+	const trackActivity = dependencies?.trackActivity || installPageActivityTracking;
 	if (
 		!scheduler ||
 		!novnc ||
@@ -89,8 +91,22 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 		throw new Error("invalid visible session configuration");
 	let active = null;
 
+	function armIdle(session) {
+		if (session.timer !== null) clearTimer(session.timer);
+		session.timer = setTimer(() => {
+			session.timer = null;
+			if (session.submitting) session.idleExpired = true;
+			else session.stop.resolve();
+		}, config.visibleIdleTimeoutSec * 1_000);
+	}
+
 	async function finalize(session) {
-		if (session.timer) clearTimer(session.timer);
+		if (session.timer !== null) clearTimer(session.timer);
+		try {
+			await session.cleanupActivity?.();
+		} catch {
+			// Activity cleanup cannot strand the display stack.
+		}
 		try {
 			await novnc.stop();
 		} finally {
@@ -99,8 +115,9 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 	}
 
 	return Object.freeze({
-		async open(accountId) {
+		async open(accountId, signal) {
 			validAccountId(accountId);
+			if (signal?.aborted) throw new ControlError(499, "request_aborted");
 			if (active)
 				throw new ControlError(409, "visible_session_conflict");
 			const session = {
@@ -110,21 +127,36 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 				jobReady: deferred(),
 				job: null,
 				timer: null,
+				submitting: false,
+				idleExpired: false,
+				cleanupActivity: null,
 			};
 			active = session;
+			const callerAbort = abortRace(signal);
 			try {
-				await novnc.start();
+				const starting = Promise.resolve(novnc.start());
+				const startOutcome = await Promise.race([
+					starting.then(() => "started"),
+					callerAbort.promise.then(() => "abort"),
+				]);
+				if (startOutcome === "abort") {
+					await starting.catch(() => undefined);
+					throw new ControlError(499, "request_aborted");
+				}
 				const rawJob = Promise.resolve(
 					scheduler.enqueue({ accountId, mode: "visible" }),
 				);
 				session.job = rawJob.finally(() => finalize(session));
 				session.jobReady.resolve();
-				await Promise.race([
-					session.ready.promise,
-					session.job.then(() => {
-						throw new ControlError(503, "visible_session_unavailable");
-					}),
+				const outcome = await Promise.race([
+					session.ready.promise.then(() => "ready"),
+					session.job.then(() => "ended"),
+					callerAbort.promise.then(() => "abort"),
 				]);
+				if (outcome === "ended")
+					throw new ControlError(503, "visible_session_unavailable");
+				if (outcome === "abort" || signal?.aborted)
+					throw new ControlError(499, "request_aborted");
 			} catch (error) {
 				session.stop.resolve();
 				if (!session.job) {
@@ -133,6 +165,8 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 				}
 				else await session.job.catch(() => undefined);
 				throw error;
+			} finally {
+				callerAbort.dispose();
 			}
 		},
 		async hold(input, finalCheck) {
@@ -143,21 +177,50 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 				input.accountId !== session.accountId
 			)
 				throw new Error("visible browser session is not active");
-			await prepareVisiblePage(input.page);
-			session.timer = setTimer(
-				() => session.stop.resolve(),
-				config.visibleIdleTimeoutSec * 1_000,
-			);
-			session.ready.resolve();
-			const outcome = await Promise.race([
-				session.stop.promise.then(() => "stop"),
-				abortSignal(input.signal).then(() => "abort"),
-			]);
-			if (outcome === "abort")
-				throw input.signal?.reason instanceof Error
-					? input.signal.reason
-					: new Error("visible browser session aborted");
-			return finalCheck(input);
+			const jobAbort = abortRace(input.signal);
+			session.cleanupActivity = await trackActivity(input.page, {
+				activity() {
+					if (active !== session || session.stop.settled) return;
+					session.submitting = false;
+					session.idleExpired = false;
+					armIdle(session);
+				},
+				submissionStart() {
+					if (active !== session || session.stop.settled) return;
+					session.submitting = true;
+					session.idleExpired = false;
+					armIdle(session);
+				},
+				submissionEnd() {
+					if (active !== session || session.stop.settled) return;
+					session.submitting = false;
+					if (session.idleExpired) session.stop.resolve();
+					else armIdle(session);
+				},
+			});
+			try {
+				const preparation = Promise.resolve(prepareVisiblePage(input.page));
+				const prepared = await Promise.race([
+					preparation.then(() => "ready"),
+					session.stop.promise.then(() => "stop"),
+					jobAbort.promise.then(() => "abort"),
+				]);
+				if (prepared !== "ready")
+					throw new Error("visible browser session cancelled");
+				armIdle(session);
+				session.ready.resolve();
+				const outcome = await Promise.race([
+					session.stop.promise.then(() => "stop"),
+					jobAbort.promise.then(() => "abort"),
+				]);
+				if (outcome === "abort")
+					throw input.signal?.reason instanceof Error
+						? input.signal.reason
+						: new Error("visible browser session aborted");
+				return finalCheck(input);
+			} finally {
+				jobAbort.dispose();
+			}
 		},
 		async stop() {
 			const session = active;
@@ -182,21 +245,28 @@ export function createProfileStore(config, dependencies) {
 	const profilesRoot = config?.profilesRoot || "/profiles";
 	const stat = dependencies?.lstat || lstat;
 	const remove = dependencies?.rm || rm;
-	const isBusy = dependencies?.isBusy || (() => false);
+	const reserve = dependencies?.reserve;
+	if (typeof reserve !== "function")
+		throw new Error("invalid browser profile store dependencies");
 	return Object.freeze({
 		async remove(accountId) {
 			validAccountId(accountId);
-			if (isBusy(accountId)) throw new ControlError(409, "profile_busy");
-			const target = profilePathForAccount(accountId, profilesRoot);
-			let metadata;
+			const release = reserve(accountId);
+			if (!release) throw new ControlError(409, "profile_busy");
 			try {
-				metadata = await stat(target);
-			} catch (error) {
-				if (error?.code !== "ENOENT") throw error;
+				const target = profilePathForAccount(accountId, profilesRoot);
+				let metadata;
+				try {
+					metadata = await stat(target);
+				} catch (error) {
+					if (error?.code !== "ENOENT") throw error;
+				}
+				if (metadata?.isSymbolicLink())
+					throw new ControlError(409, "profile_unsafe");
+				await remove(target, { recursive: true, force: true, maxRetries: 0 });
+			} finally {
+				release();
 			}
-			if (metadata?.isSymbolicLink())
-				throw new ControlError(409, "profile_unsafe");
-			await remove(target, { recursive: true, force: true, maxRetries: 0 });
 		},
 	});
 }
@@ -205,14 +275,28 @@ export function createHelperControlServer(config, dependencies = {}) {
 	const handler = createControlRequestHandler(config, dependencies);
 	const createServer = dependencies.createServer || http.createServer;
 	const server = createServer(async (incoming, outgoing) => {
+		const disconnected = new AbortController();
+		const onAborted = () => disconnected.abort();
+		const onClosed = () => {
+			if (!outgoing.writableEnded) disconnected.abort();
+		};
+		incoming.once("aborted", onAborted);
+		outgoing.once("close", onClosed);
 		try {
-			const request = incomingRequest(incoming, config.controlPort);
+			const request = incomingRequest(
+				incoming,
+				config.controlPort,
+				disconnected.signal,
+			);
 			const response = await handler(request);
 			outgoing.writeHead(response.status, Object.fromEntries(response.headers));
 			outgoing.end(Buffer.from(await response.arrayBuffer()));
 		} catch {
 			outgoing.writeHead(500, { "content-type": "application/json" });
 			outgoing.end('{"error":{"code":"internal_error"}}');
+		} finally {
+			incoming.off("aborted", onAborted);
+			outgoing.off("close", onClosed);
 		}
 	});
 	return Object.freeze({
@@ -327,20 +411,45 @@ function jsonResponse(status, body) {
 function deferred() {
 	let resolve;
 	let reject;
+	let settled = false;
 	const promise = new Promise((done, fail) => {
-		resolve = done;
-		reject = fail;
+		resolve = (value) => {
+			settled = true;
+			done(value);
+		};
+		reject = (error) => {
+			settled = true;
+			fail(error);
+		};
 	});
-	return { promise, resolve, reject };
+	return {
+		promise,
+		resolve,
+		reject,
+		get settled() {
+			return settled;
+		},
+	};
 }
 
-function abortSignal(signal) {
-	if (!signal) return new Promise(() => undefined);
-	if (signal.aborted) return Promise.resolve();
-	return new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+function abortRace(signal) {
+	if (!signal) return { promise: new Promise(() => undefined), dispose() {} };
+	if (signal.aborted)
+		return { promise: Promise.resolve(), dispose() {} };
+	let listener;
+	const promise = new Promise((resolve) => {
+		listener = resolve;
+		signal.addEventListener("abort", listener, { once: true });
+	});
+	return {
+		promise,
+		dispose() {
+			signal.removeEventListener("abort", listener);
+		},
+	};
 }
 
-function incomingRequest(incoming, port) {
+function incomingRequest(incoming, port, signal) {
 	const method = incoming.method || "GET";
 	const hasBody =
 		incoming.headers["transfer-encoding"] !== undefined ||
@@ -348,8 +457,37 @@ function incomingRequest(incoming, port) {
 	return new Request(`http://browser-helper:${port}${incoming.url || "/"}`, {
 		method,
 		headers: incoming.headers,
+		signal,
 		...(method === "GET" || method === "HEAD" || !hasBody
 			? {}
 			: { body: Readable.toWeb(incoming), duplex: "half" }),
 	});
+}
+
+async function installPageActivityTracking(page, hooks) {
+	const binding = "__web2gemBrowserActivity";
+	await page.exposeBinding(binding, (_source, event) => {
+		if (event === "activity") hooks.activity();
+		else if (event === "submission-start") hooks.submissionStart();
+	});
+	const install = (name) => {
+		if (globalThis.__web2gemBrowserActivityInstalled) return;
+		globalThis.__web2gemBrowserActivityInstalled = true;
+		const emit = (event) => void globalThis[name]?.(event);
+		for (const event of ["pointerdown", "keydown", "input", "paste"])
+			globalThis.addEventListener(event, () => emit("activity"), {
+				capture: true,
+				passive: true,
+			});
+		globalThis.addEventListener(
+			"submit",
+			() => emit("submission-start"),
+			{ capture: true },
+		);
+	};
+	await page.addInitScript(install, binding);
+	await page.evaluate(install, binding);
+	const submissionEnd = () => hooks.submissionEnd();
+	page.on("domcontentloaded", submissionEnd);
+	return () => page.off("domcontentloaded", submissionEnd);
 }

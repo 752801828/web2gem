@@ -88,7 +88,10 @@ export async function handleBrowserAccountAdminRequest(
 		}
 		if (route.kind === "open" && method === "POST") {
 			assertAdminBodyAbsent(request);
-			const opened = await helperClient(env).openVisible(accountId);
+			const opened = await helperClient(env).openVisible(
+				accountId,
+				request.signal,
+			);
 			return jsonResponse({ url: opened.url });
 		}
 		if (route.kind === "profile" && method === "DELETE") {

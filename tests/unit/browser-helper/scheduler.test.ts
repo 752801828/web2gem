@@ -238,6 +238,24 @@ describe("browser maintenance scheduler", () => {
 		]);
 	});
 
+	test("holds an account reservation across async profile deletion and skips new jobs", async () => {
+		const handled: string[] = [];
+		const queue = createMaintenanceQueue(async ({ accountId }: Job) => {
+			handled.push(accountId);
+		});
+		const release = queue.reserve("account-a");
+		assert.equal(typeof release, "function");
+		assert.equal(queue.isBusy("account-a"), true);
+		assert.deepEqual(
+			await queue.enqueue({ accountId: "account-a", mode: "manual_check" }),
+			{ skipped: true },
+		);
+		assert.deepEqual(handled, []);
+		release?.();
+		await queue.enqueue({ accountId: "account-a", mode: "manual_check" });
+		assert.deepEqual(handled, ["account-a"]);
+	});
+
 	test("does not lose work enqueued while the previous worker is settling", async () => {
 		const order: string[] = [];
 		const queue = createMaintenanceQueue(async ({ accountId }: Job) => {

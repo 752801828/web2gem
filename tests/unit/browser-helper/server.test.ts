@@ -48,6 +48,7 @@ describe("browser helper control server", () => {
 
 	test("routes strict empty JSON actions and returns safe conflicts", async () => {
 		const calls: unknown[][] = [];
+		let openSignal: AbortSignal | undefined;
 		const handler = createControlRequestHandler(
 			{ controlToken: TOKEN },
 			{
@@ -58,8 +59,9 @@ describe("browser helper control server", () => {
 					isBusy: () => false,
 				},
 				sessions: {
-					async open(id: string) {
+					async open(id: string, signal: AbortSignal) {
 						calls.push(["open", id]);
+						openSignal = signal;
 						if (id === "conflict")
 							throw new ControlError(409, "visible_session_conflict");
 					},
@@ -96,6 +98,7 @@ describe("browser helper control server", () => {
 			["stop"],
 			["remove", "account-a"],
 		]);
+		assert.equal(openSignal instanceof AbortSignal, true);
 		assert.deepEqual(
 			await json(
 				await handler(
@@ -183,6 +186,7 @@ describe("visible browser sessions", () => {
 				setTimer: () => ({}) as ReturnType<typeof setTimeout>,
 				clearTimer: () => undefined,
 				prepareVisiblePage: async () => undefined,
+				trackActivity: async () => undefined,
 			},
 		);
 		await coordinator.open("account-a");
@@ -220,12 +224,109 @@ describe("visible browser sessions", () => {
 				setTimer: () => ({}) as ReturnType<typeof setTimeout>,
 				clearTimer: () => undefined,
 				prepareVisiblePage: async () => undefined,
+				trackActivity: async () => undefined,
 			},
 		);
 		await coordinator.open("account-a");
 		controller.abort();
 		await coordinator.waitForIdle();
 		assert.equal(finalChecks, 0);
+		assert.equal(coordinator.isActive("account-a"), false);
+	});
+
+	test("cancels an open that disconnects before readiness without leaving an active session", async () => {
+		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
+		let releasePreparation!: () => void;
+		const preparing = new Promise<void>((resolve) => {
+			releasePreparation = resolve;
+		});
+		const caller = new AbortController();
+		coordinator = createVisibleSessionCoordinator(
+			{ visibleIdleTimeoutSec: 60 },
+			{
+				scheduler: {
+					enqueue: (job: { accountId: string; mode: string }) =>
+						coordinator.hold(
+							{
+								accountId: job.accountId,
+								page: {},
+								mode: job.mode,
+								signal: new AbortController().signal,
+							},
+							async () => ({ ok: false, code: "login_failed" }),
+						),
+				},
+				novnc: { start: async () => undefined, stop: async () => undefined },
+				prepareVisiblePage: async () => preparing,
+				trackActivity: async () => undefined,
+				setTimer: () => ({}) as ReturnType<typeof setTimeout>,
+				clearTimer: () => undefined,
+			},
+		);
+		const opening = coordinator.open("account-a", caller.signal);
+		await Promise.resolve();
+		caller.abort();
+		await assert.rejects(opening, /request aborted/);
+		assert.equal(coordinator.isActive("account-a"), false);
+		releasePreparation();
+	});
+
+	test("resets idle on activity and recovers from a same-page submission", async () => {
+		const timers: Array<() => void> = [];
+		const cleared: unknown[] = [];
+		let hooks: Record<string, () => void> | undefined;
+		let finalChecks = 0;
+		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
+		coordinator = createVisibleSessionCoordinator(
+			{ visibleIdleTimeoutSec: 60 },
+			{
+				scheduler: {
+					enqueue: (job: { accountId: string; mode: string }) =>
+						coordinator.hold(
+							{
+								accountId: job.accountId,
+								page: {},
+								mode: job.mode,
+								signal: new AbortController().signal,
+							},
+							async () => {
+								finalChecks += 1;
+								return { ok: false, code: "login_failed" };
+							},
+						),
+				},
+				novnc: { start: async () => undefined, stop: async () => undefined },
+				prepareVisiblePage: async () => undefined,
+				trackActivity(_page: unknown, input: Record<string, () => void>) {
+					hooks = input;
+					return () => undefined;
+				},
+				setTimer(callback: () => void) {
+					timers.push(callback);
+					return callback as unknown as ReturnType<typeof setTimeout>;
+				},
+				clearTimer(timer: unknown) {
+					cleared.push(timer);
+				},
+			},
+		);
+		await coordinator.open("account-a");
+		assert.equal(timers.length, 1);
+		hooks?.activity();
+		assert.equal(timers.length, 2);
+		assert.equal(cleared.includes(timers[0]), true);
+		hooks?.submissionStart();
+		assert.equal(timers.length, 3);
+		timers.at(-1)?.();
+		await Promise.resolve();
+		assert.equal(finalChecks, 0);
+		assert.equal(coordinator.isActive("account-a"), true);
+		hooks?.activity();
+		assert.equal(timers.length, 4);
+		assert.equal(coordinator.isActive("account-a"), true);
+		timers.at(-1)?.();
+		await coordinator.waitForIdle();
+		assert.equal(finalChecks, 1);
 		assert.equal(coordinator.isActive("account-a"), false);
 	});
 });
@@ -239,7 +340,7 @@ describe("browser profile deletion", () => {
 		const store = createProfileStore(
 			{ profilesRoot: root },
 			{
-				isBusy: () => busy,
+				reserve: () => (busy ? null : () => undefined),
 				async lstat() {
 					return { isSymbolicLink: () => symbolic };
 				},
@@ -261,5 +362,44 @@ describe("browser profile deletion", () => {
 				{ recursive: true, force: true, maxRetries: 0 },
 			],
 		]);
+	});
+
+	test("holds and releases the scheduler reservation across lstat and rm", async () => {
+		const events: string[] = [];
+		let releaseStat!: () => void;
+		const waiting = new Promise<void>((resolve) => {
+			releaseStat = resolve;
+		});
+		let reserved = false;
+		const store = createProfileStore(
+			{ profilesRoot: path.resolve("profile-root") },
+			{
+				reserve() {
+					if (reserved) return null;
+					reserved = true;
+					events.push("reserve");
+					return () => {
+						reserved = false;
+						events.push("release");
+					};
+				},
+				async lstat() {
+					events.push("lstat");
+					await waiting;
+					return { isSymbolicLink: () => false };
+				},
+				async rm() {
+					events.push("rm");
+				},
+			},
+		);
+		const deletion = store.remove("account-a");
+		await Promise.resolve();
+		assert.equal(reserved, true);
+		await assert.rejects(store.remove("account-a"), /profile busy/);
+		releaseStat();
+		await deletion;
+		assert.deepEqual(events, ["reserve", "lstat", "rm", "release"]);
+		assert.equal(reserved, false);
 	});
 });

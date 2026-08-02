@@ -1,4 +1,5 @@
 const REQUEST_TIMEOUT_MS = 15_000;
+const OPEN_TIMEOUT_MS = 60_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const SAFE_CODE = /^[a-z0-9_]{1,64}$/;
 
@@ -21,14 +22,20 @@ export function createBrowserHelperClient(sourceEnv = process.env, options = {})
 	const publicUrl = validatedPublicUrl(novncPublicUrl);
 	const fetchImpl = options.fetch || fetch;
 	const timeoutMs = options.timeoutMs || REQUEST_TIMEOUT_MS;
+	const openTimeoutMs = options.openTimeoutMs || OPEN_TIMEOUT_MS;
+	const timeoutSignal = options.timeoutSignal || AbortSignal.timeout;
 
-	const call = async (method, path) => {
+	const call = async (method, path, callOptions = {}) => {
 		try {
+			const deadline = timeoutSignal(callOptions.timeoutMs || timeoutMs);
+			const signal = callOptions.signal
+				? AbortSignal.any([deadline, callOptions.signal])
+				: deadline;
 			const response = await fetchImpl(new URL(path, baseUrl), {
 				method,
 				headers: { Authorization: `Bearer ${internalToken}` },
 				redirect: "error",
-				signal: AbortSignal.timeout(timeoutMs),
+				signal,
 			});
 			const body = await readBoundedResponse(response);
 			if (!response.ok) {
@@ -53,8 +60,11 @@ export function createBrowserHelperClient(sourceEnv = process.env, options = {})
 		checkNow(accountId) {
 			return call("POST", `/checks/${encodeURIComponent(accountId)}`);
 		},
-		async openVisible(accountId) {
-			await call("POST", `/sessions/${encodeURIComponent(accountId)}/open`);
+		async openVisible(accountId, signal) {
+			await call("POST", `/sessions/${encodeURIComponent(accountId)}/open`, {
+				timeoutMs: openTimeoutMs,
+				signal,
+			});
 			return { url: publicUrl };
 		},
 		stopVisible() {

@@ -14,7 +14,10 @@ export type AppEnv = Record<string, unknown> & {
 	};
 	BROWSER_HELPER_CLIENT?: {
 		checkNow(accountId: string): Promise<void>;
-		openVisible(accountId: string): Promise<{ url: string }>;
+		openVisible(
+			accountId: string,
+			signal?: AbortSignal,
+		): Promise<{ url: string }>;
 		stopVisible(): Promise<void>;
 		deleteProfile(accountId: string): Promise<void>;
 	};
