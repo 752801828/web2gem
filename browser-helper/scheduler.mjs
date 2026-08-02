@@ -48,6 +48,7 @@ export function createMaintenanceQueue(handler) {
 		if (reservations.has(job.accountId)) return Promise.resolve({ skipped: true });
 		if (
 			active?.accountId === job.accountId &&
+			!active.controller.signal.aborted &&
 			PRIORITY[job.mode] <= PRIORITY[active.mode]
 		)
 			return addClaim(active, job);

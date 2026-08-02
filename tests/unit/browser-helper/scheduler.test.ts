@@ -12,6 +12,7 @@ const {
 type Job = {
 	accountId: string;
 	mode: "scheduled" | "manual_check" | "visible";
+	signal?: AbortSignal;
 };
 type StateUpdate = {
 	state: string;
@@ -308,6 +309,65 @@ describe("browser maintenance scheduler", () => {
 		await active;
 		assert.equal(await manual, "account-a:manual_check");
 		assert.deepEqual(handled, ["active:scheduled", "account-a:manual_check"]);
+	});
+
+	test("queues a new claim while an aborted active entry finishes cleanup", async () => {
+		let finishCleanup!: () => void;
+		const cleanup = new Promise<void>((resolve) => {
+			finishCleanup = resolve;
+		});
+		let markStarted!: () => void;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		let calls = 0;
+		const queue = createMaintenanceQueue(async ({ signal }: Job) => {
+			calls += 1;
+			if (calls === 1) {
+				markStarted();
+				await new Promise<void>((resolve) =>
+					signal?.addEventListener("abort", () => resolve(), { once: true }),
+				);
+				await cleanup;
+				return "first";
+			}
+			return "second";
+		});
+		const oldAbort = new AbortController();
+		let listenerCount = 0;
+		const trackedSignal = {
+			get aborted() {
+				return oldAbort.signal.aborted;
+			},
+			addEventListener(...args: Parameters<AbortSignal["addEventListener"]>) {
+				listenerCount += 1;
+				oldAbort.signal.addEventListener(...args);
+			},
+			removeEventListener(
+				...args: Parameters<AbortSignal["removeEventListener"]>
+			) {
+				listenerCount -= 1;
+				oldAbort.signal.removeEventListener(...args);
+			},
+		} as AbortSignal;
+		const oldClaim = queue.enqueue({
+			accountId: "account-a",
+			mode: "visible",
+			signal: trackedSignal,
+		});
+		await started;
+		oldAbort.abort();
+		assert.deepEqual(await oldClaim, { skipped: true });
+		assert.equal(listenerCount, 0);
+		const newClaim = queue.enqueue({
+			accountId: "account-a",
+			mode: "manual_check",
+		});
+		finishCleanup();
+		assert.equal(await newClaim, "second");
+		await queue.waitForIdle();
+		assert.equal(calls, 2);
+		assert.equal(queue.isBusy("account-a"), false);
 	});
 
 	test("starts the display only after lease acquisition and before visible Chromium", async () => {
