@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import path from "node:path";
 import { describe, test } from "vitest";
 import { assert } from "../assertions.js";
@@ -7,6 +8,7 @@ const modulePath: string = "../../../browser-helper/server.mjs";
 const {
 	ControlError,
 	createControlRequestHandler,
+	createHelperControlServer,
 	createProfileStore,
 	createVisibleSessionCoordinator,
 	installPageActivityTracking,
@@ -23,6 +25,28 @@ async function json(response: Response) {
 }
 
 describe("browser helper control server", () => {
+	test("preserves a server close failure while draining", async () => {
+		const fakeServer = Object.assign(new EventEmitter(), {
+			close(callback: (error?: Error) => void) {
+				callback(new Error("close failed"));
+			},
+			closeAllConnections() {},
+			listen() {},
+		});
+		const server = createHelperControlServer(
+			{ controlToken: TOKEN, controlPort: 6081 },
+			{
+				createServer: () => fakeServer,
+				scheduler: { enqueue: async () => undefined, isBusy: () => false },
+				sessions: { open: async () => undefined, stop: async () => undefined },
+				profiles: { remove: async () => undefined },
+				sleep: async () => undefined,
+			},
+		);
+		server.beginStop();
+		await assert.rejects(server.drain(), /close failed/);
+	});
+
 	test("has a public health check and timing-safe Bearer authentication", async () => {
 		const handler = createControlRequestHandler(
 			{ controlToken: TOKEN },

@@ -347,6 +347,7 @@ export function createHelperControlServer(config, dependencies = {}) {
 		closing = new Promise((resolve, reject) =>
 			server.close((error) => (error ? reject(error) : resolve())),
 		);
+		closing.catch(() => undefined);
 	};
 	return Object.freeze({
 		start() {
@@ -361,9 +362,12 @@ export function createHelperControlServer(config, dependencies = {}) {
 		beginStop,
 		async drain() {
 			beginStop();
-			if (await settledWithin(closing, drainTimeoutMs, sleep)) return;
+			let outcome = await settledWithin(closing, drainTimeoutMs, sleep);
+			if (outcome.state === "failed") throw outcome.error;
+			if (outcome.state === "settled") return;
 			server.closeAllConnections?.();
-			await settledWithin(closing, forceCloseTimeoutMs, sleep);
+			outcome = await settledWithin(closing, forceCloseTimeoutMs, sleep);
+			if (outcome.state === "failed") throw outcome.error;
 		},
 	});
 }
@@ -518,10 +522,10 @@ function incomingRequest(incoming, port, signal) {
 async function settledWithin(promise, milliseconds, sleep) {
 	return Promise.race([
 		promise.then(
-			() => true,
-			() => true,
+			() => ({ state: "settled" }),
+			(error) => ({ state: "failed", error }),
 		),
-		Promise.resolve(sleep(milliseconds)).then(() => false),
+		Promise.resolve(sleep(milliseconds)).then(() => ({ state: "timeout" })),
 	]);
 }
 

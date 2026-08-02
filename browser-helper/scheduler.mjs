@@ -50,20 +50,16 @@ export function createMaintenanceQueue(handler) {
 			active?.accountId === job.accountId &&
 			PRIORITY[job.mode] <= PRIORITY[active.mode]
 		)
-			return active.promise;
+			return addClaim(active, job);
 		let queued = pending.get(job.accountId);
 		if (!queued) {
-			queued = deferredJob(job, sequence++);
+			queued = queuedJob(job.accountId, sequence++);
 			pending.set(job.accountId, queued);
-			watchPendingAbort(queued);
-		} else if (PRIORITY[job.mode] > PRIORITY[queued.mode]) {
-			queued.mode = job.mode;
-			queued.signal = job.signal;
-			queued.disposeAbort?.();
-			watchPendingAbort(queued);
 		}
+		const claim = addClaim(queued, job);
+		recomputeMode(queued);
 		startWorker();
-		return queued.promise;
+		return claim;
 	}
 
 	function startWorker() {
@@ -81,34 +77,45 @@ export function createMaintenanceQueue(handler) {
 					PRIORITY[right.mode] - PRIORITY[left.mode] || left.sequence - right.sequence,
 			)[0];
 			pending.delete(next.accountId);
-			next.disposeAbort?.();
 			active = next;
 			try {
 				const result = await handler({
 					accountId: next.accountId,
 					mode: next.mode,
-					signal: next.signal,
+					signal: next.controller.signal,
 				});
-				next.resolve(result);
+				settleClaims(next, "resolve", result);
 			} catch (error) {
-				next.reject(error);
+				settleClaims(next, "reject", error);
 			} finally {
 				active = null;
 			}
 		}
 	}
 
-	function watchPendingAbort(job) {
-		if (!job.signal) return;
+	function addClaim(entry, job) {
+		const claim = deferredClaim(job);
+		entry.claims.push(claim);
+		if (!claim.signal) return claim.promise;
 		const abort = () => {
-			if (pending.get(job.accountId) !== job) return;
-			pending.delete(job.accountId);
-			job.disposeAbort?.();
-			job.resolve({ skipped: true });
+			const index = entry.claims.indexOf(claim);
+			if (index < 0) return;
+			entry.claims.splice(index, 1);
+			claim.disposeAbort?.();
+			claim.resolve({ skipped: true });
+			if (!entry.claims.length) {
+				if (pending.get(entry.accountId) === entry)
+					pending.delete(entry.accountId);
+				else if (active === entry) entry.controller.abort();
+				return;
+			}
+			if (pending.get(entry.accountId) === entry) recomputeMode(entry);
 		};
-		job.signal.addEventListener("abort", abort, { once: true });
-		job.disposeAbort = () => job.signal.removeEventListener("abort", abort);
-		if (job.signal.aborted) abort();
+		claim.signal.addEventListener("abort", abort, { once: true });
+		claim.disposeAbort = () =>
+			claim.signal.removeEventListener?.("abort", abort);
+		if (claim.signal.aborted) abort();
+		return claim.promise;
 	}
 
 	return Object.freeze({
@@ -143,10 +150,8 @@ export function createMaintenanceQueue(handler) {
 		},
 		async stop() {
 			accepting = false;
-			for (const job of pending.values()) {
-				job.disposeAbort?.();
-				job.resolve({ skipped: true });
-			}
+			for (const job of pending.values())
+				settleClaims(job, "resolve", { skipped: true });
 			pending.clear();
 			while (worker) await worker;
 		},
@@ -618,14 +623,39 @@ function validJob(input) {
 	return { accountId: input.accountId, mode: input.mode, signal: input.signal };
 }
 
-function deferredJob(job, sequence) {
+function queuedJob(accountId, sequence) {
+	return {
+		accountId,
+		sequence,
+		mode: "scheduled",
+		claims: [],
+		controller: new AbortController(),
+	};
+}
+
+function deferredClaim(job) {
 	let resolve;
 	let reject;
 	const promise = new Promise((done, fail) => {
 		resolve = done;
 		reject = fail;
 	});
-	return { ...job, sequence, promise, resolve, reject };
+	return { ...job, promise, resolve, reject, disposeAbort: null };
+}
+
+function recomputeMode(job) {
+	job.mode = job.claims.reduce(
+		(mode, claim) =>
+			PRIORITY[claim.mode] > PRIORITY[mode] ? claim.mode : mode,
+		"scheduled",
+	);
+}
+
+function settleClaims(job, method, value) {
+	for (const claim of job.claims.splice(0)) {
+		claim.disposeAbort?.();
+		claim[method](value);
+	}
 }
 
 function safeOperationalError(callback, code) {

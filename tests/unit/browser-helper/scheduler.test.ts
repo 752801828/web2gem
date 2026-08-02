@@ -280,6 +280,36 @@ describe("browser maintenance scheduler", () => {
 		assert.deepEqual(handled, ["active"]);
 	});
 
+	test("restores a pending manual check when its visible claim is cancelled", async () => {
+		let releaseActive!: () => void;
+		const waiting = new Promise<void>((resolve) => {
+			releaseActive = resolve;
+		});
+		const handled: string[] = [];
+		const queue = createMaintenanceQueue(async ({ accountId, mode }: Job) => {
+			handled.push(`${accountId}:${mode}`);
+			if (accountId === "active") await waiting;
+			return `${accountId}:${mode}`;
+		});
+		const active = queue.enqueue({ accountId: "active", mode: "scheduled" });
+		const manual = queue.enqueue({
+			accountId: "account-a",
+			mode: "manual_check",
+		});
+		const visibleAbort = new AbortController();
+		const visible = queue.enqueue({
+			accountId: "account-a",
+			mode: "visible",
+			signal: visibleAbort.signal,
+		});
+		visibleAbort.abort();
+		assert.deepEqual(await visible, { skipped: true });
+		releaseActive();
+		await active;
+		assert.equal(await manual, "account-a:manual_check");
+		assert.deepEqual(handled, ["active:scheduled", "account-a:manual_check"]);
+	});
+
 	test("starts the display only after lease acquisition and before visible Chromium", async () => {
 		const active = fixture({
 			schedulerDependencies: {
