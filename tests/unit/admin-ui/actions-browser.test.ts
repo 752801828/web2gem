@@ -6,6 +6,7 @@ import {
 	deleteBrowserProfile,
 	openBrowserForAccount,
 } from "../../../src/admin-ui/actions";
+import { createBrowserCredentialBuffer } from "../../../src/admin-ui/components/BrowserCredentialsModal";
 import {
 	resolveConfirmation,
 	updateAdminKey,
@@ -101,6 +102,34 @@ describe("admin UI browser actions", () => {
 		assert.match(toastItems.value.at(-1)?.message || "", /browser/i);
 	});
 
+	test("rejects every noVNC query string and fragment", async () => {
+		const opened = [popup(), popup(), popup()];
+		const urls = [
+			"https://admin.example:6080/vnc.html?token=secret",
+			"https://admin.example:6080/vnc.html?view=fit",
+			"https://admin.example:6080/vnc.html#connected",
+		];
+		let index = 0;
+		await withAdminEnvironment(
+			async () => Response.json({ url: urls[index++] }),
+			async () => {
+				updateAdminKey("admin-secret");
+				connectionVerified.value = true;
+				for (let attempt = 0; attempt < urls.length; attempt++)
+					await openBrowserForAccount(uiAccount());
+			},
+			{
+				location: { hostname: "admin.example" },
+				open: () => opened[index],
+				confirm: () => false,
+			},
+		);
+		assert.equal(
+			opened.every((item) => item.closed),
+			true,
+		);
+	});
+
 	test("accepts a same-host noVNC URL", async () => {
 		const opened = popup();
 		await withAdminEnvironment(
@@ -125,33 +154,51 @@ describe("admin UI browser actions", () => {
 		const secondPopup = popup();
 		const popups = [firstPopup, secondPopup];
 		const requests: string[] = [];
+		const stopStarted = deferred();
+		const stopResponse = deferred<Response>();
 		let confirmations = 0;
-		await withAdminEnvironment(
-			async (path: RequestInfo | URL) => {
-				requests.push(String(path));
-				if (requests.length === 1)
-					return Response.json(
-						{ error: { code: "visible_session_conflict", message: "busy" } },
-						{ status: 409 },
-					);
-				if (String(path) === "/admin/browser/stop")
-					return Response.json({ stopped: true });
-				return Response.json({ url: "http://localhost:6080/vnc.html" });
-			},
-			async () => {
-				updateAdminKey("admin-secret");
-				connectionVerified.value = true;
-				await openBrowserForAccount(uiAccount({ label: "Alpha" }));
-			},
-			{
-				location: { hostname: "admin.example" },
-				open: () => popups.shift(),
-				confirm: () => {
-					confirmations++;
-					return true;
+		try {
+			await withAdminEnvironment(
+				async (path: RequestInfo | URL) => {
+					requests.push(String(path));
+					if (requests.length === 1)
+						return Response.json(
+							{ error: { code: "visible_session_conflict", message: "busy" } },
+							{ status: 409 },
+						);
+					if (String(path) === "/admin/browser/stop") {
+						stopStarted.resolve();
+						return stopResponse.promise;
+					}
+					return Response.json({ url: "http://localhost:6080/vnc.html" });
 				},
-			},
-		);
+				async () => {
+					updateAdminKey("admin-secret");
+					connectionVerified.value = true;
+					const opening = openBrowserForAccount(uiAccount({ label: "Alpha" }));
+					await stopStarted.promise;
+					assert.equal(popups.length, 0);
+					assert.match(secondPopup.document.body.textContent || "", /waiting/i);
+					assert.deepEqual(rowBusy.value, { "account-a": "browser_open" });
+					await checkBrowserForAccount(uiAccount({ id: "account-a" }));
+					assert.equal(requests.length, 2);
+					assert.deepEqual(rowBusy.value, { "account-a": "browser_open" });
+					stopResponse.resolve(Response.json({ stopped: true }));
+					await opening;
+				},
+				{
+					location: { hostname: "admin.example" },
+					open: () => popups.shift(),
+					confirm: () => {
+						confirmations++;
+						return true;
+					},
+				},
+			);
+		} finally {
+			stopStarted.resolve();
+			stopResponse.resolve(Response.json({ stopped: true }));
+		}
 		assert.equal(confirmations, 1);
 		assert.equal(firstPopup.closed, true);
 		assert.equal(secondPopup.location.href, "http://localhost:6080/vnc.html");
@@ -160,6 +207,45 @@ describe("admin UI browser actions", () => {
 			"/admin/browser/stop",
 			"/admin/accounts/account-a/browser/open",
 		]);
+	});
+
+	test("closes the replacement waiting tab when stopping the active session fails", async () => {
+		const firstPopup = popup();
+		const secondPopup = popup();
+		const popups = [firstPopup, secondPopup];
+		let requests = 0;
+		await withAdminEnvironment(
+			async () => {
+				requests++;
+				return requests === 1
+					? Response.json(
+							{
+								error: {
+									code: "visible_session_conflict",
+									message: "busy",
+								},
+							},
+							{ status: 409 },
+						)
+					: Response.json(
+							{ error: { code: "stop_failed", message: "stop failed" } },
+							{ status: 503 },
+						);
+			},
+			async () => {
+				updateAdminKey("admin-secret");
+				connectionVerified.value = true;
+				await openBrowserForAccount(uiAccount());
+			},
+			{
+				location: { hostname: "admin.example" },
+				open: () => popups.shift(),
+				confirm: () => true,
+			},
+		);
+		assert.equal(firstPopup.closed, true);
+		assert.equal(secondPopup.closed, true);
+		assert.equal(requests, 2);
 	});
 
 	test("does not stop or retry a conflict when confirmation is declined", async () => {
@@ -271,6 +357,16 @@ describe("admin UI browser actions", () => {
 	});
 
 	test("keeps credentials in modal-local state and preserves accessible field contracts", () => {
+		const buffer = createBrowserCredentialBuffer();
+		buffer.values.email = "owner@example.com";
+		buffer.values.password = "private-password";
+		buffer.values.totpSecret = "JBSWY3DPEHPK3PXP";
+		buffer.clear();
+		assert.deepEqual(buffer.values, {
+			email: "",
+			password: "",
+			totpSecret: "",
+		});
 		const source = readFileSync(
 			new URL(
 				"../../../src/admin-ui/components/BrowserCredentialsModal.tsx",
@@ -278,7 +374,8 @@ describe("admin UI browser actions", () => {
 			),
 			"utf8",
 		);
-		assert.match(source, /useState\(""\)/);
+		assert.match(source, /useEffect/);
+		assert.match(source, /mounted\.current = false;[\s\S]*?buffer\.clear\(\)/);
 		assert.match(source, /finally\s*{[\s\S]*?clear\(\)/);
 		assert.match(source, /type="email"[\s\S]*?autoComplete="username"/);
 		assert.match(
@@ -288,5 +385,33 @@ describe("admin UI browser actions", () => {
 		assert.match(source, /autoComplete="one-time-code"/);
 		assert.match(source, /Authenticator seed help/);
 		assert.doesNotMatch(source, /signal\s*</);
+	});
+
+	test("clears the mutable credential buffer while a request is pending", async () => {
+		const buffer = createBrowserCredentialBuffer();
+		buffer.values.email = "owner@example.com";
+		buffer.values.password = "private-password";
+		buffer.values.totpSecret = "JBSWY3DPEHPK3PXP";
+		const requestStarted = deferred();
+		const finishRequest = deferred();
+		const pending = (async () => {
+			const values = buffer.values;
+			requestStarted.resolve();
+			await finishRequest.promise;
+			return values;
+		})();
+		await requestStarted.promise;
+		buffer.clear();
+		assert.deepEqual(buffer.values, {
+			email: "",
+			password: "",
+			totpSecret: "",
+		});
+		finishRequest.resolve();
+		assert.deepEqual(await pending, {
+			email: "",
+			password: "",
+			totpSecret: "",
+		});
 	});
 });

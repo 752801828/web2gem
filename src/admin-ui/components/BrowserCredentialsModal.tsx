@@ -1,22 +1,55 @@
 import type { JSX } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { configureBrowserLogin } from "../actions";
 import { tr } from "../i18n";
 import { browserCredentialsDraft } from "../state";
+import type { BrowserCredentialsInput } from "../types";
 import { DialogSurface } from "./DialogSurface";
+
+export type BrowserCredentialBuffer = {
+	values: BrowserCredentialsInput;
+	clear(): void;
+};
+
+export function createBrowserCredentialBuffer(): BrowserCredentialBuffer {
+	const values = { email: "", password: "", totpSecret: "" };
+	return {
+		values,
+		clear() {
+			values.email = "";
+			values.password = "";
+			values.totpSecret = "";
+		},
+	};
+}
 
 export function BrowserCredentialsModal(): JSX.Element | null {
 	const draft = browserCredentialsDraft.value;
-	const [email, setEmail] = useState("");
-	const [password, setPassword] = useState("");
-	const [totpSecret, setTotpSecret] = useState("");
+	const bufferRef = useRef<BrowserCredentialBuffer | null>(null);
+	bufferRef.current ??= createBrowserCredentialBuffer();
+	const buffer = bufferRef.current;
+	const mounted = useRef(true);
+	const [, render] = useState(0);
 	const [busy, setBusy] = useState(false);
+	useEffect(() => {
+		mounted.current = true;
+		return () => {
+			mounted.current = false;
+			buffer.clear();
+		};
+	}, [buffer]);
 	if (!draft) return null;
 
 	const clear = (): void => {
-		setEmail("");
-		setPassword("");
-		setTotpSecret("");
+		buffer.clear();
+		render((value) => value + 1);
+	};
+	const update = (
+		field: keyof BrowserCredentialsInput,
+		value: string,
+	): void => {
+		buffer.values[field] = value;
+		render((current) => current + 1);
 	};
 	const close = (): void => {
 		if (busy) return;
@@ -28,15 +61,18 @@ export function BrowserCredentialsModal(): JSX.Element | null {
 		setBusy(true);
 		let saved = false;
 		try {
-			saved = await configureBrowserLogin(draft.accountId, {
-				email,
-				password,
-				totpSecret,
-			});
+			saved = await configureBrowserLogin(draft.accountId, buffer.values);
 		} finally {
-			clear();
-			setBusy(false);
-			if (saved) browserCredentialsDraft.value = null;
+			buffer.clear();
+			if (mounted.current) {
+				render((value) => value + 1);
+				setBusy(false);
+				if (
+					saved &&
+					browserCredentialsDraft.value?.accountId === draft.accountId
+				)
+					browserCredentialsDraft.value = null;
+			}
 		}
 	};
 
@@ -72,9 +108,9 @@ export function BrowserCredentialsModal(): JSX.Element | null {
 						type="email"
 						autoComplete="username"
 						required={!draft.credentialsConfigured}
-						value={email}
+						value={buffer.values.email}
 						onInput={(event) =>
-							setEmail((event.currentTarget as HTMLInputElement).value)
+							update("email", (event.currentTarget as HTMLInputElement).value)
 						}
 					/>
 				</label>
@@ -84,9 +120,12 @@ export function BrowserCredentialsModal(): JSX.Element | null {
 						type="password"
 						autoComplete="current-password"
 						required={!draft.credentialsConfigured}
-						value={password}
+						value={buffer.values.password}
 						onInput={(event) =>
-							setPassword((event.currentTarget as HTMLInputElement).value)
+							update(
+								"password",
+								(event.currentTarget as HTMLInputElement).value,
+							)
 						}
 					/>
 				</label>
@@ -96,9 +135,12 @@ export function BrowserCredentialsModal(): JSX.Element | null {
 						type="password"
 						autoComplete="one-time-code"
 						required={!draft.credentialsConfigured}
-						value={totpSecret}
+						value={buffer.values.totpSecret}
 						onInput={(event) =>
-							setTotpSecret((event.currentTarget as HTMLInputElement).value)
+							update(
+								"totpSecret",
+								(event.currentTarget as HTMLInputElement).value,
+							)
 						}
 					/>
 					<span class="field-note">{tr("Authenticator seed help")}</span>

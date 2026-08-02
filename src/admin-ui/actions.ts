@@ -404,41 +404,57 @@ export async function deleteBrowserProfile(
 export async function openBrowserForAccount(
 	account: GeminiAccount,
 ): Promise<void> {
-	const popup = window.open("about:blank", "_blank", "noopener");
+	const popup = openWaitingPopup();
 	if (!popup) {
 		showToast(tr("Browser popup was blocked"), "error");
 		return;
 	}
-	writeWaitingPage(popup);
-	const outcome = await openBrowserAttempt(account, popup);
-	if (outcome !== "conflict") return;
-	popup.close();
-	if (!window.confirm(tr("Stop visible browser confirmation"))) return;
-	const session = currentVerifiedAdminSession();
-	if (!session) return;
-	const stopped = await runAdminSessionOperation(
-		session,
-		() => stopAccountBrowser(session),
-		{ fallbackMessage: tr("Failed to stop visible browser") },
-	);
-	if (stopped.ok) await openBrowserForAccount(account);
-}
-
-async function openBrowserAttempt(
-	account: GeminiAccount,
-	popup: Window,
-): Promise<"done" | "conflict"> {
 	const session = currentVerifiedAdminSession();
 	if (!session) {
 		popup.close();
-		return "done";
+		return;
 	}
 	if (!claimAccountOperation([account.id])) {
 		popup.close();
 		showToast(tr("Account operation already in progress"), "error");
-		return "done";
+		return;
 	}
 	rowBusy.value = { ...rowBusy.value, [account.id]: "browser_open" };
+	try {
+		const outcome = await openBrowserAttempt(session, account, popup);
+		if (outcome !== "conflict") return;
+		popup.close();
+		if (!window.confirm(tr("Stop visible browser confirmation"))) return;
+		const retryPopup = openWaitingPopup();
+		if (!retryPopup) {
+			showToast(tr("Browser popup was blocked"), "error");
+			return;
+		}
+		const stopped = await runAdminSessionOperation(
+			session,
+			() => stopAccountBrowser(session),
+			{ fallbackMessage: tr("Failed to stop visible browser") },
+		);
+		if (!stopped.ok) {
+			retryPopup.close();
+			return;
+		}
+		const retried = await openBrowserAttempt(session, account, retryPopup);
+		if (retried === "conflict") {
+			retryPopup.close();
+			showToast(tr("Failed to open browser"), "error");
+		}
+	} finally {
+		releaseAccountOperation([account.id]);
+		if (isCurrentAdminSession(session)) clearRowBusy(account.id);
+	}
+}
+
+async function openBrowserAttempt(
+	session: AdminSession,
+	account: GeminiAccount,
+	popup: Window,
+): Promise<"done" | "conflict"> {
 	try {
 		const opened = await openAccountBrowser(session, account.id);
 		if (!isCurrentAdminSession(session)) {
@@ -460,10 +476,13 @@ async function openBrowserAttempt(
 			fallbackMessage: tr("Failed to open browser"),
 		});
 		return "done";
-	} finally {
-		releaseAccountOperation([account.id]);
-		if (isCurrentAdminSession(session)) clearRowBusy(account.id);
 	}
+}
+
+function openWaitingPopup(): Window | null {
+	const popup = window.open("about:blank", "_blank", "noopener");
+	if (popup) writeWaitingPage(popup);
+	return popup;
 }
 
 function writeWaitingPage(popup: Window): void {
@@ -485,15 +504,13 @@ function safeNoVncUrl(value: string): string {
 	const loopback = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 	const sameHost =
 		url.hostname.toLowerCase() === window.location.hostname.toLowerCase();
-	const hasPasswordParameter = [...url.searchParams.keys()].some((key) =>
-		key.toLowerCase().includes("password"),
-	);
 	if (
 		!(["http:", "https:"] as string[]).includes(url.protocol) ||
 		(!sameHost && !loopback.has(url.hostname.toLowerCase())) ||
 		url.username ||
 		url.password ||
-		hasPasswordParameter
+		url.search ||
+		url.hash
 	)
 		throw new Error("unsafe browser URL");
 	return url.href;
