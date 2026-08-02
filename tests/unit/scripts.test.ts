@@ -31,8 +31,24 @@ type AsyncDirCallback = (path: string) => Promise<void>;
 const DOCKER_ONLY_ENV_KEYS = [
 	"PORT",
 	"WEB2GEM_IMAGE",
+	"BROWSER_HELPER_IMAGE",
+	"WEB2GEM_MASTER_KEY_FILE",
 	"SQLITE_PATH",
 	"SQLITE_BUSY_TIMEOUT_MS",
+	"NOVNC_PORT",
+	"BROWSER_HELPER_INTERNAL_URL",
+	"BROWSER_HELPER_INTERNAL_TOKEN",
+	"NOVNC_PASSWORD",
+	"NOVNC_PUBLIC_URL",
+	"FEISHU_WEBHOOK_URL",
+	"FEISHU_SIGNING_SECRET",
+	"BROWSER_CHECK_INTERVAL_SEC",
+	"BROWSER_CHECK_JITTER_SEC",
+	"BROWSER_VISIBLE_IDLE_TIMEOUT_SEC",
+	"BROWSER_VISIBLE_SUBMISSION_TIMEOUT_SEC",
+	"BROWSER_AUTLOGIN_MAX_ATTEMPTS_PER_DAY",
+	"BROWSER_HELPER_CONTROL_PORT",
+	"BROWSER_MAX_CLOCK_SKEW_SEC",
 ];
 function coverageEntry(linePct = 100, branchPct = 100): CoverageEntry {
 	return {
@@ -168,6 +184,14 @@ function parseComposeVariableReferences(source: string): Set<string> {
 		if (match[1]) keys.add(match[1]);
 	}
 	return keys;
+}
+function composeServiceBlock(source: string, service: string): string {
+	const match = new RegExp(
+		`^  ${service}:\\r?\\n([\\s\\S]*?)(?=^  [a-z0-9-]+:\\r?$|^[a-z]|(?![\\s\\S]))`,
+		"m",
+	).exec(source);
+	if (!match?.[0]) throw new Error(`missing Compose service ${service}`);
+	return match[0];
 }
 function missingKeys(
 	expected: readonly string[],
@@ -498,6 +522,117 @@ describe("quality scripts", () => {
 			/COPY --from=build \/app\/migrations \.\/migrations/,
 		);
 	});
+	test("keeps the browser helper image and Compose boundary hardened", async () => {
+		const [compose, helperDockerfile, dockerEnv, helperMain, chromiumSource] =
+			await Promise.all([
+				readFile("compose.yaml", "utf8"),
+				readFile("Dockerfile.browser-helper", "utf8"),
+				readFile(".env.docker.example", "utf8"),
+				readFile("browser-helper/main.mjs", "utf8"),
+				readFile("browser-helper/chromium.mjs", "utf8"),
+			]);
+		const web2gemService = composeServiceBlock(compose, "web2gem");
+		const helperService = composeServiceBlock(compose, "browser-helper");
+
+		assert.match(compose, /^\s{2}web2gem:\s*$/m);
+		assert.match(compose, /^\s{2}browser-helper:\s*$/m);
+		assert.match(compose, /127\.0\.0\.1:\$\{NOVNC_PORT:-6080\}:6080/);
+		assert.equal((compose.match(/^\s{4}ports:\s*$/gm) || []).length, 2);
+		assert.match(
+			compose,
+			/^\s{2}browser-internal:\s*\n\s{4}internal:\s*true\s*$/m,
+		);
+		assert.match(compose, /^\s{2}browser-profiles:\s*$/m);
+		assert.match(compose, /^\s{2}web2gem-data:\s*$/m);
+		assert.match(compose, /browser-profiles:\/profiles/);
+		assert.doesNotMatch(helperService, /web2gem-data:\/data/);
+		assert.doesNotMatch(web2gemService, /browser-profiles:\/profiles/);
+		assert.equal(
+			(compose.match(/source:\s*web2gem_master_key/g) || []).length,
+			2,
+		);
+		assert.equal(
+			(compose.match(/target:\s*web2gem_master_key/g) || []).length,
+			2,
+		);
+		assert.equal((compose.match(/mode:\s*0444/g) || []).length, 2);
+		assert.match(
+			compose,
+			/file:\s*"\$\{WEB2GEM_MASTER_KEY_FILE:-\.\/secrets\/web2gem_master_key\}"/,
+		);
+		assert.match(helperService, /healthcheck:/);
+		assert.match(helperService, /fetch\('http:\/\/127\.0\.0\.1:'/);
+		assert.match(helperService, /'\/health'/);
+		for (const service of [web2gemService, helperService]) {
+			assert.match(
+				service,
+				/NO_PROXY:\s*"\$\{NO_PROXY:-[^}]*web2gem[^}]*browser-helper[^}]*127\.0\.0\.1[^}]*localhost[^}]*\}"/,
+			);
+		}
+
+		assert.match(
+			helperDockerfile,
+			/^FROM m\.daocloud\.io\/docker\.io\/library\/node:26-bookworm-slim/m,
+		);
+		const runtimePackages = [
+			"ca-certificates",
+			"chromium",
+			"fonts-noto-cjk",
+			"novnc",
+			"tini",
+			"websockify",
+			"xvfb",
+			"x11vnc",
+		].sort();
+		for (const runtimePackage of runtimePackages)
+			assert.match(helperDockerfile, new RegExp(`\\b${runtimePackage}\\b`));
+		const installBlock =
+			/apt-get install -y --no-install-recommends([\s\S]*?)&& rm/.exec(
+				helperDockerfile,
+			)?.[1];
+		if (!installBlock) throw new Error("missing helper apt install block");
+		assert.deepEqual(
+			installBlock.replaceAll("\\", " ").trim().split(/\s+/).sort(),
+			runtimePackages,
+		);
+		assert.match(helperDockerfile, /rm -rf \/var\/lib\/apt\/lists\/\*/);
+		assert.match(helperDockerfile, /^USER browser$/m);
+		assert.match(helperDockerfile, /\/profiles/);
+		assert.match(helperDockerfile, /\/run\/browser-helper/);
+		assert.match(helperDockerfile, /pnpm install --prod --frozen-lockfile/);
+		assert.match(helperDockerfile, /ENTRYPOINT \["\/usr\/bin\/tini", "--"\]/);
+		assert.match(
+			helperDockerfile,
+			/CMD \["node", "--use-env-proxy", "browser-helper\/main\.mjs"\]/,
+		);
+		assert.match(helperMain, /from "\.\.\/server\/secrets\.mjs"/);
+		assert.match(
+			helperDockerfile,
+			/server\/secrets\.mjs \.\/server\/secrets\.mjs/,
+		);
+		assert.match(chromiumSource, /executablePath = "\/usr\/bin\/chromium"/);
+		assert.match(
+			web2gemService,
+			/command: \["node", "--use-env-proxy", "server\/docker-server\.mjs"\]/,
+		);
+
+		for (const key of [
+			"BROWSER_HELPER_INTERNAL_URL",
+			"BROWSER_HELPER_INTERNAL_TOKEN",
+			"NOVNC_PASSWORD",
+			"NOVNC_PUBLIC_URL",
+			"FEISHU_WEBHOOK_URL",
+			"FEISHU_SIGNING_SECRET",
+			"BROWSER_CHECK_INTERVAL_SEC",
+			"BROWSER_CHECK_JITTER_SEC",
+			"BROWSER_VISIBLE_IDLE_TIMEOUT_SEC",
+			"BROWSER_VISIBLE_SUBMISSION_TIMEOUT_SEC",
+			"BROWSER_AUTLOGIN_MAX_ATTEMPTS_PER_DAY",
+			"BROWSER_HELPER_CONTROL_PORT",
+			"BROWSER_MAX_CLOCK_SKEW_SEC",
+		])
+			assert.match(dockerEnv, new RegExp(`^${key}=$`, "m"));
+	});
 	test("keeps env secret templates trackable in docker and git ignore files", async () => {
 		const dockerPatterns = parseIgnorePatterns(
 			await readFile(".dockerignore", "utf8"),
@@ -520,12 +655,34 @@ describe("quality scripts", () => {
 				`dockerignore missing ${pattern}`,
 			);
 		}
-		for (const pattern of ["tests", "docs", "release-assets", "reports"]) {
+		for (const pattern of [
+			"tests",
+			"docs",
+			"release-assets",
+			"reports",
+			"secrets",
+			"profiles",
+			"screenshots",
+			"runtime",
+			"*.sqlite",
+			"*.sqlite-*",
+		]) {
 			assert.equal(
 				dockerExcluded.has(pattern),
 				true,
 				`dockerignore missing ${pattern}`,
 			);
+		}
+		for (const [dockerPattern, gitPattern] of [
+			["secrets", "secrets/"],
+			["profiles", "profiles/"],
+			["screenshots", "screenshots/"],
+			["runtime", "runtime/"],
+			["*.sqlite", "*.sqlite"],
+			["*.sqlite-*", "*.sqlite-*"],
+		] as const) {
+			assert.equal(dockerExcluded.has(dockerPattern), true, dockerPattern);
+			assert.equal(gitPatterns.includes(gitPattern), true, gitPattern);
 		}
 		for (const example of ["!.env.docker.example"]) {
 			assert.equal(

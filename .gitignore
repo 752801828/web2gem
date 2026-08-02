@@ -12,3 +12,11 @@ AGENTS.md
 .codex/
 .cursor/
 .worktrees/
+
+# Local browser-helper state and secrets
+secrets/
+profiles/
+screenshots/
+runtime/
+*.sqlite
+*.sqlite-*

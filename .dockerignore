@@ -20,3 +20,9 @@ README*
 LICENSE
 compose.yaml
 AGENTS.md
+secrets
+profiles
+screenshots
+runtime
+*.sqlite
+*.sqlite-*

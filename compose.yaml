@@ -4,8 +4,12 @@ services:
     image: "${WEB2GEM_IMAGE:-web2gem-account-pool:local}"
     pull_policy: never
     restart: unless-stopped
+    command: ["node", "--use-env-proxy", "server/docker-server.mjs"]
     ports:
       - "${PORT:-52389}:${PORT:-52389}"
+    networks:
+      - web2gem-egress
+      - browser-internal
     environment:
       HOST: "0.0.0.0"
       PORT: "${PORT:-52389}"
@@ -28,8 +32,20 @@ services:
       CURRENT_INPUT_FILE_ENABLED: "${CURRENT_INPUT_FILE_ENABLED:-}"
       CURRENT_INPUT_FILE_MIN_BYTES: "${CURRENT_INPUT_FILE_MIN_BYTES:-}"
       GENERIC_FILE_UPLOAD_MAX_BYTES: "${GENERIC_FILE_UPLOAD_MAX_BYTES:-}"
+      BROWSER_HELPER_INTERNAL_URL: "${BROWSER_HELPER_INTERNAL_URL:-http://browser-helper:6081}"
+      BROWSER_HELPER_INTERNAL_TOKEN: "${BROWSER_HELPER_INTERNAL_TOKEN:-}"
+      NOVNC_PUBLIC_URL: "${NOVNC_PUBLIC_URL:-http://127.0.0.1:6080/vnc.html}"
+      NODE_USE_ENV_PROXY: "${NODE_USE_ENV_PROXY:-1}"
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      ALL_PROXY: "${ALL_PROXY:-}"
+      NO_PROXY: "${NO_PROXY:-web2gem,browser-helper,127.0.0.1,localhost,::1}"
     volumes:
       - web2gem-data:/data
+    secrets:
+      - source: web2gem_master_key
+        target: web2gem_master_key
+        mode: 0444
     healthcheck:
       test:
         - CMD
@@ -41,5 +57,70 @@ services:
       retries: 5
       start_period: 10s
 
+  browser-helper:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser-helper
+    image: "${BROWSER_HELPER_IMAGE:-web2gem-browser-helper:local}"
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      web2gem:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${NOVNC_PORT:-6080}:6080"
+    expose:
+      - "6081"
+    networks:
+      - browser-egress
+      - browser-internal
+    environment:
+      HOME: "/home/browser"
+      WEB2GEM_INTERNAL_URL: "http://web2gem:${PORT:-52389}"
+      BROWSER_HELPER_INTERNAL_TOKEN: "${BROWSER_HELPER_INTERNAL_TOKEN:-}"
+      NOVNC_PASSWORD: "${NOVNC_PASSWORD:-}"
+      NOVNC_PUBLIC_URL: "${NOVNC_PUBLIC_URL:-http://127.0.0.1:6080/vnc.html}"
+      FEISHU_WEBHOOK_URL: "${FEISHU_WEBHOOK_URL:-}"
+      FEISHU_SIGNING_SECRET: "${FEISHU_SIGNING_SECRET:-}"
+      BROWSER_CHECK_INTERVAL_SEC: "${BROWSER_CHECK_INTERVAL_SEC:-}"
+      BROWSER_CHECK_JITTER_SEC: "${BROWSER_CHECK_JITTER_SEC:-}"
+      BROWSER_VISIBLE_IDLE_TIMEOUT_SEC: "${BROWSER_VISIBLE_IDLE_TIMEOUT_SEC:-}"
+      BROWSER_VISIBLE_SUBMISSION_TIMEOUT_SEC: "${BROWSER_VISIBLE_SUBMISSION_TIMEOUT_SEC:-}"
+      BROWSER_AUTLOGIN_MAX_ATTEMPTS_PER_DAY: "${BROWSER_AUTLOGIN_MAX_ATTEMPTS_PER_DAY:-}"
+      BROWSER_HELPER_CONTROL_PORT: "${BROWSER_HELPER_CONTROL_PORT:-6081}"
+      BROWSER_MAX_CLOCK_SKEW_SEC: "${BROWSER_MAX_CLOCK_SKEW_SEC:-}"
+      NODE_USE_ENV_PROXY: "${NODE_USE_ENV_PROXY:-1}"
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      ALL_PROXY: "${ALL_PROXY:-}"
+      NO_PROXY: "${NO_PROXY:-web2gem,browser-helper,127.0.0.1,localhost,::1}"
+    volumes:
+      - browser-profiles:/profiles
+    secrets:
+      - source: web2gem_master_key
+        target: web2gem_master_key
+        mode: 0444
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:' + (process.env.BROWSER_HELPER_CONTROL_PORT || '6081') + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
 volumes:
   web2gem-data:
+  browser-profiles:
+
+networks:
+  web2gem-egress:
+  browser-egress:
+  browser-internal:
+    internal: true
+
+secrets:
+  web2gem_master_key:
+    file: "${WEB2GEM_MASTER_KEY_FILE:-./secrets/web2gem_master_key}"

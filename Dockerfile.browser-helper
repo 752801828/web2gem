@@ -1,0 +1,40 @@
+FROM m.daocloud.io/docker.io/library/node:26-bookworm-slim AS deps
+
+WORKDIR /app
+ARG PNPM_VERSION=11.10.0
+RUN npm install -g pnpm@${PNPM_VERSION}
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --prod --frozen-lockfile
+
+FROM m.daocloud.io/docker.io/library/node:26-bookworm-slim AS runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        chromium \
+        fonts-noto-cjk \
+        novnc \
+        tini \
+        websockify \
+        x11vnc \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 browser \
+    && useradd --system --uid 10001 --gid browser --home-dir /home/browser --create-home --shell /usr/sbin/nologin browser \
+    && mkdir -p /app /profiles /run/browser-helper \
+    && chown -R browser:browser /app /profiles /run/browser-helper /home/browser
+
+WORKDIR /app
+ENV NODE_ENV=production \
+    HOME=/home/browser
+
+COPY --from=deps --chown=browser:browser /app/node_modules ./node_modules
+COPY --chown=browser:browser package.json ./package.json
+COPY --chown=browser:browser browser-helper ./browser-helper
+COPY --chown=browser:browser server/secrets.mjs ./server/secrets.mjs
+
+USER browser
+EXPOSE 6080 6081
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "--use-env-proxy", "browser-helper/main.mjs"]
