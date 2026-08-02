@@ -528,10 +528,10 @@ async function runBrowserStatusAction(
 		accountId,
 		busy,
 		request,
-		async (result) => {
+		(result) => {
 			updateBrowserStatus(accountId, result);
 			showToast(successMessage);
-			await loadAccounts();
+			void loadAccounts();
 		},
 		fallbackMessage,
 	);
@@ -559,7 +559,7 @@ async function runBrowserOperation<T>(
 	accountId: string,
 	busy: string,
 	request: (session: AdminSession) => Promise<T>,
-	onSuccess: (value: T) => void | Promise<void>,
+	onSuccess: (value: T) => void,
 	fallbackMessage: string,
 ): Promise<boolean> {
 	const session = currentVerifiedAdminSession();
@@ -577,7 +577,7 @@ async function runBrowserOperation<T>(
 			{ fallbackMessage },
 		);
 		if (!operation.ok) return false;
-		await onSuccess(operation.value);
+		onSuccess(operation.value);
 		return true;
 	} finally {
 		releaseAccountOperation(claim);

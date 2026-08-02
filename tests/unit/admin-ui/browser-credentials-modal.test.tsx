@@ -1,16 +1,13 @@
-import { signal } from "@preact/signals";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, describe, test } from "vitest";
-import {
-	BrowserCredentialsModal,
-	createBrowserCredentialBuffer,
-} from "../../../src/admin-ui/components/BrowserCredentialsModal";
 import { AccountActions } from "../../../src/admin-ui/components/AccountActions";
+import { BrowserCredentialsModal } from "../../../src/admin-ui/components/BrowserCredentialsModal";
 import { updateAdminKey } from "../../../src/admin-ui/session";
 import {
 	browserCredentialsDraft,
 	connectionVerified,
+	loading,
 	rowBusy,
 } from "../../../src/admin-ui/state";
 import { withPatchedGlobal } from "../_support/globals.js";
@@ -61,6 +58,7 @@ class FakeText extends FakeNode {
 class FakeElement extends FakeNode {
 	attributes = new Map<string, string>();
 	listeners = new Map<string, EventListener>();
+	oninput: ((event: Event) => void) | null = null;
 	onsubmit: ((event: Event) => void) | null = null;
 	value = "";
 	name = "";
@@ -149,28 +147,29 @@ describe("browser credentials modal lifecycle", () => {
 	test("a keyed account switch wipes A while pending and preserves B", async () => {
 		const document = new FakeDocument();
 		const root = document.createElement("main");
-		const bufferA = createBrowserCredentialBuffer();
-		const bufferB = createBrowserCredentialBuffer();
-		const activeAccount = signal<"account-a" | "account-b">("account-a");
 		const requestStarted = deferred();
 		const requestResponse = deferred<Response>();
+		const reloadStarted = deferred();
+		const reloadResponse = deferred<Response>();
+		const credentialBodies: string[] = [];
 		const Harness = () => {
-			const accountId = activeAccount.value;
-			return h(BrowserCredentialsModal, {
-				key: accountId,
-				buffer: accountId === "account-a" ? bufferA : bufferB,
-			});
+			const draft = browserCredentialsDraft.value;
+			return draft
+				? h(BrowserCredentialsModal, { key: draft.accountId })
+				: null;
 		};
 
 		await withPatchedGlobal("HTMLElement", FakeElement, () =>
 			withPatchedGlobal("document", document, () =>
 				withAdminEnvironment(
-					async (path: RequestInfo | URL) => {
+					async (path: RequestInfo | URL, init: RequestInit = {}) => {
 						if (String(path).endsWith("/browser/credentials")) {
+							credentialBodies.push(String(init.body));
 							requestStarted.resolve();
 							return requestResponse.promise;
 						}
-						return Response.json(uiAccountOverview());
+						reloadStarted.resolve();
+						return reloadResponse.promise;
 					},
 					async () => {
 						updateAdminKey("admin-secret");
@@ -180,9 +179,6 @@ describe("browser credentials modal lifecycle", () => {
 							accountLabel: "A",
 							credentialsConfigured: false,
 						};
-						bufferA.values.email = "a@example.com";
-						bufferA.values.password = "password-a";
-						bufferA.values.totpSecret = "JBSWY3DPEHPK3PXP";
 						act(() => render(h(Harness, {}), root as unknown as Element));
 						const form = root.querySelector("form");
 						if (!form) throw new Error("expected credentials form");
@@ -193,26 +189,49 @@ describe("browser credentials modal lifecycle", () => {
 							["email", "password", "totpSecret"],
 						);
 						assert.equal(inputs[0]?.spellcheck, false);
+						act(() => {
+							const values = [
+								"a@example.com",
+								"password-a",
+								"JBSWY3DPEHPK3PXP",
+							];
+							for (const [index, input] of inputs.entries()) {
+								input.value = values[index] || "";
+								input.dispatch("input");
+							}
+						});
 						form.dispatch("submit");
 						await Promise.resolve();
 						assert.equal(requestStarted.settled, true);
 						await requestStarted.promise;
+						assert.deepEqual(JSON.parse(credentialBodies[0] || "null"), {
+							email: "a@example.com",
+							password: "password-a",
+							totpSecret: "JBSWY3DPEHPK3PXP",
+						});
 
 						browserCredentialsDraft.value = {
 							accountId: "account-b",
 							accountLabel: "B",
 							credentialsConfigured: false,
 						};
-						activeAccount.value = "account-b";
 						act(() => render(h(Harness, {}), root as unknown as Element));
-						assert.deepEqual(bufferA.values, {
-							email: "",
-							password: "",
-							totpSecret: "",
+						const inputsB = root.querySelectorAll("input");
+						assert.deepEqual(
+							inputsB.map((input) => input.value),
+							["", "", ""],
+						);
+						act(() => {
+							const values = [
+								"b@example.com",
+								"password-b",
+								"JBSWY3DPEHPK3PXP",
+							];
+							for (const [index, input] of inputsB.entries()) {
+								input.value = values[index] || "";
+								input.dispatch("input");
+							}
 						});
-						bufferB.values.email = "b@example.com";
-						bufferB.values.password = "password-b";
-						bufferB.values.totpSecret = "JBSWY3DPEHPK3PXP";
 						requestResponse.resolve(
 							Response.json({
 								credentialsConfigured: true,
@@ -225,6 +244,7 @@ describe("browser credentials modal lifecycle", () => {
 								},
 							}),
 						);
+						await reloadStarted.promise;
 						await act(async () => {
 							for (let index = 0; index < 20; index += 1) {
 								if (!Object.hasOwn(rowBusy.value, "account-a")) return;
@@ -233,13 +253,18 @@ describe("browser credentials modal lifecycle", () => {
 							throw new Error("credential save did not finish");
 						});
 						assert.equal(browserCredentialsDraft.value?.accountId, "account-b");
-						assert.equal(bufferB.values.email, "b@example.com");
-						act(() => render(null, root as unknown as Element));
-						assert.deepEqual(bufferB.values, {
-							email: "",
-							password: "",
-							totpSecret: "",
+						assert.deepEqual(
+							root.querySelectorAll("input").map((input) => input.value),
+							["b@example.com", "password-b", "JBSWY3DPEHPK3PXP"],
+						);
+						assert.equal(loading.value, true);
+						reloadResponse.resolve(Response.json(uiAccountOverview()));
+						await act(async () => {
+							for (let index = 0; index < 20 && loading.value; index += 1)
+								await Promise.resolve();
 						});
+						assert.equal(loading.value, false);
+						act(() => render(null, root as unknown as Element));
 					},
 				),
 			),

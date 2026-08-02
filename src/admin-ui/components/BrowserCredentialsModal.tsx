@@ -6,12 +6,12 @@ import { browserCredentialsDraft } from "../state";
 import type { BrowserCredentialsInput } from "../types";
 import { DialogSurface } from "./DialogSurface";
 
-export type BrowserCredentialBuffer = {
+type BrowserCredentialBuffer = {
 	values: BrowserCredentialsInput;
 	clear(): void;
 };
 
-export function createBrowserCredentialBuffer(): BrowserCredentialBuffer {
+function createBrowserCredentialBuffer(): BrowserCredentialBuffer {
 	const values = { email: "", password: "", totpSecret: "" };
 	return {
 		values,
@@ -23,15 +23,11 @@ export function createBrowserCredentialBuffer(): BrowserCredentialBuffer {
 	};
 }
 
-export function BrowserCredentialsModal({
-	buffer: providedBuffer,
-}: {
-	buffer?: BrowserCredentialBuffer;
-} = {}): JSX.Element | null {
+export function BrowserCredentialsModal(): JSX.Element | null {
 	const draft = browserCredentialsDraft.value;
 	const bufferRef = useRef<BrowserCredentialBuffer | null>(null);
 	bufferRef.current ??= createBrowserCredentialBuffer();
-	const buffer = providedBuffer || bufferRef.current;
+	const buffer = bufferRef.current;
 	const mounted = useRef(true);
 	const [, render] = useState(0);
 	const [busy, setBusy] = useState(false);

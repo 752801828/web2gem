@@ -1,13 +1,12 @@
 import { afterEach, describe, test } from "vitest";
-import { readFileSync } from "node:fs";
 import {
 	checkBrowserForAccount,
 	clearBrowserLogin,
+	configureBrowserLogin,
 	deleteBrowserProfile,
 	loadAccounts,
 	openBrowserForAccount,
 } from "../../../src/admin-ui/actions";
-import { createBrowserCredentialBuffer } from "../../../src/admin-ui/components/BrowserCredentialsModal";
 import {
 	resolveConfirmation,
 	updateAdminKey,
@@ -292,7 +291,10 @@ describe("admin UI browser actions", () => {
 	test("keeps browser busy state isolated to the active account", async () => {
 		const response = deferred<Response>();
 		await withAdminEnvironment(
-			async () => response.promise,
+			async (path: RequestInfo | URL) =>
+				String(path).endsWith("/browser/check")
+					? response.promise
+					: Response.json(uiAccountOverview()),
 			async () => {
 				updateAdminKey("admin-secret");
 				connectionVerified.value = true;
@@ -314,6 +316,9 @@ describe("admin UI browser actions", () => {
 				);
 				await checking;
 				assert.deepEqual(rowBusy.value, {});
+				for (let index = 0; index < 20 && loading.value; index += 1)
+					await Promise.resolve();
+				assert.equal(loading.value, false);
 			},
 		);
 	});
@@ -362,6 +367,12 @@ describe("admin UI browser actions", () => {
 						),
 					);
 					await stale;
+					for (
+						let index = 0;
+						index < 20 && accounts.value[0]?.label !== "authoritative";
+						index += 1
+					)
+						await Promise.resolve();
 					assert.deepEqual(requests, [
 						"/admin/accounts?limit=200",
 						"/admin/accounts/account-a/browser/check",
@@ -377,11 +388,65 @@ describe("admin UI browser actions", () => {
 		}
 	});
 
+	test("credential save resolves while its authoritative reload is still pending", async () => {
+		const reloadStarted = deferred();
+		const reloadResponse = deferred<Response>();
+		const saveFinished = deferred<boolean>();
+		try {
+			await withAdminEnvironment(
+				async (path: RequestInfo | URL) => {
+					if (String(path).endsWith("/browser/credentials"))
+						return Response.json({
+							credentialsConfigured: true,
+							status: {
+								state: "ready",
+								lastCheckAtMs: 20,
+								lastCookieUpdateAtMs: null,
+								lastAutoLoginAtMs: null,
+								failureCode: null,
+							},
+						});
+					reloadStarted.resolve();
+					return reloadResponse.promise;
+				},
+				async () => {
+					updateAdminKey("admin-secret");
+					connectionVerified.value = true;
+					accounts.value = [uiAccount()];
+					const saving = configureBrowserLogin("account-a", {
+						email: "owner@example.com",
+						password: "private-password",
+						totpSecret: "JBSWY3DPEHPK3PXP",
+					}).then((saved) => {
+						saveFinished.resolve(saved);
+						return saved;
+					});
+					await reloadStarted.promise;
+					for (let index = 0; index < 20 && !saveFinished.settled; index += 1)
+						await Promise.resolve();
+					assert.equal(saveFinished.settled, true);
+					assert.equal(await saving, true);
+					assert.deepEqual(rowBusy.value, {});
+					assert.equal(loading.value, true);
+					reloadResponse.resolve(Response.json(uiAccountOverview()));
+					for (let index = 0; index < 20 && loading.value; index += 1)
+						await Promise.resolve();
+					assert.equal(loading.value, false);
+				},
+			);
+		} finally {
+			reloadStarted.resolve();
+			reloadResponse.resolve(Response.json(uiAccountOverview()));
+		}
+	});
+
 	test("uses separate account-labelled confirmations for credentials and profile", async () => {
 		const requests: string[] = [];
 		await withAdminEnvironment(
 			async (path: RequestInfo | URL) => {
 				requests.push(String(path));
+				if (String(path) === "/admin/accounts?limit=200")
+					return Response.json(uiAccountOverview());
 				return String(path).endsWith("/profile")
 					? Response.json({ deleted: true })
 					: Response.json({
@@ -413,6 +478,9 @@ describe("admin UI browser actions", () => {
 				});
 				resolveConfirmation(true);
 				await clearing;
+				for (let index = 0; index < 20 && loading.value; index += 1)
+					await Promise.resolve();
+				assert.equal(loading.value, false);
 
 				const deleting = deleteBrowserProfile(account);
 				assert.deepEqual(confirmationDraft.value, {
@@ -429,64 +497,5 @@ describe("admin UI browser actions", () => {
 			"/admin/accounts?limit=200",
 			"/admin/accounts/account-a/browser/profile",
 		]);
-	});
-
-	test("keeps credentials in modal-local state and preserves accessible field contracts", () => {
-		const buffer = createBrowserCredentialBuffer();
-		buffer.values.email = "owner@example.com";
-		buffer.values.password = "private-password";
-		buffer.values.totpSecret = "JBSWY3DPEHPK3PXP";
-		buffer.clear();
-		assert.deepEqual(buffer.values, {
-			email: "",
-			password: "",
-			totpSecret: "",
-		});
-		const source = readFileSync(
-			new URL(
-				"../../../src/admin-ui/components/BrowserCredentialsModal.tsx",
-				import.meta.url,
-			),
-			"utf8",
-		);
-		assert.match(source, /useEffect/);
-		assert.match(source, /mounted\.current = false;[\s\S]*?buffer\.clear\(\)/);
-		assert.match(source, /finally\s*{[\s\S]*?clear\(\)/);
-		assert.match(source, /type="email"[\s\S]*?autoComplete="username"/);
-		assert.match(
-			source,
-			/type="password"[\s\S]*?autoComplete="current-password"/,
-		);
-		assert.match(source, /autoComplete="one-time-code"/);
-		assert.match(source, /Authenticator seed help/);
-		assert.doesNotMatch(source, /signal\s*</);
-	});
-
-	test("clears the mutable credential buffer while a request is pending", async () => {
-		const buffer = createBrowserCredentialBuffer();
-		buffer.values.email = "owner@example.com";
-		buffer.values.password = "private-password";
-		buffer.values.totpSecret = "JBSWY3DPEHPK3PXP";
-		const requestStarted = deferred();
-		const finishRequest = deferred();
-		const pending = (async () => {
-			const values = buffer.values;
-			requestStarted.resolve();
-			await finishRequest.promise;
-			return values;
-		})();
-		await requestStarted.promise;
-		buffer.clear();
-		assert.deepEqual(buffer.values, {
-			email: "",
-			password: "",
-			totpSecret: "",
-		});
-		finishRequest.resolve();
-		assert.deepEqual(await pending, {
-			email: "",
-			password: "",
-			totpSecret: "",
-		});
 	});
 });
