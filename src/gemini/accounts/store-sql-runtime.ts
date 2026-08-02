@@ -276,7 +276,7 @@ export class SqlGeminiAccountStoreBase {
               last_refresh_at_ms = ?, account_status_code = ?,
               status_checked_at_ms = ?, last_refresh_attempt_at_ms = ?,
               last_refresh_success_at_ms = ?, updated_at_ms = ?
-            WHERE id = ? AND cookie_hash = ? AND identity_hash = ?
+            WHERE id = ? AND enabled = 1 AND cookie_hash = ? AND identity_hash = ?
             RETURNING id
           `)
 					.bind(
@@ -300,7 +300,7 @@ export class SqlGeminiAccountStoreBase {
               last_refresh_at_ms = ?, account_status_code = ?,
               status_checked_at_ms = ?, last_refresh_attempt_at_ms = ?,
               last_refresh_success_at_ms = ?, updated_at_ms = ?
-            WHERE id = ? AND cookie_hash = ? AND identity_hash = ?
+            WHERE id = ? AND enabled = 1 AND cookie_hash = ? AND identity_hash = ?
             RETURNING id
           `)
 					.bind(
@@ -345,14 +345,13 @@ export class SqlGeminiAccountStoreBase {
         INSERT INTO gemini_browser_accounts (
           account_id, browser_state, last_check_at_ms,
           last_cookie_update_at_ms, auth_failure_count,
-          notification_state, failure_code, updated_at_ms
-        ) VALUES (?, 'ready', ?, ?, 0, NULL, NULL, ?)
+          failure_code, updated_at_ms
+        ) VALUES (?, 'ready', ?, ?, 0, NULL, ?)
         ON CONFLICT(account_id) DO UPDATE SET
           browser_state = 'ready',
           last_check_at_ms = excluded.last_check_at_ms,
           last_cookie_update_at_ms = excluded.last_cookie_update_at_ms,
           auth_failure_count = 0,
-          notification_state = NULL,
           failure_code = NULL,
           updated_at_ms = excluded.updated_at_ms
         RETURNING last_cookie_update_at_ms
@@ -362,13 +361,12 @@ export class SqlGeminiAccountStoreBase {
 					.prepare(`
         INSERT INTO gemini_browser_accounts (
           account_id, browser_state, last_check_at_ms,
-          auth_failure_count, notification_state, failure_code, updated_at_ms
-        ) VALUES (?, 'ready', ?, 0, NULL, NULL, ?)
+          auth_failure_count, failure_code, updated_at_ms
+        ) VALUES (?, 'ready', ?, 0, NULL, ?)
         ON CONFLICT(account_id) DO UPDATE SET
           browser_state = 'ready',
           last_check_at_ms = excluded.last_check_at_ms,
           auth_failure_count = 0,
-          notification_state = NULL,
           failure_code = NULL,
           updated_at_ms = excluded.updated_at_ms
         RETURNING last_cookie_update_at_ms

@@ -209,8 +209,16 @@ describe("SQL browser account store", () => {
 
 	test("trusts only a matching lease RETURNING row", async () => {
 		const leaseSql =
-			/INSERT INTO gemini_browser_accounts .* RETURNING account_id/;
-		const binds = ["account-a", "owner-a", 200, 100, 100, "owner-a"];
+			/INSERT INTO gemini_browser_accounts .*SELECT .* FROM gemini_accounts WHERE id = \? AND enabled = 1.* RETURNING account_id/;
+		const binds = [
+			"account-a",
+			"owner-a",
+			200,
+			100,
+			"account-a",
+			100,
+			"owner-a",
+		];
 		const db = new RecordingSql([
 			{
 				sql: leaseSql,
@@ -303,18 +311,8 @@ describe("SQL browser account store", () => {
 	test("updates status with a fixed safe column set", async () => {
 		const db = new RecordingSql([
 			{
-				sql: /INSERT INTO gemini_browser_accounts .* ON CONFLICT\(account_id\) DO UPDATE SET browser_state = excluded\.browser_state, last_check_at_ms = excluded\.last_check_at_ms, last_cookie_update_at_ms = excluded\.last_cookie_update_at_ms, last_auto_login_at_ms = excluded\.last_auto_login_at_ms, auth_failure_count = excluded\.auth_failure_count, notification_state = excluded\.notification_state, failure_code = excluded\.failure_code, updated_at_ms = excluded\.updated_at_ms/,
-				binds: [
-					"account-a",
-					"error",
-					10,
-					11,
-					12,
-					2,
-					"error",
-					"x".repeat(128),
-					13,
-				],
+				sql: /INSERT INTO gemini_browser_accounts .* ON CONFLICT\(account_id\) DO UPDATE SET browser_state = excluded\.browser_state, last_check_at_ms = excluded\.last_check_at_ms, last_cookie_update_at_ms = excluded\.last_cookie_update_at_ms, last_auto_login_at_ms = excluded\.last_auto_login_at_ms, auth_failure_count = excluded\.auth_failure_count, failure_code = excluded\.failure_code, updated_at_ms = excluded\.updated_at_ms/,
+				binds: ["account-a", "error", 10, 11, 12, 2, "x".repeat(128), 13],
 				operation: "run",
 			},
 		]);
@@ -328,6 +326,7 @@ describe("SQL browser account store", () => {
 			failureCode: "x".repeat(200),
 			nowMs: 13,
 		});
+		assert.doesNotMatch(db.records[0]?.sql || "", /notification_state\s*=/);
 		db.assertDrained();
 	});
 
@@ -383,6 +382,18 @@ describe("SQL browser account store", () => {
 				await store.tryAcquireLease("account-a", "owner-a", 200, 100),
 				true,
 			);
+			await db
+				.prepare("UPDATE gemini_accounts SET enabled = 0 WHERE id = ?")
+				.bind("account-a")
+				.run();
+			assert.equal(
+				await store.tryAcquireLease("account-a", "owner-a", 201, 101),
+				false,
+			);
+			await db
+				.prepare("UPDATE gemini_accounts SET enabled = 1 WHERE id = ?")
+				.bind("account-a")
+				.run();
 			assert.equal(
 				await store.tryAcquireLease("account-a", "owner-b", 250, 101),
 				false,

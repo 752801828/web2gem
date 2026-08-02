@@ -63,6 +63,7 @@ function fixture(options: Record<string, unknown> = {}) {
 		...((options.loginResults as unknown[]) || [defaultLoginResult]),
 	];
 	let attemptCount = Number(options.attemptCount || 0);
+	let patchCount = 0;
 	const leases = [...((options.leases as boolean[]) || [])];
 	const client = {
 		serverDate: "Fri, 01 Aug 2026 00:00:00 GMT",
@@ -74,6 +75,8 @@ function fixture(options: Record<string, unknown> = {}) {
 		},
 		async acquireLease(id: string, owner: string, ttl: number) {
 			calls.push(["acquire", id, owner, ttl]);
+			if (typeof options.acquireLease === "function")
+				return (options.acquireLease as () => Promise<boolean> | boolean)();
 			return leases.length ? leases.shift() : options.lease !== false;
 		},
 		async releaseLease(id: string, owner: string) {
@@ -82,6 +85,9 @@ function fixture(options: Record<string, unknown> = {}) {
 		},
 		async patchState(id: string, state: unknown) {
 			calls.push(["patch", id, state]);
+			patchCount += 1;
+			if (patchCount === options.patchErrorAt)
+				throw new Error("private state API failure");
 		},
 		async recordAutoLoginAttempt(
 			id: string,
@@ -149,7 +155,7 @@ function fixture(options: Record<string, unknown> = {}) {
 			browser,
 			clock: () => Date.UTC(2026, 7, 1, 12),
 			random: () => 0.5,
-			owner: "helper-1",
+			owner: options.defaultOwner ? undefined : "helper-1",
 			decryptCredentials(_id: string, _envelope: unknown) {
 				calls.push(["decrypt"]);
 				if (options.decryptError)
@@ -249,6 +255,38 @@ describe("browser maintenance scheduler", () => {
 		);
 	});
 
+	test("uses a collision-resistant default lease owner for each helper instance", async () => {
+		const first = fixture({ defaultOwner: true });
+		const second = fixture({ defaultOwner: true });
+		await first.scheduler.enqueue({
+			accountId: "account-a",
+			mode: "scheduled",
+		});
+		await second.scheduler.enqueue({
+			accountId: "account-a",
+			mode: "scheduled",
+		});
+		const firstOwner = first.calls.find(([name]) => name === "acquire")?.[2];
+		const secondOwner = second.calls.find(([name]) => name === "acquire")?.[2];
+		assert.match(String(firstOwner), /^browser-helper-[0-9a-f-]{36}$/);
+		assert.equal(firstOwner === secondOwner, false);
+	});
+
+	test("drops disabled accounts from a refreshed scheduling snapshot", async () => {
+		let listed = [account()];
+		const active = fixture({ listAccounts: () => listed });
+		await active.scheduler.scan();
+		await active.scheduler.waitForIdle();
+		listed = [];
+		await active.scheduler.scan();
+		const result = await active.scheduler.enqueue({
+			accountId: "account-a",
+			mode: "scheduled",
+		});
+		assert.deepEqual(result, { skipped: true });
+		assert.equal(active.calls.filter(([name]) => name === "acquire").length, 1);
+	});
+
 	test("skips a lease conflict before state or browser mutation", async () => {
 		const { scheduler, calls } = fixture({ lease: false });
 		await scheduler.enqueue({ accountId: "account-a", mode: "scheduled" });
@@ -315,6 +353,24 @@ describe("browser maintenance scheduler", () => {
 		assert.deepEqual(
 			calls.slice(-2).map(([name]) => name),
 			["close", "release"],
+		);
+	});
+
+	test("does not downgrade a committed candidate when the follow-up state write fails", async () => {
+		const active = fixture({ patchErrorAt: 2 });
+		const result = await active.scheduler.enqueue({
+			accountId: "account-a",
+			mode: "scheduled",
+		});
+		assert.deepEqual(result, { ready: true });
+		assert.equal(active.calls.filter(([name]) => name === "patch").length, 2);
+		assert.equal(
+			active.calls.some(
+				([name, code]) =>
+					name === "operational-error" &&
+					code === "state_update_after_candidate_failed",
+			),
+			true,
 		);
 	});
 
@@ -650,6 +706,108 @@ describe("browser maintenance scheduler", () => {
 			mode: "visible",
 		});
 		assert.deepEqual(skipped, { skipped: true });
+	});
+
+	test("stops browser work and suppresses writes when lease renewal is lost", async () => {
+		let heartbeat: (() => void) | undefined;
+		let releaseLogin!: () => void;
+		const waiting = new Promise<void>((resolve) => {
+			releaseLogin = resolve;
+		});
+		const active = fixture({
+			leases: [true, false],
+			async runLogin() {
+				await waiting;
+				return {
+					ok: true,
+					psid: "psid",
+					psidts: "psidts",
+					observedEmail: "owner@example.com",
+					automaticLoginUsed: false,
+				};
+			},
+			schedulerDependencies: {
+				setLeaseTimer(callback: () => void) {
+					heartbeat = callback;
+					return callback;
+				},
+				clearLeaseTimer() {},
+			},
+		});
+		const job = active.scheduler.enqueue({
+			accountId: "account-a",
+			mode: "visible",
+		});
+		for (let index = 0; index < 20 && !heartbeat; index += 1)
+			await Promise.resolve();
+		assert.equal(typeof heartbeat, "function");
+		heartbeat?.();
+		for (
+			let index = 0;
+			index < 20 &&
+			!active.calls.some(
+				([name, code]) => name === "operational-error" && code === "lease_lost",
+			);
+			index += 1
+		)
+			await Promise.resolve();
+		releaseLogin();
+		await job;
+		assert.equal(
+			active.calls.some(([name]) => name === "candidate"),
+			false,
+		);
+		assert.equal(active.calls.filter(([name]) => name === "patch").length, 1);
+		assert.equal(active.calls.filter(([name]) => name === "close").length, 1);
+		assert.deepEqual(
+			active.calls
+				.filter(([name]) => name === "release")
+				.at(-1)
+				?.slice(1),
+			["account-a", "helper-1"],
+		);
+	});
+
+	test("does not rearm a renewal that finishes while the job is stopping", async () => {
+		const timers: Array<() => void> = [];
+		let acquisition = 0;
+		let finishRenewal!: (value: boolean) => void;
+		const renewal = new Promise<boolean>((resolve) => {
+			finishRenewal = resolve;
+		});
+		let finishLogin!: () => void;
+		const login = new Promise<void>((resolve) => {
+			finishLogin = resolve;
+		});
+		const active = fixture({
+			acquireLease() {
+				acquisition += 1;
+				return acquisition === 1 ? true : renewal;
+			},
+			async runLogin() {
+				await login;
+				return { ok: false, code: "login_failed" };
+			},
+			schedulerDependencies: {
+				setLeaseTimer(callback: () => void) {
+					timers.push(callback);
+					return callback;
+				},
+				clearLeaseTimer() {},
+			},
+		});
+		const job = active.scheduler.enqueue({
+			accountId: "account-a",
+			mode: "visible",
+		});
+		for (let index = 0; index < 20 && timers.length === 0; index += 1)
+			await Promise.resolve();
+		timers[0]?.();
+		finishLogin();
+		for (let index = 0; index < 20; index += 1) await Promise.resolve();
+		finishRenewal(true);
+		await job;
+		assert.equal(timers.length, 1);
 	});
 
 	test("start arms a jittered timer and stop cancels it", async () => {

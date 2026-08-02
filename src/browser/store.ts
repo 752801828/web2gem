@@ -198,7 +198,10 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
 			.prepare(`
         INSERT INTO gemini_browser_accounts (
           account_id, lock_owner, lock_expires_at_ms, updated_at_ms
-        ) VALUES (?, ?, ?, ?)
+        )
+        SELECT ?, ?, ?, ?
+        FROM gemini_accounts
+        WHERE id = ? AND enabled = 1
         ON CONFLICT(account_id) DO UPDATE SET
           lock_owner = excluded.lock_owner,
           lock_expires_at_ms = excluded.lock_expires_at_ms,
@@ -208,7 +211,7 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
           OR gemini_browser_accounts.lock_owner = ?
         RETURNING account_id
       `)
-			.bind(accountId, owner, expiresAtMs, nowMs, nowMs, owner)
+			.bind(accountId, owner, expiresAtMs, nowMs, accountId, nowMs, owner)
 			.run<{ account_id: unknown }>();
 		return (
 			result.results?.length === 1 &&
@@ -236,15 +239,14 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
         INSERT INTO gemini_browser_accounts (
           account_id, browser_state, last_check_at_ms,
           last_cookie_update_at_ms, last_auto_login_at_ms,
-          auth_failure_count, notification_state, failure_code, updated_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          auth_failure_count, failure_code, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(account_id) DO UPDATE SET
           browser_state = excluded.browser_state,
           last_check_at_ms = excluded.last_check_at_ms,
           last_cookie_update_at_ms = excluded.last_cookie_update_at_ms,
           last_auto_login_at_ms = excluded.last_auto_login_at_ms,
           auth_failure_count = excluded.auth_failure_count,
-          notification_state = excluded.notification_state,
           failure_code = excluded.failure_code,
           updated_at_ms = excluded.updated_at_ms
       `)
@@ -255,7 +257,6 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
 				update.lastCookieUpdateAtMs,
 				update.lastAutoLoginAtMs,
 				update.authFailureCount,
-				update.notificationState,
 				update.failureCode?.slice(0, MAX_FAILURE_CODE_LENGTH) ?? null,
 				update.nowMs,
 			)

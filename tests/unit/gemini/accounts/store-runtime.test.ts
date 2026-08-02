@@ -63,7 +63,7 @@ describe("SQL Gemini account runtime store", () => {
 		};
 		const db = new RecordingSql([
 			{
-				sql: /UPDATE OR IGNORE gemini_accounts SET cookie_header = \?, cookie_hash = \?, identity_hash = \?, issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, last_refresh_at_ms = \?, account_status_code = \?, status_checked_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \? AND cookie_hash = \? AND identity_hash = \? RETURNING id/,
+				sql: /UPDATE OR IGNORE gemini_accounts SET cookie_header = \?, cookie_hash = \?, identity_hash = \?, issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, last_refresh_at_ms = \?, account_status_code = \?, status_checked_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \? AND enabled = 1 AND cookie_hash = \? AND identity_hash = \? RETURNING id/,
 				binds: [
 					write.cookieHeader,
 					write.cookieHash,
@@ -111,6 +111,7 @@ describe("SQL Gemini account runtime store", () => {
 			),
 			{ changed: true, lastCookieUpdateAtMs: 6000 },
 		);
+		assert.doesNotMatch(db.records[3]?.sql || "", /notification_state\s*=/);
 		db.assertBatches([[0, 1, 2, 3, 4]]);
 		db.assertDrained();
 	});
@@ -128,7 +129,7 @@ describe("SQL Gemini account runtime store", () => {
 		};
 		const db = new RecordingSql([
 			{
-				sql: /UPDATE OR IGNORE gemini_accounts SET issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, last_refresh_at_ms = \?, account_status_code = \?, status_checked_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \? AND cookie_hash = \? AND identity_hash = \? RETURNING id/,
+				sql: /UPDATE OR IGNORE gemini_accounts SET issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL, last_refresh_at_ms = \?, account_status_code = \?, status_checked_at_ms = \?, last_refresh_attempt_at_ms = \?, last_refresh_success_at_ms = \?, updated_at_ms = \? WHERE id = \? AND enabled = 1 AND cookie_hash = \? AND identity_hash = \? RETURNING id/,
 				binds: [
 					7000,
 					1000,
@@ -150,7 +151,7 @@ describe("SQL Gemini account runtime store", () => {
 				result: mutationResult(),
 			},
 			{
-				sql: /INSERT INTO gemini_browser_accounts \( account_id, browser_state, last_check_at_ms, auth_failure_count, notification_state, failure_code, updated_at_ms \).*ON CONFLICT\(account_id\) DO UPDATE SET browser_state = 'ready', last_check_at_ms = excluded\.last_check_at_ms, auth_failure_count = 0.*RETURNING last_cookie_update_at_ms/,
+				sql: /INSERT INTO gemini_browser_accounts \( account_id, browser_state, last_check_at_ms, auth_failure_count, failure_code, updated_at_ms \).*ON CONFLICT\(account_id\) DO UPDATE SET browser_state = 'ready', last_check_at_ms = excluded\.last_check_at_ms, auth_failure_count = 0.*RETURNING last_cookie_update_at_ms/,
 				binds: ["first", 7000, 7000],
 				operation: "batch",
 				result: {
@@ -171,6 +172,7 @@ describe("SQL Gemini account runtime store", () => {
 			(db.records[0]?.sql || "").split(" WHERE ")[0] || "",
 			/cookie_header|cookie_hash|identity_hash/,
 		);
+		assert.doesNotMatch(db.records[2]?.sql || "", /notification_state\s*=/);
 		db.assertBatches([[0, 1, 2, 3]]);
 		db.assertDrained();
 	});

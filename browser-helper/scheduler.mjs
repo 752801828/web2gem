@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { BrowserMaintenanceError } from "./google-login.mjs";
 
 export { BrowserMaintenanceError } from "./google-login.mjs";
@@ -13,6 +14,8 @@ const MANUAL_CODES = new Set([
 	"unknown_page",
 ]);
 const AUTH_CODES = new Set(["missing_cookie", "login_failed"]);
+const LEASE_TTL_SEC = 300;
+const LEASE_RENEW_MS = 100_000;
 
 export function jitteredDelayMs(intervalSec, jitterSec, random = Math.random) {
 	if (
@@ -104,9 +107,11 @@ export function createBrowserScheduler(config, dependencies) {
 		notifier,
 		clock = Date.now,
 		random = Math.random,
-		owner = `browser-helper-${process.pid}`,
+		owner = `browser-helper-${randomUUID()}`,
 		setTimer = setTimeout,
 		clearTimer = clearTimeout,
+		setLeaseTimer = setTimeout,
+		clearLeaseTimer = clearTimeout,
 		onOperationalError = () => undefined,
 	} = dependencies || {};
 	if (
@@ -129,6 +134,7 @@ export function createBrowserScheduler(config, dependencies) {
 		if (stopped) return;
 		const listed = await client.listAccounts();
 		if (stopped) return;
+		accounts.clear();
 		for (const account of listed) {
 			accounts.set(account.id, account);
 			queue.enqueue({ accountId: account.id, mode: "scheduled" });
@@ -156,6 +162,7 @@ export function createBrowserScheduler(config, dependencies) {
 		const known = accounts.get(accountId);
 		if (known) return known;
 		const listed = await client.listAccounts();
+		accounts.clear();
 		for (const account of listed) accounts.set(account.id, account);
 		return accounts.get(accountId) || null;
 	}
@@ -165,9 +172,59 @@ export function createBrowserScheduler(config, dependencies) {
 		if (!account) return { skipped: true };
 		let leased = false;
 		let opened = false;
+		let browserClosed = false;
+		let leaseLost = false;
+		let leaseHeartbeatStopped = false;
+		let leaseTimer = null;
+		let leaseCycle = null;
+		let candidateCommitted = false;
+		const closeBrowserOnce = async () => {
+			if (!opened || browserClosed) return;
+			browserClosed = true;
+			try {
+				await browser.close();
+			} catch {
+				safeOperationalError(onOperationalError, "browser_close_failed");
+			}
+		};
+		const assertLeaseActive = () => {
+			if (leaseLost) throw new BrowserMaintenanceError("lease_lost");
+		};
+		const armLeaseHeartbeat = () => {
+			if (!leased || leaseLost || leaseHeartbeatStopped) return;
+			leaseTimer = setLeaseTimer(() => {
+				leaseTimer = null;
+				leaseCycle = (async () => {
+					try {
+						leaseLost = !(await client.acquireLease(
+							account.id,
+							owner,
+							LEASE_TTL_SEC,
+						));
+					} catch {
+						leaseLost = true;
+					}
+					if (leaseLost) {
+						safeOperationalError(onOperationalError, "lease_lost");
+						await closeBrowserOnce();
+						return;
+					}
+					armLeaseHeartbeat();
+				})().finally(() => {
+					leaseCycle = null;
+				});
+			}, LEASE_RENEW_MS);
+		};
+		const stopLeaseHeartbeat = async () => {
+			leaseHeartbeatStopped = true;
+			if (leaseTimer !== null) clearLeaseTimer(leaseTimer);
+			leaseTimer = null;
+			if (leaseCycle) await leaseCycle;
+		};
 		try {
-			leased = await client.acquireLease(account.id, owner, 300);
+			leased = await client.acquireLease(account.id, owner, LEASE_TTL_SEC);
 			if (!leased) return { skipped: true };
+			armLeaseHeartbeat();
 			const nowMs = safeNow(clock);
 			await client.patchState(
 				account.id,
@@ -177,10 +234,12 @@ export function createBrowserScheduler(config, dependencies) {
 					failureCode: null,
 				}),
 			);
+			assertLeaseActive();
 			const context = await (job.mode === "visible"
 				? browser.startVisible(account.id)
 				: browser.startHeadless(account.id));
 			opened = true;
+			assertLeaseActive();
 			const page = await activePage(context);
 			let result = await runLogin({
 				page,
@@ -190,6 +249,7 @@ export function createBrowserScheduler(config, dependencies) {
 				serverDate: client.serverDate,
 				maxClockSkewSec: config.maxClockSkewSec,
 			});
+			assertLeaseActive();
 			let autoLoginAtMs = account.status.lastAutoLoginAtMs;
 			if (!result.ok && result.code === "login_failed" && job.mode !== "visible") {
 				const canAttempt =
@@ -210,6 +270,7 @@ export function createBrowserScheduler(config, dependencies) {
 						serverDate: client.serverDate,
 						maxClockSkewSec: config.maxClockSkewSec,
 						beforeSubmit: async () => {
+							assertLeaseActive();
 							let reservation;
 							try {
 								reservation = await client.recordAutoLoginAttempt(
@@ -224,6 +285,7 @@ export function createBrowserScheduler(config, dependencies) {
 							}
 							account.autoLoginAttemptDate = date;
 							account.autoLoginAttemptCount = reservation.count;
+							assertLeaseActive();
 							if (!reservation.reserved)
 								throw new BrowserMaintenanceError("auto_login_limit");
 							autoLoginAtMs = nowMs;
@@ -231,12 +293,15 @@ export function createBrowserScheduler(config, dependencies) {
 					});
 				}
 			}
+			assertLeaseActive();
 			if (result.ok) {
+				assertLeaseActive();
 				const candidate = await client.submitCandidateCookie(account.id, {
 					psid: result.psid,
 					psidts: result.psidts,
 					observedEmail: result.observedEmail,
 				});
+				candidateCommitted = true;
 				const update = statusUpdate(account, {
 					state: "ready",
 					lastCheckAtMs: nowMs,
@@ -246,7 +311,15 @@ export function createBrowserScheduler(config, dependencies) {
 					authFailureCount: 0,
 					failureCode: null,
 				});
-				await publishState(account, update, "ready");
+				try {
+					assertLeaseActive();
+					await publishState(account, update, "ready");
+				} catch {
+					safeOperationalError(
+						onOperationalError,
+						"state_update_after_candidate_failed",
+					);
+				}
 				return { ready: true };
 			}
 			if (MANUAL_CODES.has(result.code)) {
@@ -289,7 +362,14 @@ export function createBrowserScheduler(config, dependencies) {
 			await publishState(account, update, result.code);
 			return { ready: false };
 		} catch (error) {
-			if (leased) {
+			if (candidateCommitted) {
+				safeOperationalError(
+					onOperationalError,
+					"state_update_after_candidate_failed",
+				);
+				return { ready: true };
+			}
+			if (leased && !leaseLost) {
 				const code =
 					error instanceof BrowserMaintenanceError
 						? safeFailureCode(error.code)
@@ -307,13 +387,8 @@ export function createBrowserScheduler(config, dependencies) {
 			}
 			return { ready: false };
 		} finally {
-			if (opened) {
-				try {
-					await browser.close();
-				} catch {
-					safeOperationalError(onOperationalError, "browser_close_failed");
-				}
-			}
+			await stopLeaseHeartbeat();
+			await closeBrowserOnce();
 			if (leased) {
 				try {
 					await client.releaseLease(account.id, owner);
