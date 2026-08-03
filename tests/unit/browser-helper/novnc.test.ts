@@ -7,8 +7,12 @@ const { createNoVncLifecycle, terminateProcess } = await import(modulePath);
 
 function fixture(options: { failReadyAt?: string } = {}) {
 	const calls: unknown[][] = [];
-	const processes: Array<EventEmitter & { kill: (signal: string) => boolean }> =
-		[];
+	const processes: Array<
+		EventEmitter & {
+			exitCode: number | null;
+			kill: (signal: string) => boolean;
+		}
+	> = [];
 	const lifecycle = createNoVncLifecycle(
 		{ password: "private-vnc-password" },
 		{
@@ -144,8 +148,10 @@ describe("noVNC process lifecycle", () => {
 		const active = fixture();
 		const started = await active.lifecycle.start();
 		assert.equal(started.failureSignal.aborted, false);
-		active.processes[1].exitCode = 1;
-		active.processes[1].emit("exit", 1, null);
+		const exitedProcess = active.processes[1];
+		if (!exitedProcess) throw new Error("expected x11vnc process");
+		exitedProcess.exitCode = 1;
+		exitedProcess.emit("exit", 1, null);
 		for (
 			let index = 0;
 			index < 20 && !started.failureSignal.aborted;

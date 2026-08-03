@@ -56,6 +56,7 @@ function scriptedPage(
 	const submissions: Array<[State, string]> = [];
 	return {
 		submissions,
+		waitForStateReady: async () => undefined,
 		gotoGemini: async () => undefined,
 		url: () => urls[states[index] ?? "unknown"],
 		visible: async (candidate: State) => candidate === states[index],

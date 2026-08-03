@@ -246,7 +246,7 @@ describe("browser account admin contract", () => {
 		const active = fixture();
 		active.store.encrypted = ENCRYPTED;
 		active.store.status.credentialsConfigured = true;
-		const noCrypto = { ...active.env, BROWSER_CREDENTIAL_CRYPTO: undefined };
+		const { BROWSER_CREDENTIAL_CRYPTO: _crypto, ...noCrypto } = active.env;
 		for (const init of [
 			json("PUT", {
 				email: "owner@example.com",
@@ -310,7 +310,8 @@ describe("browser account admin contract", () => {
 
 	test("redacts legacy unsafe browser failure codes", async () => {
 		const active = fixture();
-		active.store.status.failureCode = "SQL token=private-cookie";
+		(active.store.status as { failureCode: string | null }).failureCode =
+			"SQL token=private-cookie";
 		const response = await request(
 			`/admin/accounts/${ACCOUNT_ID}/browser/check`,
 			{ method: "POST" },

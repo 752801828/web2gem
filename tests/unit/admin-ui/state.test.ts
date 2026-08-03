@@ -15,9 +15,9 @@ describe("admin UI state factories", () => {
 		invalidateAdminSession();
 		const current = claimAccountOperation(["account-a"]);
 		assert.equal(Boolean(current), true);
-		releaseAccountOperation(stale);
+		releaseAccountOperation(requiredValue(stale));
 		assert.equal(claimAccountOperation(["account-a"]), null);
-		releaseAccountOperation(current);
+		releaseAccountOperation(requiredValue(current));
 		assert.equal(Boolean(claimAccountOperation(["account-a"])), true);
 		invalidateAdminSession();
 	});

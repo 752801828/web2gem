@@ -360,16 +360,21 @@ describe("visible browser sessions", () => {
 		);
 		await coordinator.open("account-a");
 		assert.equal(timers.length, 1);
-		hooks?.activity();
+		if (!hooks) throw new Error("expected activity hooks");
+		const activity = hooks.activity;
+		const submissionStart = hooks.submissionStart;
+		if (!activity || !submissionStart)
+			throw new Error("expected submission activity hooks");
+		activity();
 		assert.equal(timers.length, 2);
 		assert.equal(cleared.includes(timers[0]), true);
-		hooks?.submissionStart();
+		submissionStart();
 		assert.equal(timers.length, 3);
 		timers.at(-1)?.();
 		await Promise.resolve();
 		assert.equal(finalChecks, 0);
 		assert.equal(coordinator.isActive("account-a"), true);
-		hooks?.activity();
+		activity();
 		assert.equal(timers.length, 3);
 		assert.equal(coordinator.isActive("account-a"), true);
 		assert.equal(submissionTimers.length, 1);
