@@ -497,6 +497,14 @@ describe("quality scripts", () => {
 			): { project: string; webImage: string; helperImage: string };
 			assertLoopbackPort(raw: string, expectedContainerPort: number): number;
 			assertSmokeRedacted(logs: string, secrets: readonly string[]): void;
+			smokeComposeOverride(paths: {
+				mockScript: string;
+				certDir: string;
+				stateDir: string;
+			}): string;
+			smokeMockServerSource(): string;
+			candidateCookiePath(accountId: string): string;
+			helperRecreateArgs(composeArgs: readonly string[]): string[];
 		};
 		assert.deepEqual(smoke.smokeResourceNames(42, "AB-cd!12"), {
 			project: "web2gem-smoke-42-abcd12",
@@ -512,6 +520,42 @@ describe("quality scripts", () => {
 			() => smoke.assertSmokeRedacted("log leaked-value", ["leaked-value"]),
 			/exposed a secret/,
 		);
+		const override = smoke.smokeComposeOverride({
+			mockScript: "C:/tmp/mock.mjs",
+			certDir: "C:/tmp/certs",
+			stateDir: "C:/tmp/state",
+		});
+		for (const required of [
+			"smoke-upstream:",
+			"open.feishu.cn",
+			"NODE_EXTRA_CA_CERTS",
+			"/smoke/certs",
+			"/smoke/state",
+			"web2gem-egress",
+			"browser-egress",
+			"condition: service_healthy",
+		])
+			assert.match(override, new RegExp(required.replaceAll(".", "\\.")));
+		assert.doesNotMatch(override, /ports:/);
+		const mockSource = smoke.smokeMockServerSource();
+		assert.match(mockSource, /otAQ7b/);
+		assert.match(mockSource, /createHmac/);
+		assert.match(mockSource, /timingSafeEqual/);
+		assert.doesNotMatch(mockSource, /console\.(?:log|error)/);
+		assert.equal(
+			smoke.candidateCookiePath("account a"),
+			"/internal/browser/accounts/account%20a/candidate-cookie",
+		);
+		assert.deepEqual(smoke.helperRecreateArgs(["compose", "-f", "base"]), [
+			"compose",
+			"-f",
+			"base",
+			"up",
+			"-d",
+			"--no-deps",
+			"--force-recreate",
+			"browser-helper",
+		]);
 		const smokeSource = await readFile("scripts/docker-smoke.mjs", "utf8");
 		assert.doesNotMatch(
 			smokeSource,
