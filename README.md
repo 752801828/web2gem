@@ -20,7 +20,7 @@ Requirements: Docker Desktop or Docker Engine with Compose. The following Window
 ```cmd
 cd /d D:\web2gem-original
 copy /Y .env.docker.example .env
-powershell -NoProfile -Command "$r=[Security.Cryptography.RandomNumberGenerator]::Create();$b=New-Object byte[] 32;$r.GetBytes($b);New-Item -ItemType Directory -Force 'secrets'|Out-Null;[IO.File]::WriteAllText('secrets\web2gem_master_key',[Convert]::ToBase64String($b),[Text.UTF8Encoding]::new($false))"
+powershell -NoProfile -Command "$p='secrets\web2gem_master_key';if(Test-Path -LiteralPath $p){throw 'master key already exists; restore or back it up instead of overwriting it'};$r=[Security.Cryptography.RandomNumberGenerator]::Create();$b=New-Object byte[] 32;$r.GetBytes($b);New-Item -ItemType Directory -Force 'secrets'|Out-Null;[IO.File]::WriteAllText($p,[Convert]::ToBase64String($b),[Text.UTF8Encoding]::new($false))"
 powershell -NoProfile -Command "$p='.env';$s=[IO.File]::ReadAllText($p);$r=[Security.Cryptography.RandomNumberGenerator]::Create();function secret([int]$n){$b=New-Object byte[] $n;$r.GetBytes($b);-join($b|ForEach-Object{$_.ToString('x2')})};$s=[regex]::Replace($s,'(?m)^ADMIN_KEY=.*$','ADMIN_KEY='+(secret 32));$s=[regex]::Replace($s,'(?m)^BROWSER_HELPER_INTERNAL_TOKEN=.*$','BROWSER_HELPER_INTERNAL_TOKEN='+(secret 32));$s=[regex]::Replace($s,'(?m)^NOVNC_PASSWORD=.*$','NOVNC_PASSWORD='+(secret 16));[IO.File]::WriteAllText($p,$s,[Text.UTF8Encoding]::new($false))"
 notepad .env
 ```
@@ -36,6 +36,8 @@ docker compose ps
 ```
 
 Open `http://127.0.0.1:52389/admin`, enter `ADMIN_KEY`, and import Gemini accounts you own. Account cookies, login credentials, and keys are secrets; never commit `.env`, `secrets`, or account exports.
+
+If `.env` sets `PORT=18080`, use `http://127.0.0.1:18080/admin` and `curl http://127.0.0.1:18080/` instead.
 
 PowerShell can copy the template with:
 
