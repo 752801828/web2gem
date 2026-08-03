@@ -240,6 +240,10 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 					throw new Error("visible browser session cancelled");
 				armIdle(session);
 				session.ready.resolve();
+				if (input.credentials) {
+					const automatic = await finalCheck(input);
+					if (automatic?.ok) return automatic;
+				}
 				let outcome = await Promise.race([
 					session.stop.promise.then(() => "stop"),
 					jobAbort.promise.then(() => "abort"),
@@ -259,7 +263,11 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 					throw input.signal?.reason instanceof Error
 						? input.signal.reason
 						: new Error("visible browser session aborted");
-				return finalCheck(input);
+				return finalCheck({
+					...input,
+					credentials: undefined,
+					beforeSubmit: undefined,
+				});
 			} finally {
 				authenticationObserver.abort();
 				jobAbort.dispose();

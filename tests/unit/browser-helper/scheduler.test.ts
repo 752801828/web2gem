@@ -630,11 +630,10 @@ describe("browser maintenance scheduler", () => {
 		);
 	});
 
-	test("does not enter credentials for missing-cookie checks, explicit challenges, or visible sessions", async () => {
+	test("does not enter credentials for missing-cookie checks or explicit challenges", async () => {
 		for (const [mode, code] of [
 			["scheduled", "missing_cookie"],
 			["scheduled", "captcha"],
-			["visible", "login_failed"],
 		] as const) {
 			const current = fixture({ loginResults: [{ ok: false, code }] });
 			await current.scheduler.enqueue({ accountId: "account-a", mode });
@@ -654,6 +653,52 @@ describe("browser maintenance scheduler", () => {
 			);
 			assert.equal(current.calls.find(([name]) => name === "login")?.[2], mode);
 		}
+	});
+
+	test("uses saved credentials for the first visible login attempt", async () => {
+		const active = fixture({
+			loginResults: [
+				{
+					ok: true,
+					psid: "private-psid",
+					psidts: "private-psidts",
+					observedEmail: "owner@example.com",
+					automaticLoginUsed: true,
+				},
+			],
+		});
+		await active.scheduler.enqueue({ accountId: "account-a", mode: "visible" });
+		assert.equal(
+			active.calls.some(([name]) => name === "credentials"),
+			true,
+		);
+		assert.equal(
+			active.calls.some(([name]) => name === "attempt"),
+			true,
+		);
+		assert.deepEqual(
+			active.calls
+				.filter(([name]) => name === "login")
+				.map((call) => [call[1], call[2]]),
+			[[true, "visible"]],
+		);
+		assert.equal(lastState(active.calls).state, "ready");
+	});
+
+	test("allows an explicit visible session to retry a prior manual-action profile", async () => {
+		const active = fixture({
+			accounts: [
+				account({
+					status: { ...account().status, state: "manual_action_required" },
+				}),
+			],
+		});
+		await active.scheduler.enqueue({ accountId: "account-a", mode: "visible" });
+		assert.equal(
+			active.calls.some(([name]) => name === "credentials"),
+			true,
+		);
+		assert.equal(lastState(active.calls).state, "ready");
 	});
 
 	test("does not automatically log in a profile already awaiting manual action", async () => {

@@ -330,61 +330,64 @@ export function createBrowserScheduler(config, dependencies) {
 			opened = true;
 			assertLeaseActive();
 			const page = await activePage(context);
-			let result = await runLogin({
+			const loginInput = {
 				accountId: account.id,
 				page,
 				mode: job.mode,
 				signal: jobAbort.signal,
-				credentials: undefined,
 				nowSeconds: Math.floor(nowMs / 1_000),
 				serverDate: client.serverDate,
 				maxClockSkewSec: config.maxClockSkewSec,
-			});
-			assertLeaseActive();
+			};
 			let autoLoginAtMs = account.status.lastAutoLoginAtMs;
-			if (!result.ok && result.code === "login_failed" && job.mode !== "visible") {
-				const canAttempt =
-					account.status.credentialsConfigured &&
-					account.status.state !== "manual_action_required" &&
-					config.autoLoginMaxAttemptsPerDay > 0 &&
-					attemptsToday(account, localDate(nowMs)) <
-						config.autoLoginMaxAttemptsPerDay;
-				if (canAttempt) {
-					const date = localDate(nowMs);
-					const envelope = await client.getEncryptedCredentials(account.id);
-					const credentials = decryptCredentials(account.id, envelope);
-					result = await runLogin({
-						accountId: account.id,
-						page,
-						mode: job.mode,
-						signal: jobAbort.signal,
-						credentials,
-						nowSeconds: Math.floor(nowMs / 1_000),
-						serverDate: client.serverDate,
-						maxClockSkewSec: config.maxClockSkewSec,
-						beforeSubmit: async () => {
-							assertLeaseActive();
-							let reservation;
-							try {
-								reservation = await client.recordAutoLoginAttempt(
-									account.id,
-									date,
-									config.autoLoginMaxAttemptsPerDay,
-								);
-							} catch {
-								throw new BrowserMaintenanceError(
-									"attempt_reservation_failed",
-								);
-							}
-							account.autoLoginAttemptDate = date;
-							account.autoLoginAttemptCount = reservation.count;
-							assertLeaseActive();
-							if (!reservation.reserved)
-								throw new BrowserMaintenanceError("auto_login_limit");
-							autoLoginAtMs = nowMs;
-						},
-					});
-				}
+			const canAttemptAutomaticLogin = (allowManualAction = false) =>
+				account.status.credentialsConfigured &&
+				(allowManualAction ||
+					account.status.state !== "manual_action_required") &&
+				config.autoLoginMaxAttemptsPerDay > 0 &&
+				attemptsToday(account, localDate(nowMs)) <
+					config.autoLoginMaxAttemptsPerDay;
+			const runAutomaticLogin = async () => {
+				const date = localDate(nowMs);
+				const envelope = await client.getEncryptedCredentials(account.id);
+				const credentials = decryptCredentials(account.id, envelope);
+				return runLogin({
+					...loginInput,
+					credentials,
+					beforeSubmit: async () => {
+						assertLeaseActive();
+						let reservation;
+						try {
+							reservation = await client.recordAutoLoginAttempt(
+								account.id,
+								date,
+								config.autoLoginMaxAttemptsPerDay,
+							);
+						} catch {
+							throw new BrowserMaintenanceError(
+								"attempt_reservation_failed",
+							);
+						}
+						account.autoLoginAttemptDate = date;
+						account.autoLoginAttemptCount = reservation.count;
+						assertLeaseActive();
+						if (!reservation.reserved)
+							throw new BrowserMaintenanceError("auto_login_limit");
+						autoLoginAtMs = nowMs;
+					},
+				});
+			};
+			let result =
+				job.mode === "visible" && canAttemptAutomaticLogin(true)
+					? await runAutomaticLogin()
+					: await runLogin({ ...loginInput, credentials: undefined });
+			assertLeaseActive();
+			if (
+				!result.ok &&
+				result.code === "login_failed" &&
+				job.mode !== "visible"
+			) {
+				if (canAttemptAutomaticLogin()) result = await runAutomaticLogin();
 			}
 			assertLeaseActive();
 			if (result.ok) {

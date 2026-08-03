@@ -273,6 +273,52 @@ describe("visible browser sessions", () => {
 		assert.deepEqual(calls, ["novnc-start", "final-check", "novnc-stop"]);
 	});
 
+	test("tries supplied credentials before waiting for manual authentication", async () => {
+		let finalChecks = 0;
+		let observations = 0;
+		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
+		coordinator = createVisibleSessionCoordinator(
+			{ visibleIdleTimeoutSec: 60 },
+			{
+				scheduler: {
+					async enqueue(job: { accountId: string; mode: string }) {
+						const signal = new AbortController().signal;
+						await coordinator.beforeVisibleStart(job.accountId, signal);
+						return coordinator.hold(
+							{
+								accountId: job.accountId,
+								page: {},
+								mode: job.mode,
+								signal,
+								credentials: { email: "configured" },
+							},
+							async () => {
+								finalChecks += 1;
+								return { ok: true };
+							},
+						);
+					},
+				},
+				novnc: { start: async () => undefined, stop: async () => undefined },
+				waitForAuthentication: async () => {
+					observations += 1;
+					return new Promise(() => {});
+				},
+				setTimer: () => ({}) as ReturnType<typeof setTimeout>,
+				clearTimer: () => undefined,
+				prepareVisiblePage: async () => undefined,
+				trackActivity: async () => undefined,
+			},
+		);
+		await coordinator.open("account-a");
+		for (let index = 0; index < 20; index += 1) await Promise.resolve();
+		const completedAutomatically = !coordinator.isActive("account-a");
+		if (!completedAutomatically) await coordinator.stop();
+		assert.equal(completedAutomatically, true);
+		assert.equal(finalChecks, 1);
+		assert.equal(observations, 0);
+	});
+
 	test("keeps a visible session stoppable after its authentication observer fails", async () => {
 		let finalChecks = 0;
 		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
