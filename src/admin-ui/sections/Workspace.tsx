@@ -8,6 +8,7 @@ import { identifier, identifierKey } from "../logic";
 import {
 	accounts,
 	hasFilters,
+	importExpanded,
 	loading,
 	nextCursor,
 	pageIndex,
@@ -16,6 +17,7 @@ import {
 	stateFilter,
 } from "../state";
 import { BulkBar } from "./BulkBar";
+import { ImportPanel } from "./ImportPanel";
 import { WorkspaceFilters } from "./WorkspaceFilters";
 
 export function Workspace(): JSX.Element {
@@ -52,12 +54,25 @@ export function Workspace(): JSX.Element {
 					<p>{tr("Search accounts and manage their availability.")}</p>
 				</div>
 				<div class="actions">
+					<button
+						class="secondary"
+						type="button"
+						aria-expanded={importExpanded.value}
+						aria-controls="import-panel"
+						onClick={() => {
+							importExpanded.value = !importExpanded.value;
+						}}
+					>
+						<Icon name="plus" />
+						{tr("Add accounts")}
+					</button>
 					<button type="button" onClick={() => void loadAccounts("reset")}>
 						<Icon name="refresh" />
 						{tr("Refresh")}
 					</button>
 				</div>
 			</div>
+			<ImportPanel />
 			<WorkspaceFilters
 				hasFilters={hasFilters.value}
 				onClearFilters={clearFilters}

@@ -194,9 +194,11 @@
 		grid-template-columns: 1fr;
 	}
 	.panel-head,
+	.workspace-import-head,
 	.filters,
 	.bulkbar,
-	.panel-body {
+	.panel-body,
+	.workspace-import-body {
 		padding-inline: var(--space-3);
 	}
 	.account-card-head {

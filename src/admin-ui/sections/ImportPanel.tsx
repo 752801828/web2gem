@@ -14,10 +14,10 @@ export function ImportPanel(): JSX.Element {
 	return (
 		<section
 			id="import-panel"
-			class="panel disclosure"
+			class="workspace-import"
 			hidden={!importExpanded.value}
 		>
-			<div class="panel-head">
+			<div class="workspace-import-head">
 				<div>
 					<div class="panel-title">{tr("Import accounts")}</div>
 					<p>{tr("Add one account or paste a batch when needed.")}</p>
@@ -31,7 +31,7 @@ export function ImportPanel(): JSX.Element {
 					{tr("Collapse")}
 				</button>
 			</div>
-			<div class="panel-body">
+			<div class="workspace-import-body">
 				<form
 					class="import-grid"
 					aria-busy={importBusy.value}

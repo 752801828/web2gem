@@ -312,10 +312,26 @@
 	margin-right: auto;
 }
 
-/* Disclosure + import */
-.disclosure {
-	margin-bottom: var(--space-4);
+/* Workspace import */
+.workspace-import {
+	border-bottom: 1px solid var(--line);
+	background: var(--surface-subtle);
 	animation: reveal-panel 160ms ease-out;
+}
+.workspace-import-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-4);
+	padding: var(--space-4);
+}
+.workspace-import-head p {
+	margin-top: 3px;
+	font-size: var(--text-sm);
+}
+.workspace-import-body {
+	border-top: 1px solid var(--line);
+	padding: var(--space-4);
 }
 .import-grid {
 	display: grid;

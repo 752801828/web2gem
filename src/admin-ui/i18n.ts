@@ -34,6 +34,7 @@ const zh = {
 	"Stored only in this browser. Public API keys cannot access admin routes.":
 		"仅保存在当前浏览器中；公共 API Key 无法访问管理接口。",
 	"Import accounts": "导入账号",
+	"Add accounts": "添加账号",
 	"Add one account or paste a batch when needed.":
 		"按需添加单个账号或粘贴批量数据。",
 	Collapse: "收起",

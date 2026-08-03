@@ -6,7 +6,6 @@ import { ConfirmationModal } from "./components/ConfirmationModal";
 import { EditModal } from "./components/EditModal";
 import { tr } from "./i18n";
 import { AuthPanel } from "./sections/AuthPanel";
-import { ImportPanel } from "./sections/ImportPanel";
 import { ModelRoutingSection } from "./sections/ModelRoutingSection";
 import { OverviewSection } from "./sections/OverviewSection";
 import { Toasts } from "./sections/Toasts";
@@ -37,7 +36,6 @@ export function App(): JSX.Element {
 					<>
 						<OverviewSection />
 						<ModelRoutingSection />
-						<ImportPanel />
 						<Workspace />
 					</>
 				) : null}
