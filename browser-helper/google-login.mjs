@@ -43,17 +43,20 @@ export async function classifyGooglePage(page) {
 	if (url?.protocol === "chrome-error:")
 		throw new BrowserMaintenanceError("navigation_failed");
 	const routeState = stateFromUrl(url);
-	if (routeState && !["email", "password", "totp"].includes(routeState))
+	if (
+		routeState &&
+		routeState !== "unknown" &&
+		!["email", "password", "totp"].includes(routeState)
+	)
 		return routeState;
 	if (routeState) {
 		for (const challenge of CHALLENGES)
 			if (await adapter.visible(challenge)) return challenge;
 		if (await adapter.visible(routeState)) return routeState;
 	}
-	if (
-		url?.origin === GEMINI_ORIGIN &&
-		(await adapter.visible("authenticated"))
-	)
+	if (url?.origin === GEMINI_ORIGIN && (await adapter.visible("authenticated")))
+		return "authenticated";
+	if (await adapter.sessionAuthenticated?.())
 		return "authenticated";
 	return "unknown";
 }
@@ -83,6 +86,7 @@ export async function runGoogleLogin({
 	maxClockSkewSec = 120,
 	stateReadyAttempts = 20,
 	beforeSubmit,
+	identityEmail,
 }) {
 	const adapter = asAdapter(page);
 	let automaticLoginUsed = false;
@@ -122,7 +126,11 @@ export async function runGoogleLogin({
 			if (CHALLENGES.includes(state)) return { ok: false, code: state };
 			if (state === "unknown") return { ok: false, code: "unknown_page" };
 			if (state === "authenticated")
-				return await finishAuthenticated(adapter, automaticLoginUsed);
+				return await finishAuthenticated(
+					adapter,
+					automaticLoginUsed,
+					identityEmail,
+				);
 
 			if (state !== lastState) submittedState = null;
 			lastState = state;
@@ -265,10 +273,20 @@ export function createPlaywrightPageAdapter(
 		},
 		async cookies() {
 			try {
-				return await page.context().cookies("https://gemini.google.com");
+				return (await page.context().cookies()).filter((cookie) => {
+					const domain = String(cookie?.domain || "").toLowerCase();
+					return domain === "google.com" || domain.endsWith(".google.com");
+				});
 			} catch {
 				throw new BrowserMaintenanceError("browser_unavailable");
 			}
+		},
+		async sessionAuthenticated() {
+			const cookies = await this.cookies();
+			return Boolean(
+				cookieValue(cookies, "__Secure-1PSID") &&
+					cookieValue(cookies, "__Secure-1PSIDTS"),
+			);
 		},
 		async observedEmail() {
 			const dataEmail = await optionalAttribute(
@@ -397,12 +415,13 @@ function abortReason(signal) {
 		: new Error("authentication observation aborted");
 }
 
-async function finishAuthenticated(adapter, automaticLoginUsed) {
+async function finishAuthenticated(adapter, automaticLoginUsed, identityEmail) {
 	const cookies = await adapter.cookies();
 	const psid = cookieValue(cookies, "__Secure-1PSID");
 	const psidts = cookieValue(cookies, "__Secure-1PSIDTS");
 	if (!psid || !psidts) return { ok: false, code: "missing_cookie" };
-	const observed = await adapter.observedEmail();
+	const pageEmail = await adapter.observedEmail();
+	const observed = reliableEmail(pageEmail) ? pageEmail : identityEmail;
 	if (!reliableEmail(observed)) return { ok: false, code: "login_failed" };
 	return {
 		ok: true,

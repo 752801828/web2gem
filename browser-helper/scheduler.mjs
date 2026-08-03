@@ -340,6 +340,13 @@ export function createBrowserScheduler(config, dependencies) {
 				maxClockSkewSec: config.maxClockSkewSec,
 			};
 			let autoLoginAtMs = account.status.lastAutoLoginAtMs;
+			let storedCredentials = null;
+			const loadCredentials = async () => {
+				if (storedCredentials) return storedCredentials;
+				const envelope = await client.getEncryptedCredentials(account.id);
+				storedCredentials = decryptCredentials(account.id, envelope);
+				return storedCredentials;
+			};
 			const canAttemptAutomaticLogin = (allowManualAction = false) =>
 				account.status.credentialsConfigured &&
 				(allowManualAction ||
@@ -349,8 +356,7 @@ export function createBrowserScheduler(config, dependencies) {
 					config.autoLoginMaxAttemptsPerDay;
 			const runAutomaticLogin = async () => {
 				const date = localDate(nowMs);
-				const envelope = await client.getEncryptedCredentials(account.id);
-				const credentials = decryptCredentials(account.id, envelope);
+				const credentials = await loadCredentials();
 				return runLogin({
 					...loginInput,
 					credentials,
@@ -380,7 +386,14 @@ export function createBrowserScheduler(config, dependencies) {
 			let result =
 				job.mode === "visible" && canAttemptAutomaticLogin(true)
 					? await runAutomaticLogin()
-					: await runLogin({ ...loginInput, credentials: undefined });
+					: await runLogin({
+						...loginInput,
+						credentials: undefined,
+						identityEmail:
+							job.mode === "visible" && account.status.credentialsConfigured
+								? (await loadCredentials()).email
+								: null,
+					});
 			assertLeaseActive();
 			if (
 				!result.ok &&

@@ -121,6 +121,48 @@ describe("bounded Google login", () => {
 		assert.equal(waits, 1);
 	});
 
+	test("recognizes Google session cookies without legacy avatar selectors", async () => {
+		const cookieCalls: unknown[][] = [];
+		assert.equal(
+			await classifyGooglePage(
+				createPlaywrightPageAdapter({
+					url: () => urls.unknown,
+					locator: () => {
+						const locator = {
+							first: () => locator,
+							isVisible: async () => false,
+						};
+						return locator;
+					},
+					context: () => ({
+						async cookies(...args: unknown[]) {
+							cookieCalls.push(args);
+							return [
+								{
+									domain: ".example.com",
+									name: "__Secure-1PSID",
+									value: "wrong",
+								},
+								{
+									domain: ".google.com",
+									name: "__Secure-1PSID",
+									value: "psid",
+								},
+								{
+									domain: ".google.com",
+									name: "__Secure-1PSIDTS",
+									value: "psidts",
+								},
+							];
+						},
+					}),
+				}),
+			),
+			"authenticated",
+		);
+		assert.deepEqual(cookieCalls, [[]]);
+	});
+
 	test("stops authentication observation when aborted", async () => {
 		const controller = new AbortController();
 		controller.abort(new Error("observation stopped"));
@@ -908,6 +950,18 @@ describe("bounded Google login", () => {
 			}),
 			{ ok: false, code: "login_failed" },
 		);
+	});
+
+	test("uses the stored identity email for a manual cookie capture", async () => {
+		const result = await runGoogleLogin({
+			page: scriptedPage(["authenticated"], { email: null }),
+			credentials: undefined,
+			identityEmail: "owner@example.com",
+			totpCodes: [],
+		});
+		assert.equal(result.ok, true);
+		assert.equal(result.observedEmail, "owner@example.com");
+		assert.equal(result.automaticLoginUsed, false);
 	});
 
 	test("reports an already-authenticated profile without automatic login", async () => {

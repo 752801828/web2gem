@@ -685,6 +685,35 @@ describe("browser maintenance scheduler", () => {
 		assert.equal(lastState(active.calls).state, "ready");
 	});
 
+	test("uses only the saved email to verify a manual visible login", async () => {
+		const loginInputs: Record<string, unknown>[] = [];
+		const active = fixture({
+			accounts: [
+				account({
+					autoLoginAttemptDate: "2026-08-01",
+					autoLoginAttemptCount: 2,
+				}),
+			],
+			runLogin(input: Record<string, unknown>) {
+				loginInputs.push(input);
+				return {
+					ok: true,
+					psid: "private-psid",
+					psidts: "private-psidts",
+					observedEmail: "owner@example.com",
+					automaticLoginUsed: false,
+				};
+			},
+		});
+		await active.scheduler.enqueue({ accountId: "account-a", mode: "visible" });
+		assert.equal(loginInputs[0]?.credentials, undefined);
+		assert.equal(loginInputs[0]?.identityEmail, "owner@example.com");
+		assert.equal(
+			active.calls.some(([name]) => name === "attempt"),
+			false,
+		);
+	});
+
 	test("allows an explicit visible session to retry a prior manual-action profile", async () => {
 		const active = fixture({
 			accounts: [
