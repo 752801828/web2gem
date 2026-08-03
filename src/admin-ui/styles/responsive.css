@@ -161,6 +161,11 @@
 	.action-menu summary {
 		min-height: 40px;
 	}
+	.account-card .account-actions .action-menu,
+	.account-card .account-actions .action-menu summary,
+	.account-card .account-actions .action-menu-items {
+		width: 100%;
+	}
 	.model-routing-actions {
 		align-items: stretch;
 		flex-direction: column;

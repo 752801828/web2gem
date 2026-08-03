@@ -19,4 +19,16 @@ describe("admin workspace layout", () => {
 		assert.match(workspace, /aria-controls="import-panel"/);
 		assert.match(workspace, /tr\("Add accounts"\)/);
 	});
+
+	test("keeps row actions in flow while the bulk menu remains floating", async () => {
+		const css = await source("src/admin-ui/styles/components.css");
+		assert.match(
+			css,
+			/\.account-actions \.action-menu-items\s*\{[^}]*position:\s*static/s,
+		);
+		assert.match(
+			css,
+			/\.bulk-menu \.action-menu-items\s*\{[^}]*position:\s*absolute/s,
+		);
+	});
 });
