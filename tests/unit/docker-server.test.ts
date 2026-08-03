@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import { connect as netConnect } from "node:net";
 import { describe, test } from "vitest";
 import { assertRuntimeConfig } from "../../src/config";
 import app from "../../src/index";
@@ -234,6 +235,66 @@ describe("docker server", () => {
 			assert.equal(body.body, "hello");
 			assert.equal(body.env, "ok");
 			assert.equal(seen.body, "hello");
+		} finally {
+			await close(server);
+		}
+	});
+	test("keeps empty non-GET request bodies absent", async () => {
+		let bodyIsNull = false;
+		const server = createDockerServer({
+			env: {},
+			app: {
+				async fetch(request) {
+					bodyIsNull = request.body === null;
+					return new Response("ok");
+				},
+			},
+		});
+		await listen(server);
+		try {
+			const port = serverPort(server);
+			const response = await fetch(`http://127.0.0.1:${port}/empty`, {
+				method: "POST",
+			});
+			assert.equal(response.status, 200);
+			assert.equal(await response.text(), "ok");
+			assert.equal(bodyIsNull, true);
+		} finally {
+			await close(server);
+		}
+	});
+	test("keeps headerless empty non-GET request bodies absent", async () => {
+		let bodyIsNull = false;
+		const server = createDockerServer({
+			env: {},
+			app: {
+				async fetch(request) {
+					bodyIsNull = request.body === null;
+					return new Response("ok");
+				},
+			},
+		});
+		await listen(server);
+		try {
+			const port = serverPort(server);
+			await new Promise<void>((resolve, reject) => {
+				const socket = netConnect(port, "127.0.0.1");
+				let response = "";
+				socket.once("connect", () => {
+					socket.write(
+						"POST /empty HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+					);
+				});
+				socket.on("data", (chunk) => {
+					response += chunk.toString();
+				});
+				socket.once("end", () => {
+					assert.match(response, /200/);
+					resolve();
+				});
+				socket.once("error", reject);
+			});
+			assert.equal(bodyIsNull, true);
 		} finally {
 			await close(server);
 		}

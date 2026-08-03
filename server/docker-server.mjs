@@ -99,7 +99,7 @@ export async function handleDockerRequest(req, res, options = {}) {
 		signal: abortController.signal,
 	};
 
-	if (method !== "GET" && method !== "HEAD") {
+	if (hasDockerRequestBody(req, method)) {
 		init.body = Readable.toWeb(req);
 		init.duplex = "half";
 	}
@@ -132,6 +132,18 @@ export async function handleDockerRequest(req, res, options = {}) {
 		req.off("aborted", abortRequest);
 		res.off("close", abortOnResponseClose);
 	}
+}
+
+function hasDockerRequestBody(req, method) {
+	if (method === "GET" || method === "HEAD") return false;
+	const transferEncoding = req.headers["transfer-encoding"];
+	if (typeof transferEncoding === "string" && transferEncoding.trim()) return true;
+	const contentLength = req.headers["content-length"];
+	if (typeof contentLength === "string" && contentLength.trim()) {
+		const length = Number(contentLength);
+		if (Number.isFinite(length)) return length > 0;
+	}
+	return false;
 }
 
 function defaultDockerEnv() {
