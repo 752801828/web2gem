@@ -20,15 +20,15 @@ describe("admin workspace layout", () => {
 		assert.match(workspace, /tr\("Add accounts"\)/);
 	});
 
-	test("keeps row actions in flow while the bulk menu remains floating", async () => {
-		const css = await source("src/admin-ui/styles/components.css");
+	test("floats row action popovers above the workspace", async () => {
+		const [component, css] = await Promise.all([
+			source("src/admin-ui/components/AccountActions.tsx"),
+			source("src/admin-ui/styles/components.css"),
+		]);
 		assert.match(
-			css,
-			/\.account-actions \.action-menu-items\s*\{[^}]*position:\s*static/s,
+			component,
+			/class="action-menu-items account-action-popover"[\s\S]*popover="auto"/,
 		);
-		assert.match(
-			css,
-			/\.bulk-menu \.action-menu-items\s*\{[^}]*position:\s*absolute/s,
-		);
+		assert.match(css, /\.account-action-popover\s*\{[^}]*position:\s*fixed/s);
 	});
 });

@@ -329,11 +329,19 @@ td.empty {
 	right: 0;
 	width: 190px;
 }
-.account-actions .action-menu-items {
-	position: static;
-	z-index: auto;
+.account-action-popover {
+	position: fixed;
+	inset: var(--menu-top) var(--menu-right) auto auto;
 	width: min(210px, calc(100vw - 48px));
-	margin-top: 5px;
+	max-height: calc(100dvh - var(--menu-top) - 8px);
+	margin: 0;
+	overflow-y: auto;
+}
+.account-actions:has(.account-action-popover:popover-open)
+	.action-menu-trigger {
+	border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+	background: var(--accent-muted);
+	color: var(--accent);
 }
 .action-menu-items button {
 	width: 100%;

@@ -62,6 +62,7 @@ export function AccountActions({
 	const key = identifierKey(account);
 	const busy = useComputed(() => rowBusy.value[key] || "").value;
 	const label = accountDisplayName(account);
+	const menuId = `account-actions-${account.id}`;
 	const actionAriaLabel = (action: string): string =>
 		tr("Account action label", { action, label });
 	const run = (action: AccountAction): void => {
@@ -81,11 +82,21 @@ export function AccountActions({
 				<Icon name="refresh" />
 				{busy === "refresh" ? `${tr("Refreshing")}…` : tr("Refresh")}
 			</button>
-			<details class="action-menu">
-				<summary aria-label={tr("More account actions", { label })}>
+			<div class="account-action-menu">
+				<button
+					type="button"
+					class="action-menu-trigger"
+					popovertarget={menuId}
+					aria-label={tr("More account actions", { label })}
+					onClick={(event) => positionActionMenu(event.currentTarget, menuId)}
+				>
 					{tr("More")}
-				</summary>
-				<div class="action-menu-items">
+				</button>
+				<div
+					id={menuId}
+					class="action-menu-items account-action-popover"
+					popover="auto"
+				>
 					<button
 						type="button"
 						disabled={!!busy}
@@ -157,12 +168,23 @@ export function AccountActions({
 						{tr("Delete")}
 					</button>
 				</div>
-			</details>
+			</div>
 			{busy ? (
 				<span class="row-busy" role="status">
 					{accountBusyLabel(busy)}
 				</span>
 			) : null}
 		</div>
+	);
+}
+
+function positionActionMenu(button: HTMLButtonElement, menuId: string): void {
+	const menu = document.getElementById(menuId);
+	if (!menu) return;
+	const rect = button.getBoundingClientRect();
+	menu.style.setProperty("--menu-top", `${rect.bottom + 5}px`);
+	menu.style.setProperty(
+		"--menu-right",
+		`${Math.max(8, window.innerWidth - rect.right)}px`,
 	);
 }

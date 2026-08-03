@@ -161,10 +161,12 @@
 	.action-menu summary {
 		min-height: 40px;
 	}
-	.account-card .account-actions .action-menu,
-	.account-card .account-actions .action-menu summary,
-	.account-card .account-actions .action-menu-items {
+	.account-card .account-actions .account-action-menu,
+	.account-card .account-actions .action-menu-trigger {
 		width: 100%;
+	}
+	.account-card .account-actions .account-action-popover {
+		width: min(210px, calc(100vw - 20px));
 	}
 	.model-routing-actions {
 		align-items: stretch;
