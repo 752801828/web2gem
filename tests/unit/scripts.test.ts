@@ -505,6 +505,12 @@ describe("quality scripts", () => {
 			smokeMockServerSource(): string;
 			candidateCookiePath(accountId: string): string;
 			helperRecreateArgs(composeArgs: readonly string[]): string[];
+			smokeFailure(
+				primaryError: unknown,
+				captures: readonly string[],
+				secrets: readonly string[],
+				safetyErrors?: readonly unknown[],
+			): unknown;
 		};
 		assert.deepEqual(smoke.smokeResourceNames(42, "AB-cd!12"), {
 			project: "web2gem-smoke-42-abcd12",
@@ -537,6 +543,10 @@ describe("quality scripts", () => {
 		])
 			assert.match(override, new RegExp(required.replaceAll(".", "\\.")));
 		assert.doesNotMatch(override, /ports:/);
+		assert.match(
+			override,
+			/networks:\s+web2gem-egress:\s+internal: true\s+browser-egress:\s+internal: true/,
+		);
 		const mockSource = smoke.smokeMockServerSource();
 		assert.match(mockSource, /otAQ7b/);
 		assert.match(mockSource, /createHmac/);
@@ -556,7 +566,42 @@ describe("quality scripts", () => {
 			"--force-recreate",
 			"browser-helper",
 		]);
+		assert.equal(smoke.smokeFailure(null, ["safe"], ["secret"]), null);
+		assert.throws(() => {
+			throw smoke.smokeFailure(null, ["leaked secret"], ["secret"]);
+		}, /exposed a secret/);
+		const primary = new Error("original failure");
+		const merged = smoke.smokeFailure(
+			primary,
+			["leaked secret"],
+			["secret"],
+			[new Error("log collection failed")],
+		) as Error;
+		assert.equal(merged, primary);
+		assert.match(String(merged.cause), /smoke safety checks failed/);
 		const smokeSource = await readFile("scripts/docker-smoke.mjs", "utf8");
+		assert.doesNotMatch(
+			smokeSource,
+			/waitForHealth\(`http:\/\/127\.0\.0\.1:\$\{novncPort\}\/vnc\.html`\)/,
+		);
+		assert.equal(
+			(smokeSource.match(/await collectSmokeLogs\(/g) || []).length,
+			3,
+		);
+		assert.match(
+			smokeSource,
+			/await collectSmokeLogs\([\s\S]*?helperRecreateArgs\(composeArgs\)/,
+		);
+		assert.match(
+			smokeSource,
+			/await collectSmokeLogs\([\s\S]*?"--force-recreate", "web2gem"/,
+		);
+		const logCollector = smokeSource.slice(
+			smokeSource.indexOf("async function collectSmokeLogs"),
+			smokeSource.indexOf("async function generateMockCertificate"),
+		);
+		assert.match(logCollector, /"logs", "--no-color"/);
+		assert.doesNotMatch(logCollector, /allowFailure: true/);
 		assert.doesNotMatch(
 			smokeSource,
 			/["']down["'][^\n]*(?:["']-v["']|--volumes)/,

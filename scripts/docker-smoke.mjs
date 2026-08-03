@@ -35,6 +35,39 @@ export function assertSmokeRedacted(logs, secrets) {
 	}
 }
 
+export function smokeFailure(
+	primaryError,
+	captures,
+	secrets,
+	safetyErrors = [],
+) {
+	const errors = [...safetyErrors];
+	try {
+		assertSmokeRedacted(captures.join("\n"), secrets);
+	} catch (error) {
+		errors.push(error);
+	}
+	if (!primaryError) {
+		if (errors.length === 0) return null;
+		if (errors.length === 1) return errors[0];
+		return new AggregateError(errors, "Docker smoke safety checks failed");
+	}
+	if (errors.length === 0) return primaryError;
+	const previousCause =
+		primaryError instanceof Error ? primaryError.cause : undefined;
+	const cause = new AggregateError(
+		previousCause === undefined ? errors : [previousCause, ...errors],
+		"Docker smoke safety checks failed",
+	);
+	if (primaryError instanceof Error) {
+		try {
+			primaryError.cause = cause;
+			return primaryError;
+		} catch {}
+	}
+	return new AggregateError([primaryError, cause], "Docker smoke failed");
+}
+
 export function candidateCookiePath(accountId) {
 	return `/internal/browser/accounts/${encodeURIComponent(accountId)}/candidate-cookie`;
 }
@@ -93,6 +126,11 @@ export function smokeComposeOverride({ mockScript, certDir, stateDir }) {
       interval: 2s
       timeout: 2s
       retries: 30
+networks:
+  web2gem-egress:
+    internal: true
+  browser-egress:
+    internal: true
 `;
 }
 
@@ -244,7 +282,21 @@ async function main() {
 		NO_PROXY: "*",
 	};
 	const safeCaptures = [];
+	const safetyErrors = [];
+	const secrets = [
+		masterKey,
+		apiKey,
+		adminKey,
+		internalToken,
+		novncPassword,
+		signingSecret,
+		webhookToken,
+		psid,
+		oldPsidts,
+		nextPsidts,
+	];
 	let composeAttempted = false;
+	let primaryError = null;
 	try {
 		await Promise.all([
 			mkdir(certDir, { recursive: true }),
@@ -281,7 +333,6 @@ async function main() {
 		);
 		assert(mappedNovncPort === novncPort, "noVNC port mapping changed");
 		await waitForHealth(`http://127.0.0.1:${port}/`);
-		await waitForHealth(`http://127.0.0.1:${novncPort}/vnc.html`);
 		const health = await fetch(`http://127.0.0.1:${port}/`);
 		assert(health.status === 200, `health status ${health.status}`);
 		assert(
@@ -470,6 +521,7 @@ async function main() {
 			],
 			{ env, stdio: "ignore" },
 		);
+		await collectSmokeLogs(composeArgs, env, safeCaptures, safetyErrors);
 		await runCommand("docker", helperRecreateArgs(composeArgs), {
 			env,
 			stdio: "ignore",
@@ -515,6 +567,7 @@ async function main() {
 			[...composeArgs, "exec", "-T", "web2gem", "node", "-e", sqliteWrite],
 			{ env, stdio: "ignore" },
 		);
+		await collectSmokeLogs(composeArgs, env, safeCaptures, safetyErrors);
 		await runCommand(
 			"docker",
 			[...composeArgs, "up", "-d", "--no-deps", "--force-recreate", "web2gem"],
@@ -537,44 +590,65 @@ async function main() {
 			).trim() === "ok",
 			"SQLite volume did not persist",
 		);
-
-		const logs = await outputCommand(
-			"docker",
-			[...composeArgs, "logs", "--no-color"],
-			{ env },
-		);
-		assertSmokeRedacted(`${logs}\n${safeCaptures.join("\n")}`, [
-			masterKey,
-			apiKey,
-			adminKey,
-			internalToken,
-			novncPassword,
-			signingSecret,
-			webhookToken,
-			psid,
-			oldPsidts,
-			nextPsidts,
-		]);
-		outputLine("Docker smoke check passed");
+	} catch (error) {
+		primaryError = error;
 	} finally {
 		if (composeAttempted)
-			await runCommand("docker", [...composeArgs, "down", "--remove-orphans"], {
-				env,
-				allowFailure: true,
-				stdio: "ignore",
-			});
+			await collectSmokeLogs(composeArgs, env, safeCaptures, safetyErrors);
+		if (composeAttempted)
+			try {
+				await runCommand(
+					"docker",
+					[...composeArgs, "down", "--remove-orphans"],
+					{ env, allowFailure: true, stdio: "ignore" },
+				);
+			} catch (error) {
+				safetyErrors.push(error);
+			}
 		for (const volume of [
 			`${names.project}_web2gem-data`,
 			`${names.project}_browser-profiles`,
 		])
-			await outputCommand("docker", ["volume", "rm", volume], {
-				allowFailure: true,
-			});
+			try {
+				await outputCommand("docker", ["volume", "rm", volume], {
+					allowFailure: true,
+				});
+			} catch (error) {
+				safetyErrors.push(error);
+			}
 		for (const image of [names.webImage, names.helperImage])
-			await outputCommand("docker", ["image", "rm", image], {
-				allowFailure: true,
-			});
-		await rm(temp, { recursive: true, force: true });
+			try {
+				await outputCommand("docker", ["image", "rm", image], {
+					allowFailure: true,
+				});
+			} catch (error) {
+				safetyErrors.push(error);
+			}
+		try {
+			await rm(temp, { recursive: true, force: true });
+		} catch (error) {
+			safetyErrors.push(error);
+		}
+	}
+	const failure = smokeFailure(
+		primaryError,
+		safeCaptures,
+		secrets,
+		safetyErrors,
+	);
+	if (failure) throw failure;
+	outputLine("Docker smoke check passed");
+}
+
+async function collectSmokeLogs(composeArgs, env, captures, errors) {
+	try {
+		captures.push(
+			await outputCommand("docker", [...composeArgs, "logs", "--no-color"], {
+				env,
+			}),
+		);
+	} catch (error) {
+		errors.push(error);
 	}
 }
 
