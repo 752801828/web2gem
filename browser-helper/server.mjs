@@ -146,8 +146,25 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 		async open(accountId, signal) {
 			validAccountId(accountId);
 			if (signal?.aborted) throw new ControlError(499, "request_aborted");
-			if (active)
-				throw new ControlError(409, "visible_session_conflict");
+			if (active) {
+				if (active.accountId !== accountId)
+					throw new ControlError(409, "visible_session_conflict");
+				const callerAbort = abortRace(signal);
+				try {
+					const outcome = await Promise.race([
+						active.ready.promise.then(() => "ready"),
+						active.job?.then(() => "ended"),
+						callerAbort.promise.then(() => "abort"),
+					]);
+					if (outcome === "ended")
+						throw new ControlError(503, "visible_session_unavailable");
+					if (outcome === "abort" || signal?.aborted)
+						throw new ControlError(499, "request_aborted");
+					return;
+				} finally {
+					callerAbort.dispose();
+				}
+			}
 			const session = {
 				accountId,
 				ready: deferred(),

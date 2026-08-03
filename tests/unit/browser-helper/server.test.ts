@@ -227,6 +227,36 @@ describe("visible browser sessions", () => {
 		assert.equal(coordinator.isActive("account-a"), false);
 	});
 
+	test("reuses the active visible session for the same account", async () => {
+		let enqueued = 0;
+		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
+		coordinator = createVisibleSessionCoordinator(
+			{ visibleIdleTimeoutSec: 60 },
+			{
+				scheduler: {
+					async enqueue(job: { accountId: string; mode: string }) {
+						enqueued += 1;
+						const signal = new AbortController().signal;
+						await coordinator.beforeVisibleStart(job.accountId, signal);
+						return coordinator.hold(
+							{ accountId: job.accountId, page: {}, mode: job.mode, signal },
+							async () => ({ ok: false }),
+						);
+					},
+				},
+				novnc: { start: async () => undefined, stop: async () => undefined },
+				setTimer: () => ({}) as ReturnType<typeof setTimeout>,
+				clearTimer: () => undefined,
+				prepareVisiblePage: async () => undefined,
+				trackActivity: async () => undefined,
+			},
+		);
+		await coordinator.open("account-a");
+		await coordinator.open("account-a");
+		assert.equal(enqueued, 1);
+		await coordinator.stop();
+	});
+
 	test("finishes a visible session when Gemini authentication becomes observable", async () => {
 		const calls: string[] = [];
 		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
