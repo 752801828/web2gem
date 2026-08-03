@@ -87,6 +87,56 @@ describe("browser helper Chromium lifecycle", () => {
 		await lifecycle.close();
 	});
 
+	test("removes Chromium singleton artifacts left by an older container", async () => {
+		const removed: string[] = [];
+		const events: string[] = [];
+		const lifecycle = createChromiumLifecycle({
+			browserType: {
+				launchPersistentContext: async () => {
+					events.push("launch");
+					return { cookies: async () => [], close: async () => undefined };
+				},
+			},
+			currentHostname: "new-container",
+			readlink: async () => "old-container-1454",
+			unlink: async (target: string) => {
+				removed.push(path.basename(target));
+				events.push("unlink");
+			},
+		});
+
+		await lifecycle.startHeadless("account-a");
+		assert.deepEqual(removed.sort(), [
+			"SingletonCookie",
+			"SingletonLock",
+			"SingletonSocket",
+		]);
+		assert.equal(events.at(-1), "launch");
+		await lifecycle.close();
+	});
+
+	test("keeps a live Chromium singleton owned by this container", async () => {
+		let unlinks = 0;
+		const lifecycle = createChromiumLifecycle({
+			browserType: {
+				launchPersistentContext: async () => ({
+					cookies: async () => [],
+					close: async () => undefined,
+				}),
+			},
+			currentHostname: "current-container",
+			readlink: async () => "current-container-42",
+			processAlive: () => true,
+			unlink: async () => {
+				unlinks += 1;
+			},
+		});
+
+		await lifecycle.startVisible("account-a");
+		assert.equal(unlinks, 0);
+		await lifecycle.close();
+	});
+
 	test("reserves the profile while launch is pending and releases failed launches", async () => {
 		let release!: () => void;
 		let fail = false;
@@ -171,8 +221,12 @@ describe("browser helper Chromium lifecycle", () => {
 
 	test("recovers when close waits on a launch that later fails", async () => {
 		let rejectLaunch!: (error: Error) => void;
+		let markLaunchStarted!: () => void;
 		let launches = 0;
 		let closes = 0;
+		const launchStarted = new Promise<void>((resolve) => {
+			markLaunchStarted = resolve;
+		});
 		const pending = new Promise<never>((_resolve, reject) => {
 			rejectLaunch = reject;
 		});
@@ -180,7 +234,10 @@ describe("browser helper Chromium lifecycle", () => {
 			browserType: {
 				launchPersistentContext: async () => {
 					launches += 1;
-					if (launches === 1) return pending;
+					if (launches === 1) {
+						markLaunchStarted();
+						return pending;
+					}
 					return {
 						cookies: async () => [],
 						close: async () => {
@@ -192,9 +249,11 @@ describe("browser helper Chromium lifecycle", () => {
 		});
 		const starting = lifecycle.startHeadless("account-a");
 		const closing = lifecycle.close();
+		const startingRejected = assert.rejects(starting, /launch failed/);
+		const closingRejected = assert.rejects(closing, /launch failed/);
+		await launchStarted;
 		rejectLaunch(new Error("launch failed"));
-		await assert.rejects(starting, /launch failed/);
-		await assert.rejects(closing, /launch failed/);
+		await Promise.all([startingRejected, closingRejected]);
 
 		await lifecycle.startHeadless("account-b");
 		await lifecycle.close();

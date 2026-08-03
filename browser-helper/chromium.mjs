@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { readlink as readLink, unlink as removeFile } from "node:fs/promises";
+import { hostname as systemHostname } from "node:os";
 import path from "node:path";
 import { chromium } from "playwright-core";
 
@@ -28,6 +30,10 @@ export function createChromiumLifecycle({
 	executablePath = "/usr/bin/chromium",
 	proxy,
 	env = process.env,
+	currentHostname = systemHostname(),
+	readlink = readLink,
+	unlink = removeFile,
+	processAlive = isProcessAlive,
 } = {}) {
 	const browserEnv = safeBrowserEnvironment(env);
 	let activeContext = null;
@@ -35,9 +41,16 @@ export function createChromiumLifecycle({
 
 	async function start(accountId, headless) {
 		if (activeContext) throw new Error("browser context is already active");
-		const launch = Promise.resolve(
-			browserType.launchPersistentContext(
-				profilePathForAccount(accountId, profilesRoot),
+		const profilePath = profilePathForAccount(accountId, profilesRoot);
+		const launch = (async () => {
+			await removeStaleSingletons(profilePath, {
+				currentHostname,
+				readlink,
+				unlink,
+				processAlive,
+			});
+			return browserType.launchPersistentContext(
+				profilePath,
 				{
 					executablePath,
 					headless,
@@ -45,8 +58,8 @@ export function createChromiumLifecycle({
 					env: browserEnv,
 					args: [...CONTAINER_ARGS],
 				},
-			),
-		);
+			);
+		})();
 		activeContext = launch;
 		try {
 			return await launch;
@@ -79,6 +92,38 @@ export function createChromiumLifecycle({
 			}
 		},
 	};
+}
+
+async function removeStaleSingletons(
+	profilePath,
+	{ currentHostname, readlink, unlink, processAlive },
+) {
+	let target;
+	try {
+		target = await readlink(path.join(profilePath, "SingletonLock"));
+	} catch (error) {
+		if (error?.code === "ENOENT") return;
+		throw error;
+	}
+	const match = /^(.*)-([1-9]\d*)$/.exec(path.basename(target));
+	if (!match) return;
+	const stale = match[1] !== currentHostname || !processAlive(Number(match[2]));
+	if (!stale) return;
+	for (const name of ["SingletonLock", "SingletonSocket", "SingletonCookie"])
+		try {
+			await unlink(path.join(profilePath, name));
+		} catch (error) {
+			if (error?.code !== "ENOENT") throw error;
+		}
+}
+
+function isProcessAlive(pid) {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return error?.code === "EPERM";
+	}
 }
 
 function safeBrowserEnvironment(source) {
