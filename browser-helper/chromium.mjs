@@ -8,6 +8,7 @@ const GEMINI_ORIGIN = "https://gemini.google.com";
 const CONTAINER_ARGS = [
 	"--no-first-run",
 	"--disable-dev-shm-usage",
+	"--disable-blink-features=AutomationControlled",
 	"--no-sandbox",
 	"--disable-setuid-sandbox",
 ];
@@ -54,6 +55,7 @@ export function createChromiumLifecycle({
 				{
 					executablePath,
 					headless,
+					ignoreDefaultArgs: ["--enable-automation"],
 					proxy,
 					env: browserEnv,
 					args: [...CONTAINER_ARGS],

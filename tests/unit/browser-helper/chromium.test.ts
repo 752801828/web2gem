@@ -56,6 +56,9 @@ describe("browser helper Chromium lifecycle", () => {
 		assert.equal(launches.length, 1);
 		assert.equal(launches[0]?.[1].executablePath, "/usr/bin/chromium");
 		assert.equal(launches[0]?.[1].headless, true);
+		assert.deepEqual(launches[0]?.[1].ignoreDefaultArgs, [
+			"--enable-automation",
+		]);
 		assert.deepEqual(launches[0]?.[1].proxy, {
 			server: "http://proxy.invalid:7897",
 		});
@@ -68,6 +71,10 @@ describe("browser helper Chromium lifecycle", () => {
 		assert.equal(args.includes("--no-first-run"), true);
 		assert.equal(args.includes("--disable-dev-shm-usage"), true);
 		assert.equal(args.includes("--no-sandbox"), true);
+		assert.equal(
+			args.includes("--disable-blink-features=AutomationControlled"),
+			true,
+		);
 		assert.equal(
 			args.some((arg) => arg.includes("disable-web-security")),
 			false,

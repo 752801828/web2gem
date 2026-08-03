@@ -285,7 +285,7 @@ describe("browser credentials modal lifecycle", () => {
 					),
 				);
 				const buttons = root.querySelectorAll("button");
-				assert.equal(buttons.length, 9);
+				assert.equal(buttons.length, 10);
 				for (const button of buttons) {
 					const label = button.attributes.get("aria-label") || "";
 					assert.equal(label.includes("Primary"), true);
