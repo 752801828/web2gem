@@ -953,8 +953,12 @@ describe("bounded Google login", () => {
 	});
 
 	test("uses the stored identity email for a manual cookie capture", async () => {
+		const page = scriptedPage(["authenticated"], { email: null });
+		page.observedEmail = async () => {
+			throw new Error("transient page must not be inspected");
+		};
 		const result = await runGoogleLogin({
-			page: scriptedPage(["authenticated"], { email: null }),
+			page,
 			credentials: undefined,
 			identityEmail: "owner@example.com",
 			totpCodes: [],

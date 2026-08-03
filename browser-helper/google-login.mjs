@@ -420,8 +420,9 @@ async function finishAuthenticated(adapter, automaticLoginUsed, identityEmail) {
 	const psid = cookieValue(cookies, "__Secure-1PSID");
 	const psidts = cookieValue(cookies, "__Secure-1PSIDTS");
 	if (!psid || !psidts) return { ok: false, code: "missing_cookie" };
-	const pageEmail = await adapter.observedEmail();
-	const observed = reliableEmail(pageEmail) ? pageEmail : identityEmail;
+	const observed = reliableEmail(identityEmail)
+		? identityEmail
+		: await adapter.observedEmail();
 	if (!reliableEmail(observed)) return { ok: false, code: "login_failed" };
 	return {
 		ok: true,
