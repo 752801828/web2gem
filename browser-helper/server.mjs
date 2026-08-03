@@ -84,6 +84,8 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 		dependencies?.prepareVisiblePage ||
 		((page) => page.goto("https://gemini.google.com/app", { waitUntil: "domcontentloaded" }));
 	const trackActivity = dependencies?.trackActivity || installPageActivityTracking;
+	const waitForAuthentication =
+		dependencies?.waitForAuthentication || (() => new Promise(() => {}));
 	if (
 		!scheduler ||
 		!novnc ||
@@ -207,6 +209,7 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 			)
 				throw new Error("visible browser session is not active");
 			const jobAbort = abortRace(input.signal);
+			const authenticationObserver = new AbortController();
 			session.cleanupActivity = await trackActivity(input.page, {
 				activity() {
 					if (active !== session || session.stop.settled) return;
@@ -237,16 +240,28 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 					throw new Error("visible browser session cancelled");
 				armIdle(session);
 				session.ready.resolve();
-				const outcome = await Promise.race([
+				let outcome = await Promise.race([
 					session.stop.promise.then(() => "stop"),
 					jobAbort.promise.then(() => "abort"),
+					Promise.resolve(
+						waitForAuthentication(input.page, authenticationObserver.signal),
+					).then(
+						() => "authenticated",
+						() => "observer_ended",
+					),
 				]);
+				if (outcome === "observer_ended")
+					outcome = await Promise.race([
+						session.stop.promise.then(() => "stop"),
+						jobAbort.promise.then(() => "abort"),
+					]);
 				if (outcome === "abort")
 					throw input.signal?.reason instanceof Error
 						? input.signal.reason
 						: new Error("visible browser session aborted");
 				return finalCheck(input);
 			} finally {
+				authenticationObserver.abort();
 				jobAbort.dispose();
 			}
 		},

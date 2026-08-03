@@ -7,6 +7,7 @@ const {
 	classifyGooglePage,
 	createPlaywrightPageAdapter,
 	runGoogleLogin,
+	waitForGoogleAuthentication,
 } = await import(modulePath);
 
 type State =
@@ -99,6 +100,56 @@ describe("bounded Google login", () => {
 	test("classifies authenticated, expected form, and challenge states", async () => {
 		for (const state of Object.keys(urls) as State[])
 			assert.equal(await classifyGooglePage(pageFor(state)), state);
+	});
+
+	test("waits through transient pages until Gemini authentication is visible", async () => {
+		let state: State = "unknown";
+		let waits = 0;
+		await waitForGoogleAuthentication(
+			{
+				url: () => urls[state],
+				visible: async (candidate: State) => candidate === state,
+			},
+			new AbortController().signal,
+			{
+				async wait() {
+					waits += 1;
+					state = "authenticated";
+				},
+			},
+		);
+		assert.equal(waits, 1);
+	});
+
+	test("stops authentication observation when aborted", async () => {
+		const controller = new AbortController();
+		controller.abort(new Error("observation stopped"));
+		await assert.rejects(
+			waitForGoogleAuthentication(pageFor("unknown"), controller.signal),
+			/observation stopped/,
+		);
+	});
+
+	test("retries after transient page inspection errors", async () => {
+		let inspecting = true;
+		let waits = 0;
+		await waitForGoogleAuthentication(
+			{
+				url() {
+					if (inspecting) throw new Error("page is navigating");
+					return urls.authenticated;
+				},
+				visible: async (candidate: State) => candidate === "authenticated",
+			},
+			new AbortController().signal,
+			{
+				async wait() {
+					waits += 1;
+					inspecting = false;
+				},
+			},
+		);
+		assert.equal(waits, 1);
 	});
 
 	test("never submits an explicit security challenge", async () => {

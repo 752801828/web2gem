@@ -227,6 +227,92 @@ describe("visible browser sessions", () => {
 		assert.equal(coordinator.isActive("account-a"), false);
 	});
 
+	test("finishes a visible session when Gemini authentication becomes observable", async () => {
+		const calls: string[] = [];
+		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
+		coordinator = createVisibleSessionCoordinator(
+			{ visibleIdleTimeoutSec: 60 },
+			{
+				scheduler: {
+					async enqueue(job: { accountId: string; mode: string }) {
+						const signal = new AbortController().signal;
+						await coordinator.beforeVisibleStart(job.accountId, signal);
+						return coordinator.hold(
+							{
+								accountId: job.accountId,
+								page: {},
+								mode: job.mode,
+								signal,
+							},
+							async () => {
+								calls.push("final-check");
+								return { ok: true };
+							},
+						);
+					},
+				},
+				novnc: {
+					async start() {
+						calls.push("novnc-start");
+					},
+					async stop() {
+						calls.push("novnc-stop");
+					},
+				},
+				waitForAuthentication: async () => undefined,
+				setTimer: () => ({}) as ReturnType<typeof setTimeout>,
+				clearTimer: () => undefined,
+				prepareVisiblePage: async () => undefined,
+				trackActivity: async () => undefined,
+			},
+		);
+		await coordinator.open("account-a");
+		await coordinator.waitForIdle();
+		const activeAfterAuthentication = coordinator.isActive("account-a");
+		assert.equal(activeAfterAuthentication, false);
+		assert.deepEqual(calls, ["novnc-start", "final-check", "novnc-stop"]);
+	});
+
+	test("keeps a visible session stoppable after its authentication observer fails", async () => {
+		let finalChecks = 0;
+		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
+		coordinator = createVisibleSessionCoordinator(
+			{ visibleIdleTimeoutSec: 60 },
+			{
+				scheduler: {
+					async enqueue(job: { accountId: string; mode: string }) {
+						const signal = new AbortController().signal;
+						await coordinator.beforeVisibleStart(job.accountId, signal);
+						return coordinator.hold(
+							{
+								accountId: job.accountId,
+								page: {},
+								mode: job.mode,
+								signal,
+							},
+							async () => {
+								finalChecks += 1;
+							},
+						);
+					},
+				},
+				novnc: { start: async () => undefined, stop: async () => undefined },
+				waitForAuthentication: async () => {
+					throw new Error("transient observer failure");
+				},
+				setTimer: () => ({}) as ReturnType<typeof setTimeout>,
+				clearTimer: () => undefined,
+				prepareVisiblePage: async () => undefined,
+				trackActivity: async () => undefined,
+			},
+		);
+		await coordinator.open("account-a");
+		assert.equal(coordinator.isActive("account-a"), true);
+		await coordinator.stop();
+		assert.equal(finalChecks, 1);
+		assert.equal(coordinator.isActive("account-a"), false);
+	});
+
 	test("aborts without a final cookie check when the maintenance lease is lost", async () => {
 		let finalChecks = 0;
 		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;

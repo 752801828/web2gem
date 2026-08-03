@@ -58,6 +58,22 @@ export async function classifyGooglePage(page) {
 	return "unknown";
 }
 
+export async function waitForGoogleAuthentication(
+	page,
+	signal,
+	{ pollMs = 1_000, wait = abortableDelay } = {},
+) {
+	for (;;) {
+		throwIfAborted(signal);
+		try {
+			if ((await classifyGooglePage(page)) === "authenticated") return;
+		} catch {
+			// Navigation can briefly invalidate page handles between trusted screens.
+		}
+		await wait(pollMs, signal);
+	}
+}
+
 export async function runGoogleLogin({
 	page,
 	credentials,
@@ -354,6 +370,31 @@ function clockSkewed(nowSeconds, serverDate, maxClockSkewSec) {
 		Number.isSafeInteger(maxClockSkewSec) &&
 		Math.abs(nowSeconds - serverMs / 1_000) > maxClockSkewSec
 	);
+}
+
+function abortableDelay(ms, signal) {
+	throwIfAborted(signal);
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", aborted);
+			resolve();
+		}, ms);
+		const aborted = () => {
+			clearTimeout(timer);
+			reject(abortReason(signal));
+		};
+		signal?.addEventListener("abort", aborted, { once: true });
+	});
+}
+
+function throwIfAborted(signal) {
+	if (signal?.aborted) throw abortReason(signal);
+}
+
+function abortReason(signal) {
+	return signal?.reason instanceof Error
+		? signal.reason
+		: new Error("authentication observation aborted");
 }
 
 async function finishAuthenticated(adapter, automaticLoginUsed) {

@@ -11,6 +11,7 @@ describe("browser helper process composition", () => {
 			["HTTP_PROXY", "http://proxy-user:proxy-pass@proxy.test:8080"],
 		] as const) {
 			let browserOptions: Record<string, unknown> | undefined;
+			let sessionDependencies: Record<string, unknown> | undefined;
 			createBrowserHelperProcess(
 				{
 					internalToken: "test-internal-token",
@@ -30,11 +31,17 @@ describe("browser helper process composition", () => {
 						return { close: async () => undefined };
 					},
 					createNoVnc: () => ({ stop: async () => undefined }),
-					createSessions: () => ({
-						hold: async () => undefined,
-						isActive: () => false,
-						requestStop: () => undefined,
-					}),
+					createSessions: (
+						_config: unknown,
+						dependencies: Record<string, unknown>,
+					) => {
+						sessionDependencies = dependencies;
+						return {
+							hold: async () => undefined,
+							isActive: () => false,
+							requestStop: () => undefined,
+						};
+					},
 					createNotifier: () => ({}),
 					createScheduler: () => ({
 						start: async () => undefined,
@@ -60,6 +67,10 @@ describe("browser helper process composition", () => {
 			assert.doesNotMatch(
 				JSON.stringify(browserOptions?.proxy),
 				/must-not-enter-proxy/,
+			);
+			assert.equal(
+				typeof sessionDependencies?.waitForAuthentication,
+				"function",
 			);
 		}
 	});

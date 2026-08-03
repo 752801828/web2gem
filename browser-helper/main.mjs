@@ -4,7 +4,10 @@ import { createChromiumLifecycle } from "./chromium.mjs";
 import { loadBrowserHelperConfig } from "./config.mjs";
 import { decryptBrowserCredentials } from "./crypto.mjs";
 import { createFeishuNotifier } from "./feishu.mjs";
-import { runGoogleLogin } from "./google-login.mjs";
+import {
+	runGoogleLogin,
+	waitForGoogleAuthentication,
+} from "./google-login.mjs";
 import { createNoVncLifecycle } from "./novnc.mjs";
 import { createBrowserScheduler } from "./scheduler.mjs";
 import {
@@ -30,6 +33,8 @@ export function createBrowserHelperProcess(config, masterKey, dependencies = {})
 		config,
 		{
 			novnc,
+			waitForAuthentication:
+				dependencies.waitForAuthentication || waitForGoogleAuthentication,
 			scheduler: {
 				enqueue(job) {
 					return scheduler.enqueue(job);
