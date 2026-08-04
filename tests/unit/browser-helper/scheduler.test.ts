@@ -121,6 +121,7 @@ function fixture(options: Record<string, unknown> = {}) {
 		},
 		async submitCandidateCookie(id: string, candidate: unknown) {
 			calls.push(["candidate", id, candidate]);
+			if (options.candidateError) throw options.candidateError;
 			return (
 				options.candidateResult || {
 					changed: false,
@@ -129,15 +130,23 @@ function fixture(options: Record<string, unknown> = {}) {
 				}
 			);
 		},
+		...(options.sessionCookie
+			? {
+					async getSessionCookie(id: string) {
+						calls.push(["session-cookie", id]);
+						return options.sessionCookie;
+					},
+				}
+			: {}),
 	};
 	const browser = {
 		async startHeadless(id: string) {
 			calls.push(["headless", id]);
-			return { pages: () => [{}] };
+			return options.browserContext || { pages: () => [{}] };
 		},
 		async startVisible(id: string) {
 			calls.push(["visible", id]);
-			return { pages: () => [{}] };
+			return options.browserContext || { pages: () => [{}] };
 		},
 		async close() {
 			calls.push(["close"]);
@@ -201,6 +210,134 @@ function fixture(options: Record<string, unknown> = {}) {
 }
 
 describe("browser maintenance scheduler", () => {
+	test("restores the stored Gemini session before checking an empty profile", async () => {
+		const added: Array<{ name: string; value: string; domain: string }> = [];
+		const browserContext = {
+			pages: () => [{}],
+			async cookies() {
+				return [];
+			},
+			async addCookies(
+				cookies: Array<{ name: string; value: string; domain: string }>,
+			) {
+				added.push(...cookies);
+			},
+		};
+		const { scheduler, calls } = fixture({
+			browserContext,
+			sessionCookie: { psid: "stored-psid", psidts: "stored-psidts" },
+		});
+		await scheduler.enqueue({ accountId: "account-a", mode: "manual_check" });
+		assert.deepEqual(
+			calls.filter(([name]) => name === "session-cookie"),
+			[["session-cookie", "account-a"]],
+		);
+		assert.deepEqual(
+			added.map((cookie) => [cookie.name, cookie.value, cookie.domain]),
+			[
+				["__Secure-1PSID", "stored-psid", ".google.com"],
+				["__Secure-1PSIDTS", "stored-psidts", ".google.com"],
+			],
+		);
+		assert.equal(
+			calls.some(([name]) => name === "credentials"),
+			true,
+		);
+	});
+
+	test("keeps a complete profile session instead of overwriting it", async () => {
+		const added: Array<{ name: string; value: string; domain: string }> = [];
+		const browserContext = {
+			pages: () => [{}],
+			async cookies() {
+				return [
+					{ name: "__Secure-1PSID", value: "profile-psid" },
+					{ name: "__Secure-1PSIDTS", value: "profile-psidts" },
+				];
+			},
+			async addCookies(
+				cookies: Array<{ name: string; value: string; domain: string }>,
+			) {
+				added.push(...cookies);
+			},
+		};
+		const { scheduler, calls } = fixture({
+			browserContext,
+			sessionCookie: { psid: "stored-psid", psidts: "stored-psidts" },
+		});
+		await scheduler.enqueue({ accountId: "account-a", mode: "manual_check" });
+		assert.deepEqual(
+			calls.filter(([name]) => name === "session-cookie"),
+			[],
+		);
+		assert.deepEqual(added, []);
+	});
+
+	test("clears a rejected stored session before opening the visible login", async () => {
+		const cleared: unknown[] = [];
+		const browserContext = {
+			pages: () => [{}],
+			async cookies() {
+				return [
+					{ name: "__Secure-1PSID", value: "stored-psid" },
+					{ name: "__Secure-1PSIDTS", value: "stored-psidts" },
+				];
+			},
+			async addCookies() {},
+			async clearCookies(filter: unknown) {
+				cleared.push(filter);
+			},
+		};
+		const { scheduler } = fixture({
+			accounts: [
+				account({
+					status: {
+						...account().status,
+						state: "error",
+						failureCode: "browser_cookie_verification_failed",
+					},
+				}),
+			],
+			browserContext,
+			sessionCookie: { psid: "stored-psid", psidts: "stored-psidts" },
+			loginResults: [{ ok: false, code: "login_failed" }],
+		});
+		await scheduler.enqueue({ accountId: "account-a", mode: "visible" });
+		assert.equal(cleared.length, 1);
+	});
+
+	test("never clears a newer profile session after a stored CK rejection", async () => {
+		const cleared: unknown[] = [];
+		const browserContext = {
+			pages: () => [{}],
+			async cookies() {
+				return [
+					{ name: "__Secure-1PSID", value: "new-profile-psid" },
+					{ name: "__Secure-1PSIDTS", value: "new-profile-psidts" },
+				];
+			},
+			async addCookies() {},
+			async clearCookies(filter: unknown) {
+				cleared.push(filter);
+			},
+		};
+		const { scheduler } = fixture({
+			accounts: [
+				account({
+					status: {
+						...account().status,
+						state: "error",
+						failureCode: "browser_cookie_verification_failed",
+					},
+				}),
+			],
+			browserContext,
+			sessionCookie: { psid: "stored-psid", psidts: "stored-psidts" },
+		});
+		await scheduler.enqueue({ accountId: "account-a", mode: "visible" });
+		assert.deepEqual(cleared, []);
+	});
+
 	test("applies bounded symmetric jitter", () => {
 		assert.equal(
 			jitteredDelayMs(100, 10, () => 0),
@@ -865,6 +1002,21 @@ describe("browser maintenance scheduler", () => {
 			calls.slice(-2).map(([name]) => name),
 			["close", "release"],
 		);
+	});
+
+	test("preserves safe candidate verification error codes", async () => {
+		const candidateError = Object.assign(new Error("private API failure"), {
+			code: "browser_cookie_verification_failed",
+		});
+		const active = fixture({ candidateError });
+		await active.scheduler.enqueue({
+			accountId: "account-a",
+			mode: "manual_check",
+		});
+		const state = lastState(active.calls);
+		assert.equal(state.state, "error");
+		assert.equal(state.failureCode, "browser_cookie_verification_failed");
+		assert.equal(state.authFailureCount, 0);
 	});
 
 	test("treats clock skew as maintenance rather than authentication failure", async () => {

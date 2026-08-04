@@ -67,6 +67,10 @@ class FakeBrowserStore implements BrowserAccountStore {
 		this.calls.push("getEncryptedCredentials");
 		return this.credentials;
 	}
+	async getSessionCookie() {
+		this.calls.push("getSessionCookie");
+		return { psid: "stored-psid", psidts: "stored-psidts" };
+	}
 	async tryAcquireLease(
 		_accountId: string,
 		owner: string,
@@ -145,6 +149,21 @@ function request(path: string, init: RequestInit = {}, activeEnv = env()) {
 }
 
 describe("private browser-helper HTTP contract", () => {
+	test("returns the stored Gemini session only through the private route", async () => {
+		const store = new FakeBrowserStore();
+		const response = await request(
+			"/internal/browser/accounts/account-a/session-cookie",
+			{},
+			env(store),
+		);
+		assert.equal(response.status, 200);
+		assert.deepEqual(await response.json(), {
+			psid: "stored-psid",
+			psidts: "stored-psidts",
+		});
+		assert.deepEqual(store.calls, ["getSessionCookie"]);
+	});
+
 	test("rejects missing, wrong, and ADMIN_KEY bearer tokens before store access", async () => {
 		for (const authorization of [
 			undefined,

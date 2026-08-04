@@ -3,6 +3,7 @@ import type {
 	BrowserAccountStore,
 	BrowserNotificationState,
 	BrowserScheduleAccount,
+	BrowserSessionCookie,
 	BrowserState,
 	BrowserStatusUpdate,
 	EncryptedBrowserCredentials,
@@ -44,6 +45,8 @@ type CredentialRow = {
 	credential_version: unknown;
 	login_email_hash: unknown;
 };
+
+type SessionCookieRow = { cookie_header: unknown };
 
 const STATUS_SELECT = `
   credential_ciphertext IS NOT NULL
@@ -188,6 +191,24 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
 		};
 	}
 
+	async getSessionCookie(
+		accountId: string,
+	): Promise<BrowserSessionCookie | null> {
+		const row = await this.db
+			.prepare(`
+        SELECT cookie_header
+        FROM gemini_accounts
+        WHERE id = ? AND enabled = 1
+        LIMIT 1
+      `)
+			.bind(accountId)
+			.first<SessionCookieRow>();
+		if (typeof row?.cookie_header !== "string") return null;
+		const psid = cookieValue(row.cookie_header, "__Secure-1PSID");
+		const psidts = cookieValue(row.cookie_header, "__Secure-1PSIDTS");
+		return psid && psidts ? { psid, psidts } : null;
+	}
+
 	async tryAcquireLease(
 		accountId: string,
 		owner: string,
@@ -324,4 +345,13 @@ export class SqlBrowserAccountStore implements BrowserAccountStore {
 			throw new Error("SQL browser attempt update returned no count");
 		return { reserved: true, count };
 	}
+}
+
+function cookieValue(header: string, name: string): string {
+	for (const part of header.split(";")) {
+		const separator = part.indexOf("=");
+		if (separator < 1 || part.slice(0, separator).trim() !== name) continue;
+		return part.slice(separator + 1).trim();
+	}
+	return "";
 }

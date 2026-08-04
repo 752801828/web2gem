@@ -56,6 +56,9 @@ class FakeStore implements BrowserAccountStore {
 		this.calls.push("getEncryptedCredentials");
 		return this.encrypted;
 	}
+	async getSessionCookie() {
+		return null;
+	}
 	async tryAcquireLease() {
 		return false;
 	}

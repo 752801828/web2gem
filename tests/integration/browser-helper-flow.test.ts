@@ -137,7 +137,9 @@ describe("browser helper recovery flow", () => {
 				const path = new URL(request.url).pathname;
 				captures.push(`${request.method} ${path} ${response.status}`);
 				const body = await response.clone().text();
-				if (response.ok && path.endsWith("/credentials"))
+				if (response.ok && path.endsWith("/session-cookie")) {
+					// This private response intentionally transports the stored CK to the helper.
+				} else if (response.ok && path.endsWith("/credentials"))
 					privilegedCaptures.push(body);
 				else captures.push(body);
 				return response;
@@ -234,7 +236,13 @@ describe("browser helper recovery flow", () => {
 					browser: {
 						async startHeadless() {
 							const job = ++jobNumber;
-							return { pages: () => [{ job }] };
+							return {
+								pages: () => [{ job }],
+								async cookies() {
+									return [];
+								},
+								async addCookies() {},
+							};
 						},
 						async startVisible() {
 							throw new Error("unexpected visible browser");

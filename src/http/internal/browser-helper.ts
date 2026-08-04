@@ -114,6 +114,16 @@ export async function handleBrowserHelperRequest(
 				emailHash: credentials.emailHash,
 			});
 		}
+		if (route.kind === "sessionCookie") {
+			const session = await browserStore(env).getSessionCookie(accountId);
+			if (!session)
+				throw new BrowserHelperError(
+					404,
+					"browser_account_not_found",
+					"browser account session not found",
+				);
+			return jsonResponse(session);
+		}
 
 		const body = await readBody(request);
 		if (route.kind === "acquireLease") {
@@ -212,6 +222,7 @@ type BrowserHelperRoute =
 				| "acquireLease"
 				| "releaseLease"
 				| "credentials"
+				| "sessionCookie"
 				| "state"
 				| "autoLoginAttempt"
 				| "candidateCookie";
@@ -241,6 +252,8 @@ function browserHelperRoute(
 		return { kind: "releaseLease", accountId };
 	if (action === "credentials" && method === "GET")
 		return { kind: "credentials", accountId };
+	if (action === "session-cookie" && method === "GET")
+		return { kind: "sessionCookie", accountId };
 	if (action === "state" && method === "PATCH")
 		return { kind: "state", accountId };
 	if (action === "auto-login-attempt" && method === "POST")

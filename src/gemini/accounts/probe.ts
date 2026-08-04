@@ -10,6 +10,10 @@ import { log, nowSec } from "../../shared/logging";
 import { geminiOrigin } from "../cache";
 import { extractWrbInnerPayloads } from "../client/parse-envelope";
 import { GEMINI_WEB_USER_AGENT } from "../client/protocol";
+import {
+	configWithCachedGeminiBuildLabel,
+	refreshGeminiBuildLabelForRetry,
+} from "../client/retry";
 import { cancelResponseBody, httpFetch } from "../transport/http";
 import { getFreshPageTokensForConfig } from "../uploads/tokens";
 import type { GeminiAccountIssue } from "./domain";
@@ -59,7 +63,21 @@ export async function verifyGeminiAccount(input: {
 	if (!at) return { ok: false, reason: "missing_page_at_token" };
 	if (input.level === "session") return { ok: true };
 	try {
-		const probe = await fetchGeminiAccountProbe(input.config, at);
+		let activeConfig = await configWithCachedGeminiBuildLabel(input.config);
+		let probe: GeminiAccountProbe;
+		try {
+			probe = await fetchGeminiAccountProbe(activeConfig, at);
+		} catch (firstError) {
+			const refreshed = await refreshGeminiBuildLabelForRetry(
+				input.config,
+				activeConfig,
+				false,
+				"Gemini account status probe",
+			);
+			if (!refreshed) throw firstError;
+			activeConfig = refreshed;
+			probe = await fetchGeminiAccountProbe(activeConfig, at);
+		}
 		return { ok: true, probe };
 	} catch (error) {
 		log(
@@ -144,7 +162,7 @@ function decodeGeminiAccountProbe(raw: unknown): GeminiAccountProbe {
 function accountStatus(
 	statusCode: number,
 ): { issue: GeminiAccountIssue | null } | null {
-	if (statusCode === 1000) return { issue: null };
+	if (statusCode === 0 || statusCode === 1000) return { issue: null };
 	if (statusCode === 1014) return { issue: "transient" };
 	if (statusCode === 1016) return { issue: "auth" };
 	if ([1021, 1033, 1040, 1042, 1054, 1057].includes(statusCode))

@@ -329,6 +329,16 @@ export function createBrowserScheduler(config, dependencies) {
 				: browser.startHeadless(account.id));
 			opened = true;
 			assertLeaseActive();
+			const hasStoredSession = await restoreStoredSession(
+				context,
+				client,
+				account.id,
+				nowMs,
+				job.mode === "visible" &&
+					account.status.failureCode ===
+						"browser_cookie_verification_failed",
+			);
+			assertLeaseActive();
 			const page = await activePage(context);
 			const loginInput = {
 				accountId: account.id,
@@ -390,7 +400,8 @@ export function createBrowserScheduler(config, dependencies) {
 						...loginInput,
 						credentials: undefined,
 						identityEmail:
-							job.mode === "visible" && account.status.credentialsConfigured
+							(job.mode === "visible" || hasStoredSession) &&
+							account.status.credentialsConfigured
 								? (await loadCredentials()).email
 								: null,
 					});
@@ -484,7 +495,8 @@ export function createBrowserScheduler(config, dependencies) {
 				jobAbort.signal.reason?.code !== "job_cancelled"
 			) {
 				const code =
-					error instanceof BrowserMaintenanceError
+					error instanceof BrowserMaintenanceError ||
+					typeof error?.code === "string"
 						? safeFailureCode(error.code)
 						: "maintenance_failed";
 				const update = statusUpdate(account, {
@@ -599,6 +611,61 @@ async function activePage(context) {
 	if (pages?.[0]) return pages[0];
 	if (typeof context?.newPage === "function") return context.newPage();
 	throw new BrowserMaintenanceError("browser_unavailable");
+}
+
+async function restoreStoredSession(
+	context,
+	client,
+	accountId,
+	nowMs,
+	dropRejectedStoredSession = false,
+) {
+	if (typeof client?.getSessionCookie !== "function") return false;
+	if (
+		typeof context?.cookies !== "function" ||
+		typeof context?.addCookies !== "function"
+	)
+		throw new BrowserMaintenanceError("browser_unavailable");
+	const current = await context.cookies("https://gemini.google.com");
+	const has = (name) =>
+		current.some(
+			(cookie) =>
+				cookie?.name === name &&
+				typeof cookie.value === "string" &&
+				cookie.value,
+		);
+	const complete = has("__Secure-1PSID") && has("__Secure-1PSIDTS");
+	if (complete && !dropRejectedStoredSession) return true;
+	const stored = await client.getSessionCookie(accountId);
+	const value = (name) =>
+		current.find((cookie) => cookie?.name === name)?.value || "";
+	const matchesStored =
+		value("__Secure-1PSID") === stored.psid &&
+		value("__Secure-1PSIDTS") === stored.psidts;
+	if (dropRejectedStoredSession && (!complete || matchesStored)) {
+		if (typeof context.clearCookies !== "function")
+			throw new BrowserMaintenanceError("browser_unavailable");
+		await context.clearCookies({
+			name: /^(?:__Secure-1PSID|__Secure-1PSIDTS)$/,
+			domain: /(?:^|\.)google\.com$/,
+		});
+		return false;
+	}
+	if (complete) return true;
+	const expires = Math.floor(nowMs / 1_000) + 30 * 24 * 60 * 60;
+	await context.addCookies(
+		["psid", "psidts"].map((field) => ({
+			name: field === "psid" ? "__Secure-1PSID" : "__Secure-1PSIDTS",
+			value: stored[field],
+			domain: ".google.com",
+			path: "/",
+			secure: true,
+			httpOnly: true,
+			sameSite: "Lax",
+			expires,
+		})),
+	);
+	return true;
 }
 
 function attemptsToday(account, date) {

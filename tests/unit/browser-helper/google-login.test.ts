@@ -163,6 +163,114 @@ describe("bounded Google login", () => {
 		assert.deepEqual(cookieCalls, [[]]);
 	});
 
+	test("rotates a persistent PSID once when Google delays PSIDTS", async () => {
+		let cookies = [
+			{ domain: ".google.com", name: "__Secure-1PSID", value: "psid" },
+		];
+		const rotations: unknown[][] = [];
+		const persisted: Array<Array<{ name: string; expires: number }>> = [];
+		let disposals = 0;
+		const adapter = createPlaywrightPageAdapter({
+			url: () => urls.authenticated,
+			locator: (selector: string) => {
+				const locator = {
+					first: () => locator,
+					isVisible: async () => selector.includes("[data-email]"),
+				};
+				return locator;
+			},
+			context: () => ({
+				cookies: async () => cookies,
+				addCookies: async (
+					values: Array<{ name: string; expires: number }>,
+				) => {
+					persisted.push(values);
+					for (const value of values) {
+						cookies = cookies.filter((cookie) => cookie.name !== value.name);
+						cookies.push({
+							domain: ".google.com",
+							name: value.name,
+							value: value.name === "__Secure-1PSIDTS" ? "psidts" : "psid",
+						});
+					}
+				},
+				request: {
+					async post(...args: unknown[]) {
+						rotations.push(args);
+						return {
+							status: () => 200,
+							headersArray: () => [
+								{
+									name: "set-cookie",
+									value:
+										"__Secure-1PSIDTS=psidts; Domain=.google.com; Secure; HttpOnly",
+								},
+							],
+							async dispose() {
+								disposals += 1;
+							},
+						};
+					},
+				},
+			}),
+		});
+
+		assert.equal(await adapter.sessionAuthenticated(), true);
+		assert.equal(await adapter.sessionAuthenticated(), true);
+		assert.equal(rotations.length, 1);
+		assert.equal(
+			rotations[0]?.[0],
+			"https://accounts.google.com/RotateCookies",
+		);
+		const rotationOptions = rotations[0]?.[1] as { data?: unknown };
+		assert.equal(Buffer.isBuffer(rotationOptions.data), true);
+		assert.equal(
+			(rotationOptions.data as Buffer).toString("utf8"),
+			'[000,"-0000000000000000000"]',
+		);
+		assert.equal(disposals, 1);
+		assert.deepEqual(
+			persisted.map((batch) => batch.map((cookie) => cookie.name)),
+			[
+				["__Secure-1PSID"],
+				["__Secure-1PSIDTS"],
+				["__Secure-1PSID", "__Secure-1PSIDTS"],
+				["__Secure-1PSID", "__Secure-1PSIDTS"],
+			],
+		);
+		assert.equal(
+			persisted
+				.filter((_, index) => index !== 1)
+				.every((batch) =>
+					batch.every((cookie) => cookie.expires > Date.now() / 1_000),
+				),
+			true,
+		);
+	});
+
+	test("submits a complete restored session without navigating Gemini", async () => {
+		let navigations = 0;
+		const result = await runGoogleLogin({
+			page: {
+				context: () => ({}),
+				visible: async () => false,
+				sessionAuthenticated: async () => true,
+				gotoGemini: async () => {
+					navigations += 1;
+				},
+				cookies: async () => [
+					{ name: "__Secure-1PSID", value: "psid-value" },
+					{ name: "__Secure-1PSIDTS", value: "psidts-value" },
+				],
+				observedEmail: async () => "owner@example.com",
+			},
+			identityEmail: "owner@example.com",
+		});
+
+		assert.equal(result.ok, true);
+		assert.equal(navigations, 0);
+	});
+
 	test("stops authentication observation when aborted", async () => {
 		const controller = new AbortController();
 		controller.abort(new Error("observation stopped"));

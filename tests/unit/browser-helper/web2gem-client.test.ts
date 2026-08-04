@@ -44,6 +44,7 @@ describe("private web2gem client", () => {
 				nonce: "YWFhYWFhYWFhYWFh",
 				emailHash: "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
 			},
+			{ psid: "stored-psid", psidts: "stored-psidts" },
 			{ updated: true },
 			{ updated: false },
 			{ changed: false, state: "ready", lastCookieUpdateAtMs: null },
@@ -64,6 +65,10 @@ describe("private web2gem client", () => {
 			{ reserved: true, count: 2 },
 		);
 		await client.getEncryptedCredentials("account a");
+		assert.deepEqual(await client.getSessionCookie("account a"), {
+			psid: "stored-psid",
+			psidts: "stored-psidts",
+		});
 		await client.patchState("account a", {
 			state: "ready",
 			lastCheckAtMs: 1,
@@ -128,6 +133,13 @@ describe("private web2gem client", () => {
 					true,
 				],
 				[
+					"http://web2gem:52389/internal/browser/accounts/account%20a/session-cookie",
+					"GET",
+					"Bearer test-internal-token",
+					"error",
+					true,
+				],
+				[
 					"http://web2gem:52389/internal/browser/accounts/account%20a/state",
 					"PATCH",
 					"Bearer test-internal-token",
@@ -150,7 +162,7 @@ describe("private web2gem client", () => {
 				],
 			],
 		);
-		assert.deepEqual(JSON.parse(String(requests[6]?.init.body)), {
+		assert.deepEqual(JSON.parse(String(requests[7]?.init.body)), {
 			expectedState: "ready",
 			notificationState: "ready",
 		});

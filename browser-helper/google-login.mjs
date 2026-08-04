@@ -4,6 +4,9 @@ const GEMINI_URL = "https://gemini.google.com/app";
 const GEMINI_ORIGIN = "https://gemini.google.com";
 const ACCOUNTS_ORIGIN = "https://accounts.google.com";
 const GOOGLE_ORIGIN = "https://www.google.com";
+const ROTATE_COOKIES_URL = "https://accounts.google.com/RotateCookies";
+const ROTATE_COOKIES_BODY = '[000,"-0000000000000000000"]';
+const SESSION_COOKIE_MAX_AGE_SEC = 30 * 24 * 60 * 60;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STRUCTURED_ERROR_SELECTOR = "[data-error-code]";
 const CHALLENGES = [
@@ -54,8 +57,14 @@ export async function classifyGooglePage(page) {
 			if (await adapter.visible(challenge)) return challenge;
 		if (await adapter.visible(routeState)) return routeState;
 	}
-	if (url?.origin === GEMINI_ORIGIN && (await adapter.visible("authenticated")))
-		return "authenticated";
+	if (url?.origin === GEMINI_ORIGIN && (await adapter.visible("authenticated"))) {
+		if (
+			typeof adapter.sessionAuthenticated !== "function" ||
+			(await adapter.sessionAuthenticated())
+		)
+			return "authenticated";
+		return "unknown";
+	}
 	if (await adapter.sessionAuthenticated?.())
 		return "authenticated";
 	return "unknown";
@@ -66,10 +75,11 @@ export async function waitForGoogleAuthentication(
 	signal,
 	{ pollMs = 1_000, wait = abortableDelay } = {},
 ) {
+	const adapter = asAdapter(page);
 	for (;;) {
 		throwIfAborted(signal);
 		try {
-			if ((await classifyGooglePage(page)) === "authenticated") return;
+			if ((await classifyGooglePage(adapter)) === "authenticated") return;
 		} catch {
 			// Navigation can briefly invalidate page handles between trusted screens.
 		}
@@ -115,6 +125,15 @@ export async function runGoogleLogin({
 		}
 		submissionReserved = true;
 	};
+	try {
+		if (
+			typeof page?.context === "function" &&
+			(await adapter.sessionAuthenticated?.())
+		)
+			return await finishAuthenticated(adapter, false, identityEmail);
+	} catch (error) {
+		if (error instanceof BrowserMaintenanceError) throw error;
+	}
 	try {
 		await adapter.gotoGemini();
 	} catch {
@@ -172,6 +191,7 @@ export function createPlaywrightPageAdapter(
 	{ submissionPolls = 100, submissionPollMs = 100 } = {},
 ) {
 	let submission = null;
+	let rotationAttempted = false;
 	return {
 		url: () => page.url(),
 		async visible(state) {
@@ -282,7 +302,40 @@ export function createPlaywrightPageAdapter(
 			}
 		},
 		async sessionAuthenticated() {
-			const cookies = await this.cookies();
+			let cookies = await this.cookies();
+			const context = page.context();
+			await persistGeminiSessionCookies(context, cookies);
+			if (
+				cookieValue(cookies, "__Secure-1PSID") &&
+				!cookieValue(cookies, "__Secure-1PSIDTS") &&
+				!rotationAttempted
+			) {
+				rotationAttempted = true;
+				try {
+					const response = await context.request.post(ROTATE_COOKIES_URL, {
+						headers: {
+							"Content-Type": "application/json",
+							Origin: ACCOUNTS_ORIGIN,
+							Referer: `${ACCOUNTS_ORIGIN}/`,
+						},
+						data: Buffer.from(ROTATE_COOKIES_BODY),
+						timeout: 30_000,
+					});
+					try {
+						const rotated = rotatedPsidtsCookie(response);
+						console.log(
+							`[browser-helper] google cookie rotation status=${response.status()} psidts=${Boolean(rotated)}`,
+						);
+						if (rotated) await context.addCookies([rotated]);
+					} finally {
+						await response.dispose();
+					}
+				} catch {
+					return false;
+				}
+				cookies = await this.cookies();
+				await persistGeminiSessionCookies(context, cookies);
+			}
 			return Boolean(
 				cookieValue(cookies, "__Secure-1PSID") &&
 					cookieValue(cookies, "__Secure-1PSIDTS"),
@@ -438,6 +491,41 @@ function cookieValue(cookies, name) {
 		? cookies.find((cookie) => cookie?.name === name)?.value
 		: undefined;
 	return typeof value === "string" && value ? value : null;
+}
+
+function rotatedPsidtsCookie(response) {
+	const header = response
+		.headersArray?.()
+		.find(
+			({ name, value }) =>
+				name.toLowerCase() === "set-cookie" &&
+				value.startsWith("__Secure-1PSIDTS="),
+		)?.value;
+	const value = header?.slice("__Secure-1PSIDTS=".length).split(";", 1)[0];
+	return value
+		? {
+				name: "__Secure-1PSIDTS",
+				value,
+				domain: ".google.com",
+				path: "/",
+				secure: true,
+				httpOnly: true,
+			}
+		: null;
+}
+
+async function persistGeminiSessionCookies(context, cookies) {
+	if (typeof context?.addCookies !== "function") return;
+	const expires = Math.floor(Date.now() / 1_000) + SESSION_COOKIE_MAX_AGE_SEC;
+	const persistent = cookies
+		.filter(
+			(cookie) =>
+				(cookie?.name === "__Secure-1PSID" ||
+					cookie?.name === "__Secure-1PSIDTS") &&
+				cookie.value,
+		)
+		.map((cookie) => ({ ...cookie, expires: Math.max(cookie.expires || 0, expires) }));
+	if (persistent.length) await context.addCookies(persistent);
 }
 
 function reliableEmail(value) {

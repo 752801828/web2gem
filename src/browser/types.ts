@@ -89,6 +89,11 @@ export type BrowserStatusUpdate = {
 	nowMs: number;
 };
 
+export type BrowserSessionCookie = {
+	psid: string;
+	psidts: string;
+};
+
 export interface BrowserAccountStore {
 	listScheduled(nowMs: number): Promise<BrowserScheduleAccount[]>;
 	getStatus(accountId: string): Promise<BrowserAccountStatus | null>;
@@ -101,6 +106,7 @@ export interface BrowserAccountStore {
 	getEncryptedCredentials(
 		accountId: string,
 	): Promise<EncryptedBrowserCredentials | null>;
+	getSessionCookie(accountId: string): Promise<BrowserSessionCookie | null>;
 	tryAcquireLease(
 		accountId: string,
 		owner: string,

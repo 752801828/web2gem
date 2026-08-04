@@ -155,6 +155,14 @@ export function createWeb2gemClient(config, options = {}) {
 				isCredentialEnvelope,
 			);
 		},
+		getSessionCookie(accountId) {
+			return call(
+				"GET",
+				accountPath(accountId, "session-cookie"),
+				undefined,
+				isSessionCookie,
+			);
+		},
 		async patchState(accountId, state) {
 			await call(
 				"PATCH",
@@ -238,6 +246,24 @@ function invalidResponse(status) {
 		status || 502,
 		"web2gem_invalid_response",
 		"web2gem returned an invalid response",
+	);
+}
+
+function isSessionCookie(value) {
+	return (
+		plainObject(value) &&
+		Object.keys(value).length === 2 &&
+		validCookieValue(value.psid) &&
+		validCookieValue(value.psidts)
+	);
+}
+
+function validCookieValue(value) {
+	return (
+		typeof value === "string" &&
+		value.length > 0 &&
+		value.length <= 4_096 &&
+		!/[;=\s]/.test(value)
 	);
 }
 

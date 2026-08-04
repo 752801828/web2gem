@@ -154,6 +154,16 @@ describe("Gemini account probe decoding", () => {
 		});
 	});
 
+	test("accepts Gemini's current zero status as selectable", async () => {
+		const result = await verifyWithProbeResponse(
+			accountProbeWrb(0, [["model-pro", "Pro", "description"]]),
+		);
+		assert.equal(result.ok, true);
+		if (!result.ok) throw new Error("expected zero-status probe success");
+		assert.equal(requireProbe(result).statusCode, 0);
+		assert.equal(requireProbe(result).issue, null);
+	});
+
 	test("rejects unknown statuses and maps an authentication restriction", async () => {
 		const unknown = await verifyWithProbeResponse(accountProbeWrb(9999));
 		assert.equal(unknown.ok, false);

@@ -3,6 +3,7 @@ import { lstat, rm } from "node:fs/promises";
 import http from "node:http";
 import { Readable } from "node:stream";
 import { profilePathForAccount } from "./chromium.mjs";
+import { createPlaywrightPageAdapter } from "./google-login.mjs";
 
 const MAX_BODY_BYTES = 64 * 1_024;
 const ACCOUNT_ID = "([^/]+)";
@@ -82,7 +83,12 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 	const clearSubmissionTimer = dependencies?.clearSubmissionTimer || clearTimeout;
 	const prepareVisiblePage =
 		dependencies?.prepareVisiblePage ||
-		((page) => page.goto("https://gemini.google.com/app", { waitUntil: "domcontentloaded" }));
+		(async (page) => {
+			if (await createPlaywrightPageAdapter(page).sessionAuthenticated()) return;
+			return page.goto("https://gemini.google.com/app", {
+				waitUntil: "domcontentloaded",
+			});
+		});
 	const trackActivity = dependencies?.trackActivity || installPageActivityTracking;
 	const waitForAuthentication =
 		dependencies?.waitForAuthentication || (() => new Promise(() => {}));
