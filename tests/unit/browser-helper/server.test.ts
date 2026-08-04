@@ -303,6 +303,45 @@ describe("visible browser sessions", () => {
 		assert.deepEqual(calls, ["novnc-start", "final-check", "novnc-stop"]);
 	});
 
+	test("keeps an already authenticated visible session open until stopped", async () => {
+		let finalChecks = 0;
+		let observations = 0;
+		let coordinator: ReturnType<typeof createVisibleSessionCoordinator>;
+		coordinator = createVisibleSessionCoordinator(
+			{ visibleIdleTimeoutSec: 60 },
+			{
+				scheduler: {
+					async enqueue(job: { accountId: string; mode: string }) {
+						const signal = new AbortController().signal;
+						await coordinator.beforeVisibleStart(job.accountId, signal);
+						return coordinator.hold(
+							{ accountId: job.accountId, page: {}, mode: job.mode, signal },
+							async () => {
+								finalChecks += 1;
+								return { ok: true };
+							},
+						);
+					},
+				},
+				novnc: { start: async () => undefined, stop: async () => undefined },
+				prepareVisiblePage: async () => true,
+				waitForAuthentication: async () => {
+					observations += 1;
+				},
+				setTimer: () => ({}) as ReturnType<typeof setTimeout>,
+				clearTimer: () => undefined,
+				trackActivity: async () => undefined,
+			},
+		);
+		await coordinator.open("account-a");
+		assert.equal(coordinator.isActive("account-a"), true);
+		assert.equal(finalChecks, 0);
+		assert.equal(observations, 0);
+		await coordinator.stop();
+		assert.equal(finalChecks, 1);
+		assert.equal(coordinator.isActive("account-a"), false);
+	});
+
 	test("tries supplied credentials before waiting for manual authentication", async () => {
 		let finalChecks = 0;
 		let observations = 0;

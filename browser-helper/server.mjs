@@ -84,10 +84,12 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 	const prepareVisiblePage =
 		dependencies?.prepareVisiblePage ||
 		(async (page) => {
-			if (await createPlaywrightPageAdapter(page).sessionAuthenticated()) return;
-			return page.goto("https://gemini.google.com/app", {
+			if (await createPlaywrightPageAdapter(page).sessionAuthenticated())
+				return true;
+			await page.goto("https://gemini.google.com/app", {
 				waitUntil: "domcontentloaded",
 			});
+			return false;
 		});
 	const trackActivity = dependencies?.trackActivity || installPageActivityTracking;
 	const waitForAuthentication =
@@ -253,7 +255,12 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 				},
 			});
 			try {
-				const preparation = Promise.resolve(prepareVisiblePage(input.page));
+				let initiallyAuthenticated = false;
+				const preparation = Promise.resolve(prepareVisiblePage(input.page)).then(
+					(value) => {
+						initiallyAuthenticated = value === true;
+					},
+				);
 				const prepared = await Promise.race([
 					preparation.then(() => "ready"),
 					session.stop.promise.then(() => "stop"),
@@ -267,16 +274,20 @@ export function createVisibleSessionCoordinator(config, dependencies) {
 					const automatic = await finalCheck(input);
 					if (automatic?.ok) return automatic;
 				}
-				let outcome = await Promise.race([
+				const waits = [
 					session.stop.promise.then(() => "stop"),
 					jobAbort.promise.then(() => "abort"),
-					Promise.resolve(
-						waitForAuthentication(input.page, authenticationObserver.signal),
-					).then(
-						() => "authenticated",
-						() => "observer_ended",
-					),
-				]);
+				];
+				if (!initiallyAuthenticated)
+					waits.push(
+						Promise.resolve(
+							waitForAuthentication(input.page, authenticationObserver.signal),
+						).then(
+							() => "authenticated",
+							() => "observer_ended",
+						),
+					);
+				let outcome = await Promise.race(waits);
 				if (outcome === "observer_ended")
 					outcome = await Promise.race([
 						session.stop.promise.then(() => "stop"),
