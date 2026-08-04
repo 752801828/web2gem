@@ -221,6 +221,51 @@ describe("Gemini upload tokens", () => {
 		);
 		assert.equal(appCalls, 2);
 	});
+	test("carries Google response cookies across Gemini app redirects", async () => {
+		const cfg = baseUploadConfig({ cookie: "__Secure-1PSID=psid" });
+		const seenCookies: string[] = [];
+		let finalCookie = "";
+		let appCalls = 0;
+		await withFetch(
+			async (url: RequestInfo | URL, init = {} as FetchInit) => {
+				const href = String(url);
+				seenCookies.push(init.headers.Cookie || "");
+				if (href === "https://gemini.example/app" && appCalls++ === 0)
+					return new Response(null, {
+						status: 302,
+						headers: { location: "https://gemini.example/sorry" },
+					});
+				if (href === "https://gemini.example/sorry")
+					return new Response(null, {
+						status: 302,
+						headers: {
+							location: "https://gemini.example/app",
+							"set-cookie": "GOOGLE_ABUSE_EXEMPTION=allowed; Path=/; Secure",
+						},
+					});
+				if (href === "https://gemini.example/app")
+					return new Response('{"qKIAYe":"push-current"}', { status: 200 });
+				throw new Error(`unexpected fetch ${href}`);
+			},
+			async () => {
+				assert.deepEqual(
+					await getFreshPageTokensForConfig(cfg, (cookie) => {
+						finalCookie = cookie;
+					}),
+					{ push_id: "push-current" },
+				);
+			},
+		);
+		assert.deepEqual(seenCookies, [
+			"__Secure-1PSID=psid",
+			"__Secure-1PSID=psid",
+			"__Secure-1PSID=psid; GOOGLE_ABUSE_EXEMPTION=allowed",
+		]);
+		assert.equal(
+			finalCookie,
+			"__Secure-1PSID=psid; GOOGLE_ABUSE_EXEMPTION=allowed",
+		);
+	});
 	test("observes managed account cookies from app page responses", async () => {
 		const observed: string[][] = [];
 		const base = accountUploadConfig("observed", "hash-observed");

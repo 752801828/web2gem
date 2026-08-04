@@ -235,10 +235,24 @@ describe("Gemini account probe decoding", () => {
 		assert.deepEqual(requireProbe(result).models, []);
 	});
 
-	test("fails when the app page lacks a usable at token", async () => {
+	test("probes current Gemini accounts when the app page omits the legacy at token", async () => {
 		const result = await verifyWithProbeResponse(accountProbeWrb(1000), {
 			appHtml: "<html>no token</html>",
 		});
+		assert.equal(result.ok, true);
+		if (!result.ok) throw new Error("expected tokenless status probe success");
+		assert.equal(requireProbe(result).statusCode, 1000);
+	});
+
+	test("still requires a page marker for session-only verification", async () => {
+		const cfg = baseGeminiClientConfig({
+			cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+			gemini_origin: "https://gemini.example",
+		});
+		const result = await withFetch(
+			async () => new Response("<html>no token</html>", { status: 200 }),
+			() => verifyGeminiAccount({ config: cfg, level: "session" }),
+		);
 		assert.equal(result.ok, false);
 		if (result.ok) throw new Error("expected missing token failure");
 		assert.equal(result.reason, "missing_page_at_token");

@@ -5,6 +5,7 @@ type HttpBodyInit = BodyInit | ArrayBufferView;
 type HttpFetchOptions = {
 	method?: string;
 	headers?: Record<string, string>;
+	redirect?: RequestRedirect;
 	body?: HttpBodyInit | null | undefined;
 	bodyLength?: number | null | undefined;
 	timeoutMs?: number;
@@ -18,6 +19,7 @@ export async function httpFetch(
 	{
 		method = "GET",
 		headers = {},
+		redirect,
 		body,
 		timeoutMs = 180000,
 		signal,
@@ -27,6 +29,7 @@ export async function httpFetch(
 	const linked = linkedFetchSignal(signal, timeoutSignal(timeoutMs));
 	try {
 		const init: RequestInit = { method, headers };
+		if (redirect) init.redirect = redirect;
 		if (body !== undefined) init.body = body as BodyInit;
 		if (body instanceof ReadableStream)
 			(init as RequestInit & { duplex?: "half" }).duplex = "half";

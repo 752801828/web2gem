@@ -58,18 +58,27 @@ export async function verifyGeminiAccount(input: {
 	config: RuntimeConfig;
 	level: GeminiAccountVerificationLevel;
 }): Promise<GeminiAccountVerificationResult> {
-	const tokens = await getFreshPageTokensForConfig(input.config);
+	let pageCookie = input.config.cookie || "";
+	const tokens = await getFreshPageTokensForConfig(input.config, (cookie) => {
+		pageCookie = cookie;
+	});
 	const at = typeof tokens.at === "string" ? tokens.at.trim() : "";
-	if (!at) return { ok: false, reason: "missing_page_at_token" };
-	if (input.level === "session") return { ok: true };
+	if (input.level === "session")
+		return at || tokens.push_id
+			? { ok: true }
+			: { ok: false, reason: "missing_page_at_token" };
 	try {
-		let activeConfig = await configWithCachedGeminiBuildLabel(input.config);
+		const pageConfig =
+			pageCookie && pageCookie !== input.config.cookie
+				? { ...input.config, cookie: pageCookie }
+				: input.config;
+		let activeConfig = await configWithCachedGeminiBuildLabel(pageConfig);
 		let probe: GeminiAccountProbe;
 		try {
 			probe = await fetchGeminiAccountProbe(activeConfig, at);
 		} catch (firstError) {
 			const refreshed = await refreshGeminiBuildLabelForRetry(
-				input.config,
+				pageConfig,
 				activeConfig,
 				false,
 				"Gemini account status probe",
@@ -111,17 +120,17 @@ async function fetchGeminiAccountProbe(
 	};
 	if (cfg.cookie) headers.Cookie = cfg.cookie;
 	const body = new URLSearchParams({
-		at,
 		"f.req": JSON.stringify([
 			[[GET_USER_STATUS_RPC_ID, "[]", null, "generic"]],
 		]),
-	}).toString();
+	});
+	if (at) body.set("at", at);
 	const response = await httpFetch(
 		`${origin}/_/BardChatUi/data/batchexecute?${params}`,
 		{
 			method: "POST",
 			headers,
-			body,
+			body: body.toString(),
 			timeoutMs: Math.min(
 				Math.max(Number(cfg.request_timeout_sec) || 30, 1) * 1000,
 				30000,

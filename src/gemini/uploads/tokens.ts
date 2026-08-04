@@ -12,9 +12,10 @@ import { createOriginScopedStringCache, geminiOrigin } from "../cache";
 import { GEMINI_WEB_USER_AGENT } from "../client/protocol";
 import {
 	configWithFreshGeminiCookie,
+	mergeSetCookieHeaders,
 	observeGeminiAccountResponseCookies,
 } from "../cookies";
-import { httpFetch } from "../transport/http";
+import { cancelResponseBody, httpFetch } from "../transport/http";
 import { contentPushUploadError } from "./errors";
 
 type PageTokens = GeminiAppPageTokens;
@@ -30,6 +31,7 @@ let _pageTokensPending: PageTokenPending = { key: "", promise: null };
 
 const PAGE_TOKEN_CACHE_TTL_MS = 600000;
 const EMPTY_PAGE_TOKEN_CACHE_TTL_MS = 30000;
+const MAX_APP_PAGE_REDIRECTS = 10;
 const pushIdCache = createOriginScopedStringCache({
 	cachePrefix: "https://internal-cache/gemini-push-id/",
 	ttlSec: GEMINI_PUSH_ID_CACHE_TTL_SEC,
@@ -94,19 +96,64 @@ async function getPageTokensForConfig(
 
 export async function getFreshPageTokensForConfig(
 	activeCfg: RuntimeConfig,
+	onCookie?: (cookie: string) => void,
 ): Promise<PageTokens> {
-	const headers: Record<string, string> = {
-		"User-Agent": GEMINI_WEB_USER_AGENT,
-		"Accept-Language": "en-US,en;q=0.9",
-	};
-	if (activeCfg.cookie) headers.Cookie = activeCfg.cookie;
-	const resp = await httpFetch(`${geminiOrigin(activeCfg)}/app`, {
-		headers,
-		timeoutMs: 30000,
-		cfg: activeCfg,
-	});
-	observeGeminiAccountResponseCookies(activeCfg, resp);
-	return extractGeminiAppPageTokens(resp);
+	const page = await fetchGeminiAppPage(activeCfg);
+	onCookie?.(page.cookie);
+	return extractGeminiAppPageTokens(page.response);
+}
+
+async function fetchGeminiAppPage(
+	activeCfg: RuntimeConfig,
+): Promise<{ response: Response; cookie: string }> {
+	const origin = geminiOrigin(activeCfg);
+	let url = `${origin}/app`;
+	let cookie = activeCfg.cookie || "";
+	for (
+		let redirectCount = 0;
+		redirectCount <= MAX_APP_PAGE_REDIRECTS;
+		redirectCount += 1
+	) {
+		const headers: Record<string, string> = {
+			"User-Agent": GEMINI_WEB_USER_AGENT,
+			"Accept-Language": "en-US,en;q=0.9",
+		};
+		if (cookie) headers.Cookie = cookie;
+		const response = await httpFetch(url, {
+			headers,
+			redirect: "manual",
+			timeoutMs: 30000,
+			cfg: activeCfg,
+		});
+		observeGeminiAccountResponseCookies(activeCfg, response);
+		cookie = mergeSetCookieHeaders(cookie, response.headers.getSetCookie());
+		const location = response.headers.get("location");
+		if (response.status < 300 || response.status >= 400 || !location)
+			return { response, cookie };
+		if (redirectCount === MAX_APP_PAGE_REDIRECTS) {
+			await cancelResponseBody(response);
+			throw new Error("Gemini app page exceeded redirect limit");
+		}
+		const target = new URL(location, url);
+		if (!allowedGeminiAppRedirect(origin, target)) {
+			await cancelResponseBody(response);
+			throw new Error("Gemini app page redirected outside Google");
+		}
+		await cancelResponseBody(response);
+		url = target.href;
+	}
+	throw new Error("Gemini app page exceeded redirect limit");
+}
+
+function allowedGeminiAppRedirect(origin: string, target: URL): boolean {
+	const source = new URL(origin);
+	if (target.origin === source.origin) return true;
+	return (
+		target.protocol === "https:" &&
+		source.hostname.endsWith(".google.com") &&
+		(target.hostname === "google.com" ||
+			target.hostname.endsWith(".google.com"))
+	);
 }
 
 async function pageTokenCacheKey(cfg: RuntimeConfig): Promise<string> {
@@ -175,18 +222,8 @@ function validGeminiPushId(value: unknown): string {
 async function fetchFreshGeminiPushId(cfg: RuntimeConfig): Promise<string> {
 	const activeCfg = await configWithFreshGeminiCookie(cfg);
 	try {
-		const headers: Record<string, string> = {
-			"User-Agent": GEMINI_WEB_USER_AGENT,
-			"Accept-Language": "en-US,en;q=0.9",
-		};
-		if (activeCfg.cookie) headers.Cookie = activeCfg.cookie;
-		const resp = await httpFetch(`${geminiOrigin(activeCfg)}/app`, {
-			headers,
-			timeoutMs: 30000,
-			cfg: activeCfg,
-		});
-		observeGeminiAccountResponseCookies(activeCfg, resp);
-		const pushId = validGeminiPushId(await extractGeminiPushId(resp));
+		const page = await fetchGeminiAppPage(activeCfg);
+		const pushId = validGeminiPushId(await extractGeminiPushId(page.response));
 		if (!pushId) {
 			log(
 				activeCfg,
