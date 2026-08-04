@@ -70,6 +70,14 @@ export async function handleGeminiAccountAdminRequest(
 				const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
 				return jsonResponse(await service.replaceCookie(resource.id, body));
 			}
+			if (method === "GET" && resource.action === "cookie") {
+				assertNoAdminQueryParams(url.searchParams);
+				assertAdminBodyAbsent(request);
+				const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
+				return jsonResponse(await service.cookie(resource.id), 200, {
+					"Cache-Control": "no-store",
+				});
+			}
 			if (method === "DELETE" && resource.action === null) {
 				assertNoAdminQueryParams(url.searchParams);
 				assertAdminBodyAbsent(request);

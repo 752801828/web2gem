@@ -2,9 +2,7 @@ import { useComputed } from "@preact/signals";
 import type { JSX } from "preact";
 import {
 	checkBrowserForAccount,
-	clearBrowserLogin,
 	deleteBrowserProfile,
-	openBrowserCredentials,
 	openBrowserForAccount,
 	openCookieEditor,
 	openEdit,
@@ -30,19 +28,6 @@ export function BrowserAccountSummary({
 	return (
 		<div class="browser-summary">
 			<div class="browser-summary-badges">
-				<span
-					class={`badge ${
-						account.browser.credentialsConfigured
-							? "browser-configured"
-							: "browser-unconfigured"
-					}`}
-				>
-					{tr(
-						account.browser.credentialsConfigured
-							? "Configured"
-							: "Not configured",
-					)}
-				</span>
 				<span class={`badge browser-state-${account.browser.state}`}>
 					{tr(account.browser.state)}
 				</span>
@@ -105,22 +90,6 @@ export function AccountActions({
 						onClick={() => openCookieEditor(account)}
 					>
 						{tr("Edit CK")}
-					</button>
-					<button
-						type="button"
-						disabled={!!busy}
-						aria-label={actionAriaLabel(tr("Configure login"))}
-						onClick={() => openBrowserCredentials(account)}
-					>
-						{tr("Configure login")}
-					</button>
-					<button
-						type="button"
-						disabled={!!busy || !account.browser.credentialsConfigured}
-						aria-label={actionAriaLabel(tr("Clear credentials"))}
-						onClick={() => void clearBrowserLogin(account)}
-					>
-						{tr("Clear credentials")}
 					</button>
 					<button
 						type="button"

@@ -7,11 +7,13 @@ const LANGUAGE_STORAGE_KEY = "web2gem_admin_language";
 const zh = {
 	"Edit CK": "编辑 CK",
 	"Cookie editor help":
-		"填写两个 Cookie 的值（不要包含名称或 Cookie: 前缀）。保存前会先验证，旧值不会显示或写入日志。",
+		"当前值仅在此弹窗中显示。可直接修改；不要包含 Cookie 名称或 Cookie: 前缀，保存前会先验证。",
 	"Save CK": "保存并验证 CK",
 	"Cookie saved": "CK 已验证并保存",
 	"Failed to save cookie": "CK 验证或保存失败",
 	"Invalid CK": "CK 格式无效",
+	"Loading CK": "正在加载 CK",
+	"Failed to load cookie": "当前 CK 加载失败",
 	"Gemini Account Pool": "Gemini 账号池",
 	"Account operations console": "账号运维控制台",
 	"SQLite-backed session management": "基于 SQLite 的会话管理",

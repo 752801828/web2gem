@@ -332,6 +332,30 @@ export async function updateAccountCookie(
 	);
 }
 
+export async function getAccountCookie(
+	session: AdminApiSession,
+	accountId: string,
+): Promise<AccountCookieInput> {
+	const value = await request(
+		session,
+		`${accountResourcePath(accountId)}/cookie`,
+	);
+	if (!value || typeof value !== "object")
+		throw new Error("account CK response is invalid");
+	const record = value as Record<string, unknown>;
+	const keys = Object.keys(record);
+	if (
+		keys.length !== 2 ||
+		typeof record["__Secure-1PSID"] !== "string" ||
+		typeof record["__Secure-1PSIDTS"] !== "string"
+	)
+		throw new Error("account CK response is invalid");
+	return {
+		psid: record["__Secure-1PSID"],
+		psidts: record["__Secure-1PSIDTS"],
+	};
+}
+
 export async function runAccountAction(
 	session: AdminApiSession,
 	action: AccountAction,

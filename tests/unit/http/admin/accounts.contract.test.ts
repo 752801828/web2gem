@@ -122,6 +122,7 @@ describe("Gemini account admin HTTP contract", () => {
 					body: JSON.stringify({ label: "A" }),
 				},
 			],
+			["/admin/accounts/a/cookie", { method: "GET" }],
 			[
 				"/admin/accounts/a/cookie",
 				{

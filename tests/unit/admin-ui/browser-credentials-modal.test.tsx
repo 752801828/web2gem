@@ -3,9 +3,11 @@ import { act } from "preact/test-utils";
 import { afterEach, describe, test } from "vitest";
 import { AccountActions } from "../../../src/admin-ui/components/AccountActions";
 import { BrowserCredentialsModal } from "../../../src/admin-ui/components/BrowserCredentialsModal";
+import { CookieEditorModal } from "../../../src/admin-ui/components/CookieEditorModal";
 import { updateAdminKey } from "../../../src/admin-ui/session";
 import {
 	browserCredentialsDraft,
+	accountCookieDraft,
 	connectionVerified,
 	loading,
 	rowBusy,
@@ -285,13 +287,69 @@ describe("browser credentials modal lifecycle", () => {
 					),
 				);
 				const buttons = root.querySelectorAll("button");
-				assert.equal(buttons.length, 11);
+				assert.equal(buttons.length, 9);
+				assert.equal(
+					buttons.some((button) =>
+						/configure login|clear credentials/i.test(
+							button.attributes.get("aria-label") || "",
+						),
+					),
+					false,
+				);
 				for (const button of buttons) {
 					const label = button.attributes.get("aria-label") || "";
 					assert.equal(label.includes("Primary"), true);
 				}
 				act(() => render(null, root as unknown as Element));
 			}),
+		);
+	});
+
+	test("cookie editor displays the current CK values", async () => {
+		const document = new FakeDocument();
+		const root = document.createElement("main");
+		await withPatchedGlobal("HTMLElement", FakeElement, () =>
+			withPatchedGlobal("document", document, () =>
+				withAdminEnvironment(
+					async () =>
+						Response.json({
+							"__Secure-1PSID": "current-psid",
+							"__Secure-1PSIDTS": "current-psidts",
+						}),
+					async () => {
+						updateAdminKey("admin-secret");
+						connectionVerified.value = true;
+						accountCookieDraft.value = {
+							accountId: "account-a",
+							accountLabel: "A",
+						};
+						try {
+							act(() =>
+								render(h(CookieEditorModal, {}), root as unknown as Element),
+							);
+							await act(async () => {
+								for (let index = 0; index < 30; index += 1) {
+									if (root.querySelectorAll("input")[0]?.value) break;
+									await Promise.resolve();
+								}
+							});
+							const inputs = root.querySelectorAll("input");
+							assert.deepEqual(
+								inputs.map((input) => input.value),
+								["current-psid", "current-psidts"],
+							);
+							assert.equal(
+								inputs.every(
+									(input) => input.attributes.get("type") === "text",
+								),
+								true,
+							);
+						} finally {
+							act(() => render(null, root as unknown as Element));
+						}
+					},
+				),
+			),
 		);
 	});
 });

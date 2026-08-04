@@ -12,6 +12,23 @@ import {
 } from "./_support/store-fixtures.js";
 
 describe("Gemini account admin service mutations", () => {
+	test("returns only the two editable CK values", async () => {
+		const store = createAccountStoreDouble({
+			getAccountForRefresh: {
+				args: ["account-a"],
+				result: accountSqlRow("account-a", {
+					cookie_header:
+						"SID=hidden; __Secure-1PSID=current-p; __Secure-1PSIDTS=current-t",
+				}),
+			},
+		});
+		assert.deepEqual(await createService(store).cookie("account-a"), {
+			"__Secure-1PSID": "current-p",
+			"__Secure-1PSIDTS": "current-t",
+		});
+		store.assertDrained();
+	});
+
 	test("reports changed and unchanged updates plus a missing delete", async () => {
 		const item = accountSummary("account-a", { label: "Renamed" });
 		const store = createAccountStoreDouble({

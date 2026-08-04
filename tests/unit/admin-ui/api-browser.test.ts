@@ -4,6 +4,7 @@ import {
 	clearBrowserCredentials,
 	configureBrowserCredentials,
 	deleteAccountBrowserProfile,
+	getAccountCookie,
 	openAccountBrowser,
 	stopAccountBrowser,
 	updateAccountCookie,
@@ -112,11 +113,16 @@ describe("admin UI browser API", () => {
 		);
 	});
 
-	test("sends only the two CK values to the account cookie endpoint", async () => {
+	test("loads and updates only the two CK values", async () => {
 		const requests: RecordedRequest[] = [];
 		await withAdminFetch(
 			async (path: RequestInfo | URL, init: RequestInit = {}) => {
 				requests.push(recordedRequest(path, init));
+				if (init.method === "GET")
+					return Response.json({
+						"__Secure-1PSID": "current-psid",
+						"__Secure-1PSIDTS": "current-psidts",
+					});
 				return Response.json({
 					processed: 1,
 					changed: 1,
@@ -125,13 +131,24 @@ describe("admin UI browser API", () => {
 				});
 			},
 			async () => {
+				assert.deepEqual(
+					await getAccountCookie(uiAdminApiSession(), "account/a"),
+					{ psid: "current-psid", psidts: "current-psidts" },
+				);
 				await updateAccountCookie(uiAdminApiSession(), "account/a", {
 					psid: "new-psid",
 					psidts: "new-psidts",
 				});
 			},
 		);
-		const request = requiredValue(requests[0]);
+		assert.deepEqual(
+			requests.map(({ path, init }) => [path, init.method]),
+			[
+				["/admin/accounts/account%2Fa/cookie", "GET"],
+				["/admin/accounts/account%2Fa/cookie", "PUT"],
+			],
+		);
+		const request = requiredValue(requests[1]);
 		assert.deepEqual(
 			[request.path, request.init.method],
 			["/admin/accounts/account%2Fa/cookie", "PUT"],
@@ -140,5 +157,22 @@ describe("admin UI browser API", () => {
 			"__Secure-1PSID": "new-psid",
 			"__Secure-1PSIDTS": "new-psidts",
 		});
+	});
+
+	test("rejects extra fields in a CK read response", async () => {
+		await withAdminFetch(
+			async () =>
+				Response.json({
+					"__Secure-1PSID": "p",
+					"__Secure-1PSIDTS": "t",
+					cookieHeader: "must-not-reach-ui",
+				}),
+			async () => {
+				await assert.rejects(
+					getAccountCookie(uiAdminApiSession(), "account-a"),
+					/account CK response is invalid/,
+				);
+			},
+		);
 	});
 });

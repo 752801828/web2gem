@@ -4,7 +4,7 @@ import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
 import { mapWithConcurrency } from "../concurrency";
-import { fetchGoogleCookieRotation } from "../cookies";
+import { extractCookieValue, fetchGoogleCookieRotation } from "../cookies";
 import {
 	createInputFromAccount,
 	cookieUpdateFromBody,
@@ -177,6 +177,29 @@ export class GeminiAccountAdminService {
 			});
 		if (!result.ok) throw candidateCookieAdminError(result.code);
 		return mutationResult(1, result.changed ? 1 : 0);
+	}
+
+	async cookie(id: string): Promise<{
+		"__Secure-1PSID": string;
+		"__Secure-1PSIDTS": string;
+	}> {
+		const account = await this.store.getAccountForRefresh(id);
+		if (!account)
+			throw new GeminiAccountAdminError(
+				404,
+				"account_not_found",
+				"account not found",
+			);
+		return {
+			"__Secure-1PSID": extractCookieValue(
+				account.cookie_header,
+				"__Secure-1PSID",
+			),
+			"__Secure-1PSIDTS": extractCookieValue(
+				account.cookie_header,
+				"__Secure-1PSIDTS",
+			),
+		};
 	}
 
 	async delete(id: string): Promise<GeminiAccountMutationResult> {

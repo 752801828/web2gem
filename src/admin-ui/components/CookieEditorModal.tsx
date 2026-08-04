@@ -1,6 +1,6 @@
 import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { saveAccountCookie } from "../actions";
+import { loadAccountCookie, saveAccountCookie } from "../actions";
 import { tr } from "../i18n";
 import { accountCookieDraft } from "../state";
 import type { AccountCookieInput } from "../types";
@@ -16,11 +16,21 @@ export function CookieEditorModal(): JSX.Element | null {
 	const mounted = useRef(true);
 	const [, render] = useState(0);
 	const [busy, setBusy] = useState(false);
+	const [loading, setLoading] = useState(true);
 	useEffect(() => {
 		mounted.current = true;
+		void loadAccountCookie(draft?.accountId || "").then((cookie) => {
+			if (!mounted.current) {
+				if (cookie) Object.assign(cookie, emptyCookie());
+				return;
+			}
+			if (cookie) values.current = cookie;
+			setLoading(false);
+			render((value) => value + 1);
+		});
 		return () => {
 			mounted.current = false;
-			values.current = emptyCookie();
+			Object.assign(values.current, emptyCookie());
 		};
 	}, []);
 	if (!draft) return null;
@@ -77,17 +87,18 @@ export function CookieEditorModal(): JSX.Element | null {
 			</p>
 			<form
 				class="grid browser-credentials-form"
-				aria-busy={busy}
+				aria-busy={busy || loading}
 				onSubmit={submit}
 			>
 				<label>
 					__Secure-1PSID
 					<input
 						data-dialog-initial
-						type="password"
+						type="text"
 						autoComplete="off"
 						spellcheck={false}
 						required
+						disabled={loading}
 						value={values.current.psid}
 						onInput={(event) =>
 							update("psid", (event.currentTarget as HTMLInputElement).value)
@@ -98,10 +109,11 @@ export function CookieEditorModal(): JSX.Element | null {
 				<label>
 					__Secure-1PSIDTS
 					<input
-						type="password"
+						type="text"
 						autoComplete="off"
 						spellcheck={false}
 						required
+						disabled={loading}
 						value={values.current.psidts}
 						onInput={(event) =>
 							update("psidts", (event.currentTarget as HTMLInputElement).value)
@@ -110,8 +122,8 @@ export function CookieEditorModal(): JSX.Element | null {
 					<span class="field-note">{tr("Value only")}</span>
 				</label>
 				<div class="actions dialog-actions">
-					<button class="primary" type="submit" disabled={busy}>
-						{busy ? tr("Saving") : tr("Save CK")}
+					<button class="primary" type="submit" disabled={busy || loading}>
+						{loading ? tr("Loading CK") : busy ? tr("Saving") : tr("Save CK")}
 					</button>
 					<button type="button" disabled={busy} onClick={close}>
 						{tr("Cancel")}

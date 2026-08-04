@@ -6,6 +6,7 @@ import {
 	createAccount,
 	createAccountsWithLimitFallback,
 	deleteAccountBrowserProfile,
+	getAccountCookie,
 	getAccountOverview,
 	openAccountBrowser,
 	runAccountAction,
@@ -377,6 +378,19 @@ export async function saveAccountCookie(
 		},
 		tr("Failed to save cookie"),
 	);
+}
+
+export async function loadAccountCookie(
+	accountId: string,
+): Promise<AccountCookieInput | null> {
+	const session = currentVerifiedAdminSession();
+	if (!session) return null;
+	const operation = await runAdminSessionOperation(
+		session,
+		() => getAccountCookie(session, accountId),
+		{ fallbackMessage: tr("Failed to load cookie") },
+	);
+	return operation.ok ? operation.value : null;
 }
 
 export async function configureBrowserLogin(
