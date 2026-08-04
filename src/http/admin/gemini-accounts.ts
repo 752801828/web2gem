@@ -64,6 +64,12 @@ export async function handleGeminiAccountAdminRequest(
 				const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
 				return jsonResponse(await service.update(resource.id, body));
 			}
+			if (method === "PUT" && resource.action === "cookie") {
+				assertNoAdminQueryParams(url.searchParams);
+				const body = await readAdminJson(request);
+				const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
+				return jsonResponse(await service.replaceCookie(resource.id, body));
+			}
 			if (method === "DELETE" && resource.action === null) {
 				assertNoAdminQueryParams(url.searchParams);
 				assertAdminBodyAbsent(request);
@@ -169,7 +175,7 @@ export function adminErrorResponse(error: unknown): Response {
 
 type AccountResourceRoute = {
 	id: string;
-	action: "refresh" | null;
+	action: "cookie" | "refresh" | null;
 };
 
 function accountResourceFromPath(path: string): AccountResourceRoute | null {
@@ -179,6 +185,11 @@ function accountResourceFromPath(path: string): AccountResourceRoute | null {
 	if (segments.length === 1 && segments[0])
 		return { id: accountIdFromPathSegment(segments[0]), action: null };
 	if (segments.length === 2 && segments[0] && segments[1] === "refresh")
+		return {
+			id: accountIdFromPathSegment(segments[0]),
+			action: segments[1],
+		};
+	if (segments.length === 2 && segments[0] && segments[1] === "cookie")
 		return {
 			id: accountIdFromPathSegment(segments[0]),
 			action: segments[1],

@@ -3,6 +3,7 @@ import { useEffect } from "preact/hooks";
 import { loadAccounts } from "./actions";
 import { BrowserCredentialsModal } from "./components/BrowserCredentialsModal";
 import { ConfirmationModal } from "./components/ConfirmationModal";
+import { CookieEditorModal } from "./components/CookieEditorModal";
 import { EditModal } from "./components/EditModal";
 import { tr } from "./i18n";
 import { AuthPanel } from "./sections/AuthPanel";
@@ -12,7 +13,12 @@ import { Toasts } from "./sections/Toasts";
 import { Topbar } from "./sections/Topbar";
 import { Workspace } from "./sections/Workspace";
 import { restoreAdminKey } from "./session";
-import { adminKey, browserCredentialsDraft, connectionVerified } from "./state";
+import {
+	accountCookieDraft,
+	adminKey,
+	browserCredentialsDraft,
+	connectionVerified,
+} from "./state";
 
 export function App(): JSX.Element {
 	useEffect(() => {
@@ -21,6 +27,7 @@ export function App(): JSX.Element {
 	}, []);
 	const connected = connectionVerified.value;
 	const credentialsDraft = browserCredentialsDraft.value;
+	const cookieDraft = accountCookieDraft.value;
 
 	return (
 		<>
@@ -44,6 +51,7 @@ export function App(): JSX.Element {
 			{credentialsDraft ? (
 				<BrowserCredentialsModal key={credentialsDraft.accountId} />
 			) : null}
+			{cookieDraft ? <CookieEditorModal key={cookieDraft.accountId} /> : null}
 			<ConfirmationModal />
 			<Toasts />
 		</>

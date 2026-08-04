@@ -5,6 +5,13 @@ export type Language = "en" | "zh-CN";
 const LANGUAGE_STORAGE_KEY = "web2gem_admin_language";
 
 const zh = {
+	"Edit CK": "编辑 CK",
+	"Cookie editor help":
+		"填写两个 Cookie 的值（不要包含名称或 Cookie: 前缀）。保存前会先验证，旧值不会显示或写入日志。",
+	"Save CK": "保存并验证 CK",
+	"Cookie saved": "CK 已验证并保存",
+	"Failed to save cookie": "CK 验证或保存失败",
+	"Invalid CK": "CK 格式无效",
 	"Gemini Account Pool": "Gemini 账号池",
 	"Account operations console": "账号运维控制台",
 	"SQLite-backed session management": "基于 SQLite 的会话管理",
@@ -354,6 +361,7 @@ const actionKeys = {
 	browser_check: "Check now",
 	browser_open: "Open browser",
 	browser_profile: "Delete browser profile",
+	cookie_edit: "Edit CK",
 } as const satisfies Record<string, TranslationKey>;
 
 export function localActionLabel(action: string, sentence = false): string {

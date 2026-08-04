@@ -2,6 +2,7 @@ import { AdminApiError, type AdminApiSession } from "./api";
 import { tr } from "./i18n";
 import {
 	accountStats,
+	accountCookieDraft,
 	accounts,
 	adminKey,
 	authExpanded,
@@ -131,6 +132,7 @@ export function invalidateAdminSession(): void {
 	nextCursor.value = reset.nextCursor;
 	editDraft.value = reset.editDraft;
 	browserCredentialsDraft.value = reset.browserCredentialsDraft;
+	accountCookieDraft.value = reset.accountCookieDraft;
 	confirmationDraft.value = reset.confirmationDraft;
 	loading.value = reset.loading;
 	modelRoutingLoading.value = reset.modelRoutingLoading;

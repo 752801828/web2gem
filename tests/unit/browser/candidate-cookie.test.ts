@@ -64,6 +64,7 @@ async function fixture(
 		writeResult?: { changed: boolean; reason?: "conflict" };
 		storedLastCookieUpdateAtMs?: number | null;
 		lastCookieUpdateAtMs?: number | null;
+		allowIdentityChange?: boolean;
 	} = {},
 ) {
 	const psid = options.psid ?? "old-psid";
@@ -121,6 +122,9 @@ async function fixture(
 		psid,
 		psidts,
 		observedEmail: options.observedEmail ?? null,
+		...(options.allowIdentityChange === undefined
+			? {}
+			: { allowIdentityChange: options.allowIdentityChange }),
 		nowMs: NOW,
 	});
 	return { result, writes, refreshed };
@@ -162,6 +166,18 @@ describe("verified browser candidate cookies", () => {
 		});
 		assert.equal(result.ok, true);
 		assert.equal(writes.length, 1);
+	});
+
+	test("allows an admin-authorized CK replacement to rotate identity", async () => {
+		const { result, writes, refreshed } = await fixture({
+			psid: "new-identity",
+			psidts: "new-ts",
+			allowIdentityChange: true,
+		});
+		assert.equal(result.ok, true);
+		assert.equal(result.ok && result.changed, true);
+		assert.equal(writes.length, 1);
+		assert.equal(refreshed, 1);
 	});
 
 	test("matches the Base64 email hash produced by the real credential binding", async () => {

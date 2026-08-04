@@ -6,6 +6,7 @@ import {
 	deleteBrowserProfile,
 	openBrowserCredentials,
 	openBrowserForAccount,
+	openCookieEditor,
 	openEdit,
 	runAction,
 } from "../actions";
@@ -97,6 +98,14 @@ export function AccountActions({
 					class="action-menu-items account-action-popover"
 					popover="auto"
 				>
+					<button
+						type="button"
+						disabled={!!busy || !account.enabled}
+						aria-label={actionAriaLabel(tr("Edit CK"))}
+						onClick={() => openCookieEditor(account)}
+					>
+						{tr("Edit CK")}
+					</button>
 					<button
 						type="button"
 						disabled={!!busy}

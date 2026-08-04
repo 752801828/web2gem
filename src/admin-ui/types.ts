@@ -25,6 +25,11 @@ export type BrowserCredentialsInput = {
 	totpSecret: string;
 };
 
+export type AccountCookieInput = {
+	psid: string;
+	psidts: string;
+};
+
 export type AccountAction = "enable" | "disable" | "delete" | "refresh";
 
 export type ModelRouteTuple = {

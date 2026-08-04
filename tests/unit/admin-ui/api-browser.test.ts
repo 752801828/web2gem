@@ -6,6 +6,7 @@ import {
 	deleteAccountBrowserProfile,
 	openAccountBrowser,
 	stopAccountBrowser,
+	updateAccountCookie,
 } from "../../../src/admin-ui/api";
 import { assert } from "../assertions.js";
 import { withAdminFetch } from "./_support/environment.js";
@@ -109,5 +110,35 @@ describe("admin UI browser API", () => {
 				);
 			},
 		);
+	});
+
+	test("sends only the two CK values to the account cookie endpoint", async () => {
+		const requests: RecordedRequest[] = [];
+		await withAdminFetch(
+			async (path: RequestInfo | URL, init: RequestInit = {}) => {
+				requests.push(recordedRequest(path, init));
+				return Response.json({
+					processed: 1,
+					changed: 1,
+					unchanged: 0,
+					failed: 0,
+				});
+			},
+			async () => {
+				await updateAccountCookie(uiAdminApiSession(), "account/a", {
+					psid: "new-psid",
+					psidts: "new-psidts",
+				});
+			},
+		);
+		const request = requiredValue(requests[0]);
+		assert.deepEqual(
+			[request.path, request.init.method],
+			["/admin/accounts/account%2Fa/cookie", "PUT"],
+		);
+		assert.deepEqual(JSON.parse(requestBody(request.init)), {
+			"__Secure-1PSID": "new-psid",
+			"__Secure-1PSIDTS": "new-psidts",
+		});
 	});
 });

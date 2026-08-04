@@ -3,6 +3,7 @@ export type CandidateCookieInput = {
 	psid: string;
 	psidts: string;
 	observedEmail: string | null;
+	allowIdentityChange?: boolean;
 	nowMs: number;
 };
 
@@ -121,6 +122,7 @@ export class CandidateCookieService<TConfig extends object> {
 		const cookieHash = await sha256Hex(cookieHeader);
 		const identityHash = await sha256Hex(input.psid);
 		if (
+			!input.allowIdentityChange &&
 			identityHash !== account.identity_hash &&
 			!(await observedIdentityMatches(input.observedEmail, account))
 		)
@@ -183,6 +185,8 @@ function validInput(input: CandidateCookieInput): boolean {
 		bareCookieValue(input.psid) &&
 		bareCookieValue(input.psidts) &&
 		(input.observedEmail === null || typeof input.observedEmail === "string") &&
+		(input.allowIdentityChange === undefined ||
+			typeof input.allowIdentityChange === "boolean") &&
 		Number.isSafeInteger(input.nowMs) &&
 		input.nowMs >= 0
 	);

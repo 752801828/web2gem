@@ -112,7 +112,7 @@ describe("Gemini account admin HTTP contract", () => {
 		);
 	});
 
-	test("recognizes update, delete, and refresh resource commands", async () => {
+	test("recognizes update, cookie, delete, and refresh resource commands", async () => {
 		const cases = [
 			[
 				"/admin/accounts/a",
@@ -120,6 +120,17 @@ describe("Gemini account admin HTTP contract", () => {
 					method: "PATCH",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ label: "A" }),
+				},
+			],
+			[
+				"/admin/accounts/a/cookie",
+				{
+					method: "PUT",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						"__Secure-1PSID": "p",
+						"__Secure-1PSIDTS": "t",
+					}),
 				},
 			],
 			["/admin/accounts/a", { method: "DELETE" }],

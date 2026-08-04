@@ -9,6 +9,7 @@ import {
 } from "./schemas";
 import type {
 	AccountAction,
+	AccountCookieInput,
 	AccountIdentifier,
 	AccountOverview,
 	BrowserAdminStatus,
@@ -311,6 +312,22 @@ export async function updateAccount(
 		await request(session, accountResourcePath(input.id), {
 			method: "PATCH",
 			body: { label: input.label },
+		}),
+	);
+}
+
+export async function updateAccountCookie(
+	session: AdminApiSession,
+	accountId: string,
+	input: AccountCookieInput,
+): Promise<MutationResult> {
+	return parseMutation(
+		await request(session, `${accountResourcePath(accountId)}/cookie`, {
+			method: "PUT",
+			body: {
+				"__Secure-1PSID": input.psid,
+				"__Secure-1PSIDTS": input.psidts,
+			},
 		}),
 	);
 }

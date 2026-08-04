@@ -36,6 +36,10 @@ type BrowserCredentialsDraft = {
 	accountLabel: string;
 	credentialsConfigured: boolean;
 };
+export type AccountCookieDraft = {
+	accountId: string;
+	accountLabel: string;
+};
 
 export function emptyModelRoutingDrafts(): Record<
 	ModelFamily,
@@ -59,6 +63,7 @@ type ProtectedAdminState = {
 	loading: boolean;
 	editDraft: EditDraft | null;
 	browserCredentialsDraft: BrowserCredentialsDraft | null;
+	accountCookieDraft: AccountCookieDraft | null;
 	importBusy: boolean;
 	editBusy: boolean;
 	batchBusy: string;
@@ -83,6 +88,7 @@ export function createProtectedAdminState(): ProtectedAdminState {
 		loading: false,
 		editDraft: null,
 		browserCredentialsDraft: null,
+		accountCookieDraft: null,
 		importBusy: false,
 		editBusy: false,
 		batchBusy: "",
@@ -114,6 +120,9 @@ export const toastItems = signal<ToastItem[]>([]);
 export const editDraft = signal(initialProtectedState.editDraft);
 export const browserCredentialsDraft = signal(
 	initialProtectedState.browserCredentialsDraft,
+);
+export const accountCookieDraft = signal(
+	initialProtectedState.accountCookieDraft,
 );
 export const importLabel = signal("");
 export const importPsid = signal("");

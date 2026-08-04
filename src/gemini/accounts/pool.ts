@@ -229,7 +229,7 @@ export class AccountPoolService {
 
 	createCandidateCookieService(
 		baseConfig: RuntimeConfig,
-		verifyAccount: GeminiAccountVerifier = DEFAULT_CANDIDATE_COOKIE_VERIFIER,
+		verifyAccount: GeminiAccountVerifier = this.verifyAccount,
 	): CandidateCookieService<RuntimeConfig> {
 		return new CandidateCookieService({
 			store: this.store,

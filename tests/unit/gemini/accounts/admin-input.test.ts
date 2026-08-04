@@ -1,5 +1,6 @@
 import { describe, test } from "vitest";
 import {
+	cookieUpdateFromBody,
 	listFilterFromSearchParams,
 	normalizeBulkAction,
 	normalizeCreateAccounts,
@@ -28,6 +29,33 @@ describe("Gemini account admin input", () => {
 			enabled: false,
 			nowMs: 1000,
 		});
+	});
+
+	test("accepts only value-only CK replacement fields", () => {
+		assert.deepEqual(
+			cookieUpdateFromBody({
+				"__Secure-1PSID": "new-psid",
+				"__Secure-1PSIDTS": "new-psidts",
+			}),
+			{ psid: "new-psid", psidts: "new-psidts" },
+		);
+		assert.throws(
+			() =>
+				cookieUpdateFromBody({
+					"__Secure-1PSID": "__Secure-1PSID=value",
+					"__Secure-1PSIDTS": "value",
+				}),
+			/value, not cookie names/,
+		);
+		assert.throws(
+			() =>
+				cookieUpdateFromBody({
+					"__Secure-1PSID": "value",
+					"__Secure-1PSIDTS": "value",
+					label: "forbidden",
+				}),
+			/unsupported account cookie field/,
+		);
 	});
 
 	test("rejects legacy query, update, create, and bulk-action fields", () => {

@@ -117,6 +117,7 @@ const UNSAFE_CREATE_KEYS = new Set([
 ]);
 const COOKIE_NAME_RE = /(?:^|[;\s])__Secure-1PSID(?:TS)?\s*=/i;
 const SAFE_UPDATE_KEYS = new Set(["label", "enabled"]);
+const SAFE_COOKIE_UPDATE_KEYS = new Set(["__Secure-1PSID", "__Secure-1PSIDTS"]);
 const LIST_QUERY_KEYS = new Set(["limit", "cursor", "q", "state"]);
 const ADMIN_BULK_ACTION_MAX_IDS = 100;
 
@@ -338,6 +339,28 @@ export function updateFromBody(
 		update.enabled = body.enabled;
 	}
 	return update;
+}
+
+export function cookieUpdateFromBody(body: UnknownRecord): {
+	psid: string;
+	psidts: string;
+} {
+	for (const key of Object.keys(body)) {
+		if (!SAFE_COOKIE_UPDATE_KEYS.has(key))
+			throw new GeminiAccountAdminError(
+				400,
+				"unknown_account_cookie_field",
+				`unsupported account cookie field: ${key}`,
+			);
+	}
+	const psid = cleanRequiredString(body["__Secure-1PSID"], "__Secure-1PSID");
+	const psidts = cleanRequiredString(
+		body["__Secure-1PSIDTS"],
+		"__Secure-1PSIDTS",
+	);
+	validateBareCookieValue(psid);
+	validateBareCookieValue(psidts);
+	return { psid, psidts };
 }
 
 export function hasAccountUpdate(update: GeminiAccountUpdate): boolean {

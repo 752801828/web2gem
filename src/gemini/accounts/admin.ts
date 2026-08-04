@@ -7,6 +7,7 @@ import { mapWithConcurrency } from "../concurrency";
 import { fetchGoogleCookieRotation } from "../cookies";
 import {
 	createInputFromAccount,
+	cookieUpdateFromBody,
 	GeminiAccountAdminError,
 	hasAccountUpdate,
 	normalizeBulkAction,
@@ -157,6 +158,24 @@ export class GeminiAccountAdminService {
 			);
 		const result = await this.store.updateAccount(id, update);
 		if (!result.item) return mutationResult(1, 0, [accountNotFoundError(id)]);
+		return mutationResult(1, result.changed ? 1 : 0);
+	}
+
+	async replaceCookie(
+		id: string,
+		body: UnknownRecord,
+	): Promise<GeminiAccountMutationResult> {
+		const cookie = cookieUpdateFromBody(body);
+		const result = await this.pool
+			.createCandidateCookieService(this.cfg)
+			.replace({
+				accountId: id,
+				...cookie,
+				observedEmail: null,
+				allowIdentityChange: true,
+				nowMs: this.nowMs(),
+			});
+		if (!result.ok) throw candidateCookieAdminError(result.code);
 		return mutationResult(1, result.changed ? 1 : 0);
 	}
 
@@ -340,6 +359,33 @@ function mutationResult(
 
 function accountNotFoundError(id: string): GeminiAccountMutationError {
 	return { id, code: "account_not_found", message: "account not found" };
+}
+
+function candidateCookieAdminError(code: string): GeminiAccountAdminError {
+	if (code === "browser_account_not_found")
+		return new GeminiAccountAdminError(404, code, "account not found");
+	if (
+		code === "browser_cookie_conflict" ||
+		code === "browser_identity_mismatch"
+	)
+		return new GeminiAccountAdminError(
+			409,
+			code,
+			"cookie belongs to another account or changed concurrently",
+		);
+	if (code === "browser_account_restricted")
+		return new GeminiAccountAdminError(
+			422,
+			code,
+			"Gemini account is restricted",
+		);
+	if (code === "browser_cookie_verification_failed")
+		return new GeminiAccountAdminError(
+			502,
+			code,
+			"Gemini cookie verification failed",
+		);
+	return new GeminiAccountAdminError(400, code, "invalid Gemini cookie values");
 }
 
 function isRefreshFailure(reason: GeminiAccountRefreshReason): boolean {

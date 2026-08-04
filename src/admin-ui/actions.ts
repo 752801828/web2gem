@@ -11,6 +11,7 @@ import {
 	runAccountAction,
 	stopAccountBrowser,
 	updateAccount,
+	updateAccountCookie,
 } from "./api";
 import { localActionLabel, tr } from "./i18n";
 import {
@@ -39,6 +40,7 @@ import {
 } from "./session";
 import {
 	accountStats,
+	accountCookieDraft,
 	accounts,
 	authExpanded,
 	batchBusy,
@@ -64,6 +66,7 @@ import {
 } from "./state";
 import type {
 	AccountAction,
+	AccountCookieInput,
 	AccountIdentifier,
 	BrowserAdminStatus,
 	BrowserCredentialsInput,
@@ -338,6 +341,42 @@ export function openBrowserCredentials(account: GeminiAccount): void {
 		accountLabel: accountDisplayName(account),
 		credentialsConfigured: account.browser.credentialsConfigured,
 	};
+}
+
+export function openCookieEditor(account: GeminiAccount): void {
+	accountCookieDraft.value = {
+		accountId: account.id,
+		accountLabel: accountDisplayName(account),
+	};
+}
+
+export async function saveAccountCookie(
+	accountId: string,
+	input: AccountCookieInput,
+): Promise<boolean> {
+	let cookie: AccountCookieInput;
+	try {
+		cookie = {
+			psid: validateCookieValue(input.psid, "__Secure-1PSID"),
+			psidts: validateCookieValue(input.psidts, "__Secure-1PSIDTS"),
+		};
+	} catch (error) {
+		showToast(
+			error instanceof Error ? error.message : tr("Invalid CK"),
+			"error",
+		);
+		return false;
+	}
+	return runBrowserOperation(
+		accountId,
+		"cookie_edit",
+		(session) => updateAccountCookie(session, accountId, cookie),
+		() => {
+			showToast(tr("Cookie saved"));
+			void loadAccounts();
+		},
+		tr("Failed to save cookie"),
+	);
 }
 
 export async function configureBrowserLogin(
