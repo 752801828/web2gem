@@ -65,6 +65,11 @@ export function richResponseShapeSummary(raw: unknown): string {
 }
 
 export function extractResponseText(raw: unknown): string {
+	const candidate = extractCandidateResponse(
+		parseWrbEnvelopes(String(raw || "")),
+	);
+	if (candidate.text !== null) return cleanText(candidate.text);
+
 	let lastText = "";
 	const source = String(raw || "");
 	for (const line of iterateLines(source)) {

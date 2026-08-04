@@ -101,6 +101,14 @@ describe("Gemini response parts", () => {
 		assert.equal(parts.images[0]?.rid, "rid_1");
 		assert.equal(parts.images[0]?.rcid, "rcid_1");
 	});
+	test("extracts plain text from length-prefixed frames", () => {
+		const candidate = generatedImageCandidate("grounded answer");
+		candidate[12] = null;
+		assert.equal(
+			extractResponseText(framedWrbRaw(candidate)),
+			"grounded answer",
+		);
+	});
 	test("maps numeric Gemini fatal part codes from inner payloads and envelopes", () => {
 		for (const code of [1013, 1037, 1050, 1052, 1060]) {
 			for (const location of ["inner", "envelope"] as const) {
